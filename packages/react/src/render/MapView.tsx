@@ -55,7 +55,6 @@ import { createSvgBackend, type RenderBackend } from './backend.js';
 import { CanvasSurface } from './canvasBackend.js';
 import { buildSceneFromLayout, CANVAS_AUTO_NODES } from './sceneBuilder.js';
 import { NodeG } from './NodeG.js';
-import { LinkG } from './LinkG.js';
 import { FreeEdgeLayer, type EdgeManual } from './FreeEdgeLayer.js';
 import { EdgeLabel, cubicMidNormal } from './EdgeLabel.js';
 import { collectFreeEdges, type FreeEdge } from './freeEdges.js';

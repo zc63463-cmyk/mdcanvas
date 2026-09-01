@@ -70,7 +70,6 @@ import type {
   MindDoc,
   AssetHost,
   AssetItem,
-  ContextMenuItem,
   MapStats,
 } from '@mindcanvas/react';
 import { assetDiagnostics } from '@mindcanvas/react';

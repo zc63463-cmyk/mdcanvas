@@ -8,7 +8,7 @@
 import { buildLinkPath, nodeCardStyle, type CardLevel } from './geometry.js';
 import type { BranchColor, TokenSet } from '../theme/types.js';
 import type { ScenePrimitive } from './backend.js';
-import type { Box, LayoutNode } from '@mindcanvas/kernel';
+import type { Box, } from '@mindcanvas/kernel';
 
 /** 自动切 Canvas 的节点数阈值（T8 降级策略 L3：>50K） */
 export const CANVAS_AUTO_NODES = 50000;

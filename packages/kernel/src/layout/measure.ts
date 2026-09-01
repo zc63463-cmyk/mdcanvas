@@ -5,7 +5,6 @@
  */
 import type { EditableNode } from '../tree/treeOps.js';
 import { displayMetrics } from './nodeLayout.js';
-import type { MeasureFn } from './mindmap.js';
 
 /** 字符宽度度量函数（注入接口；字符串 → 像素宽近似） */
 export type CharMeasure = (text: string) => number;

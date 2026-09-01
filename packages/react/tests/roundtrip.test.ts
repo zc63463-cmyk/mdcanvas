@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { astToEditable, editableToAst, parseMm, serializeMm } from '@mindcanvas/kernel';
+import { astToEditable, parseMm, } from '@mindcanvas/kernel';
 import { EditorController } from '../src/edit/controller.js';
 import { FrameScheduler } from '../src/render/scheduler.js';
 

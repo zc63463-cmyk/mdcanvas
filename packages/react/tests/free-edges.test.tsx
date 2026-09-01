@@ -7,7 +7,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import { render, fireEvent } from '@testing-library/react';
 import {
-  astToEditable,
   layoutMindmap,
   makeEntityNode,
   makeTextNode,
@@ -30,7 +29,6 @@ import {
   borderPoint,
   buildFreeEdgePath,
   collectFreeEdges,
-  collectEntityOccurrences,
   edgeVisualOf,
   freeEdgeEndpoints,
   splitEntityAnchor,

@@ -7,7 +7,7 @@ import { fireEvent, render, screen } from '@testing-library/react'
 import { useState } from 'react'
 import { DEFAULT_THEME, THEMES } from '../src/theme/tokens.js'
 import { ThemeProvider, useTheme } from '../src/theme/ThemeContext.js'
-import type { ThemeId, TokenSet } from '../src/theme/types.js'
+import type { TokenSet } from '../src/theme/types.js'
 
 /**
  * 类型完整性守护（编译期）：

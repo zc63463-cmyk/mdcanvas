@@ -6,7 +6,6 @@ import { ThemeProvider } from '../src/theme/ThemeContext.js';
 import { MapView } from '../src/render/MapView.js';
 import type { MapViewApi } from '../src/render/MapView.js';
 import { createCharMeasure, createNodeMeasure } from '../src/render/domMeasure.js';
-import { VIEWPORT_ANIM_MS } from '../src/render/motion.js';
 
 /** 小型树 → 布局（比 fixture 更快更稳；实体/多级场景在 demo 呈现） */
 function smallLayout() {

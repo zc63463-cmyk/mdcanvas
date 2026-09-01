@@ -5,7 +5,7 @@ import { layoutMindmap, makeTextNode } from '@mindcanvas/kernel';
 import type { LayoutResult } from '@mindcanvas/kernel';
 import { ThemeProvider } from '../src/theme/ThemeContext.js';
 import { MapView } from '../src/render/MapView.js';
-import { createCharMeasure, createNodeMeasure } from '../src/render/domMeasure.js';
+import { createCharMeasure, } from '../src/render/domMeasure.js';
 
 /** 4 叉树 → 5461 / 21845 / 87381（与 docs/preview/perf-baseline.md 同构） */
 function buildTree(depth: number) {
