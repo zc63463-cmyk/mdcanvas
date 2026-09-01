@@ -1,0 +1,70 @@
+name: CI
+
+# MindCanvas 持续集成门禁
+#
+# 门禁项（与本地 pnpm gate 完全一致，避免「本地过/CI 挂」）：
+#   1. typecheck —— 3 个包 tsc --noEmit（kernel / react / canvas）
+#   2. test      —— 746 个测试（kernel 296 + react 450）
+#   3. build     —— 3 个包构建 + canvas vite build
+#   4. depcruise —— 架构依赖守护（kernel 零依赖 / 无循环 / 无跨 app）
+#   5. lint      —— biome 代码检查（只在 error 时失败，warning 不阻塞）
+#
+# 状态说明：本仓库当前尚未配置 git remote，本文件为「就绪待推送」——
+#          一旦 git remote add origin <url> 并推送，CI 自动生效。
+#          在那之前请用本地门禁：pnpm gate:fast（提交前）/ pnpm gate（推送前）
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+# 同一分支的新推送取消旧任务（省 CI 时长）
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  gate:
+    name: 质量门禁
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v4
+
+      - name: 安装 pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10.33.2
+
+      - name: 安装 Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'pnpm'
+
+      - name: 安装依赖（frozen lockfile）
+        run: pnpm install --frozen-lockfile
+
+      # ── 门禁 1/4：类型 ──────────────────────────────
+      - name: 类型检查（3 包）
+        run: pnpm typecheck
+
+      # ── 门禁 2/4：测试 ──────────────────────────────
+      - name: 测试（kernel 296 + react 450）
+        run: pnpm test
+
+      # ── 门禁 3/4：构建 ──────────────────────────────
+      - name: 构建（含 canvas vite build）
+        run: pnpm build
+
+      # ── 门禁 4/5：架构守护 ──────────────────────────
+      - name: 架构依赖守护（dependency-cruiser）
+        run: pnpm depcruise
+
+      # ── 门禁 5/5：代码检查 ──────────────────────────
+      # 只在 error 时失败；warning（存量 any/console 等）不阻塞，见 ADR-0005
+      - name: 代码检查（biome lint）
+        run: pnpm lint

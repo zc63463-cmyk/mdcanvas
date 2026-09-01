@@ -1,0 +1,24 @@
+node_modules/
+dist/
+coverage/
+*.log
+.DS_Store
+.env
+.env.local
+.idea/
+.vscode/*
+!.vscode/extensions.json
+.playwright-cli/
+dogfood-output/
+
+# 临时备份（格式化/重构前源码快照，验收后删除）
+.backup-*/
+
+# WorkBuddy 工具目录（designs / memory 会话数据）
+.workbuddy/
+
+# 基准测试资产（由 scripts/gen-big-mm.mjs 生成）
+bench-assets/
+
+# LLM 生成产物（prompts/ 模板保留）
+llm/out/
