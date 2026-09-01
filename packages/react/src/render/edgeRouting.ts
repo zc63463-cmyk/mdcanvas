@@ -1,0 +1,808 @@
+/**
+ * edgeRouting —— 连线智能避障路由（纯函数，零 DOM，可单测）。
+ *
+ * 背景（用户反馈）：原 `buildFreeEdgePath` 只是在两端点间拉一条「恒定法向弓高」的三次贝塞尔，
+ * 全程不感知路径上的其他节点卡片 → 连线直接穿过节点。GD 2009（Wybrow/Marriott/Stuckey，
+ * libavoid 作者）明确指出这类做法属 "ad-hoc heuristics ... even routes that pass through other objects"。
+ *
+ * 选型（历经三代，仅第三代保留）：
+ *   ① 网格 A* + 走廊裁剪 + 拉绳简化 + 圆角平滑（react-flow-smart-edge 同款路线）—— 已移除。
+ *      输出正交折线与思维导图曲线审美冲突；且长边走廊会撑爆网格（实测 300 边 873ms）。
+ *   ② trunk 主干折线（markvault 风格）—— 已移除。折角生硬，避障靠反复重试撑开通道。
+ *   ③ 曲率自适应单贝塞尔（当前，见 routeAesthetic）：枚举「锚点对 × 曲率档位」，
+ *      按美学评分取优，输出单条三次贝塞尔。
+ * 另：未采用 libavoid 的「正交可见性图」，理由见
+ * docs/research/2026-08-31-edge-routing-algorithm-research.md —— 直角折线与曲线审美冲突，
+ * 且移植成本约 2000 行。
+ *
+ * 设计要点（性能与回归控制）：
+ * - 空旷直连：走廊内无障碍 → 直接连直线，完全跳过枚举（大多数边零成本）
+ * - 走廊裁剪：先对「中心连线 ± corridorMargin」内的障碍粗筛否决，再对全量障碍复核
+ * - 早停：按 |曲率| 升序枚举，命中优质解即停，兼顾观感与性能
+ * - 降级：所有组合均穿障 → 直线直穿（SBGN：crossing boundary only twice），绝不空白
+ */
+import type { Box } from '@mindcanvas/kernel';
+
+/** 障碍物（世界坐标矩形） */
+export interface RouteObstacle extends Box {}
+
+/** 路由结果 */
+export interface RouteResult {
+  /** SVG path d */
+  d: string;
+  /** 折线顶点（世界坐标，已简化） */
+  points: readonly { x: number; y: number }[];
+  /** true = 靠"弯曲"真的绕了行；false = 直连（空旷/通畅）或降级直穿 */
+  routed: boolean;
+  /** 路径中点（标签锚点） */
+  mid: { x: number; y: number };
+  /** 中点处单位法向（标签生长方向） */
+  nx: number;
+  ny: number;
+}
+
+export const DEFAULT_CORRIDOR_MARGIN = 180;
+
+/**
+ * 「是否受阻」判定所用外扩——必须显著小于布局的兄弟间距（内核 V_GAP = 14），
+ * 否则相邻节点的外扩盒子会把中间通道整个堵死，导致相邻节点之间也走无谓的大绕行。
+ * 这里只判定"线是否擦到卡片"；与卡片的视觉净距不由此外扩保证，而是由锚点选择与曲率绕行自然产生。
+ */
+export const DEFAULT_BLOCK_PADDING = 3;
+/** 通畅性检测的贝塞尔采样数 */
+const CLEAR_SAMPLES = 24;
+
+// ---------- 基础几何 ----------
+
+/**
+ * 线段是否与矩形（含外扩）相交。
+ * 先做 AABB 粗筛，再用 Liang-Barsky 参数化裁剪做精确判定（含线段完全在矩形内的情形）。
+ */
+export function segmentIntersectsRect(
+  x1: number,
+  y1: number,
+  x2: number,
+  y2: number,
+  r: RouteObstacle,
+  pad = 0,
+): boolean {
+  const minX = r.x - pad;
+  const maxX = r.x + r.w + pad;
+  const minY = r.y - pad;
+  const maxY = r.y + r.h + pad;
+  // AABB 粗筛
+  if (Math.max(x1, x2) < minX || Math.min(x1, x2) > maxX) return false;
+  if (Math.max(y1, y2) < minY || Math.min(y1, y2) > maxY) return false;
+  // 端点在内 → 相交
+  if (x1 >= minX && x1 <= maxX && y1 >= minY && y1 <= maxY) return true;
+  if (x2 >= minX && x2 <= maxX && y2 >= minY && y2 <= maxY) return true;
+  // Liang-Barsky 线段 vs 矩形裁剪
+  let t0 = 0;
+  let t1 = 1;
+  const dx = x2 - x1;
+  const dy = y2 - y1;
+  const clip = (p: number, q: number): boolean => {
+    if (p === 0) return q >= 0;
+    const t = q / p;
+    if (p < 0) {
+      if (t > t1) return false;
+      if (t > t0) t0 = t;
+    } else {
+      if (t < t0) return false;
+      if (t < t1) t1 = t;
+    }
+    return true;
+  };
+  return clip(-dx, x1 - minX) && clip(dx, maxX - x1) && clip(-dy, y1 - minY) && clip(dy, maxY - y1);
+}
+
+/** 折线是否与任一障碍（含外扩）相交 */
+export function polylineHitsObstacle(
+  pts: readonly { x: number; y: number }[],
+  obstacles: readonly RouteObstacle[],
+  pad = 0,
+): boolean {
+  for (let i = 0; i + 1 < pts.length; i++) {
+    const a = pts[i]!;
+    const b = pts[i + 1]!;
+    for (const o of obstacles) {
+      if (segmentIntersectsRect(a.x, a.y, b.x, b.y, o, pad)) return true;
+    }
+  }
+  return false;
+}
+
+/** 三次贝塞尔采样为折线（通畅性检测 / 中点法向共用） */
+export function sampleCubic(
+  p0: { x: number; y: number },
+  c1: { x: number; y: number },
+  c2: { x: number; y: number },
+  p3: { x: number; y: number },
+  n = CLEAR_SAMPLES,
+): { x: number; y: number }[] {
+  const out: { x: number; y: number }[] = [];
+  for (let i = 0; i <= n; i++) {
+    const t = i / n;
+    const u = 1 - t;
+    const w0 = u * u * u;
+    const w1 = 3 * u * u * t;
+    const w2 = 3 * u * t * t;
+    const w3 = t * t * t;
+    out.push({
+      x: w0 * p0.x + w1 * c1.x + w2 * c2.x + w3 * p3.x,
+      y: w0 * p0.y + w1 * c1.y + w2 * c2.y + w3 * p3.y,
+    });
+  }
+  return out;
+}
+
+/**
+ * 点到矩形的净空距离（落在矩形内时返回 0）。
+ *
+ * 用于「净空成本」：衡量路径离最近卡片有多远 —— 这是"贴着节点群挤过去"与
+ * "绕到节点群外侧"之间最直接的区别，比"是否相交"多了一个距离维度。
+ */
+export function pointClearance(p: { x: number; y: number }, r: RouteObstacle): number {
+  const dx = Math.max(r.x - p.x, 0, p.x - (r.x + r.w));
+  const dy = Math.max(r.y - p.y, 0, p.y - (r.y + r.h));
+  return Math.hypot(dx, dy);
+}
+
+// ---------- 走廊与网格 ----------
+
+/** 只保留与「两端点包围盒 + margin」相交的障碍（宽相位筛选） */
+export function corridorObstacles(
+  p0: { x: number; y: number },
+  p3: { x: number; y: number },
+  margin: number,
+  obstacles: readonly RouteObstacle[],
+): RouteObstacle[] {
+  const minX = Math.min(p0.x, p3.x) - margin;
+  const maxX = Math.max(p0.x, p3.x) + margin;
+  const minY = Math.min(p0.y, p3.y) - margin;
+  const maxY = Math.max(p0.y, p3.y) + margin;
+  return obstacles.filter(
+    (o) => o.x <= maxX && o.x + o.w >= minX && o.y <= maxY && o.y + o.h >= minY,
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// 曲率自适应贝塞尔路由（外围绕行优先）
+//
+// 设计目标（纠正此前「最短路径优先」的错误）：
+//   图绘制美学实证给出的优先级为
+//     最小化交叉 > 最小化弯曲 > 最大化对称 >…> 最短边长（末位）
+//   且研究记录的用户偏好是把组件放在图 outer face（外层面）。
+//
+// 故本路由的优化顺序为：不穿节点 → 走外围 → 少交叉 → 少弯曲 → 短路径。
+// 输出**单条三次贝塞尔曲线**（与 XMind / Miro / MindManager 一致），
+// 而非多段折线 —— Gestalt good continuation 主张平滑连续轮廓优于锯齿折线。
+// ═══════════════════════════════════════════════════════════════════
+
+/**
+ * 曲率档位：负 / 正分别朝连线法向的两侧鼓。
+ * 0 = 直线（可能穿过节点群）；绝对值越大越往外绕。
+ */
+export const DEFAULT_CURVATURE_STEPS: readonly number[] = [
+  -2.0, -1.5, -1.0, -0.7, -0.45, -0.25, 0, 0.25, 0.45, 0.7, 1.0, 1.5, 2.0,
+];
+
+/** 美学评分权重（分值越低越好） */
+export interface AestheticWeights {
+  /** 与已有边交叉的罚分（最高优先级，对应"最小化交叉"） */
+  crossing?: number;
+  /** 朝障碍质心方向鼓（内凸）的罚分 —— 鼓励外绕 */
+  inward?: number;
+  /**
+   * 「净空不足」罚分：采样点距最近卡片小于 clearTarget 的占比。
+   *
+   * 这是对用户「又走中心了」反馈的根本修复。「是否相交」是个布尔量，抓不到
+   * 「不碰任何卡片、却贴着节点群从缝隙里挤过去」这种形态 —— 那正是投诉的样子。
+   * 净空成本补上了这个距离维度：离卡片越近罚分越重，于是绕到节点群外侧
+   * 天然优于从缝里穿过（侧边优先）。
+   *
+   * 取值域 [0, 权重]，与 bend 必须同量级，否则 bend 拉不住它（见 bend 注释）。
+   */
+  clearance?: number;
+  /**
+   * 曲率绝对值罚分 —— 鼓励平缓。
+   *
+   * **必须与 clearance 同量级**：clearance 项取值域是 [0, clearance]，
+   * bend 项取值域是 [0, bend × 2]（曲率档位最大 |c| = 2）。bend 过小则
+   * "把曲率拉满"总能靠改善净空赚回更多分，结果是弧高 150% 弦长的巨型弧。
+   */
+  bend?: number;
+  /** 路径长度罚分 —— 末位，权重最低 */
+  length?: number;
+}
+
+/**
+ * 沿盒子四边均匀取锚点候选（跳过角点，角点在视觉上不如边上的点自然）。
+ *
+ * 对应 XMind「端点沿主题边缘滑动寻找 best connection position」与
+ * tldraw 的归一化锚点思路；此处直接产出世界坐标便于评分。
+ *
+ * @param box 目标盒
+ * @param perSide 每条边的采样数（默认 3）
+ * @param avoidCorners 距角点的内缩比例（默认 0.15，避免取到角上）
+ */
+export function edgeAnchorCandidates(
+  box: Box,
+  perSide = 3,
+  avoidCorners = 0.15,
+): { x: number; y: number }[] {
+  const out: { x: number; y: number }[] = [];
+  if (box.w <= 0 || box.h <= 0) return [{ x: box.x, y: box.y }];
+  const inset = avoidCorners; // 归一化内缩
+  for (let i = 0; i < perSide; i++) {
+    // 沿边均匀分布，并用 inset 把端点从角上往里收
+    const t = (i + 1) / (perSide + 1);
+    const tx = box.x + box.w * (inset + t * (1 - 2 * inset));
+    const ty = box.y + box.h * (inset + t * (1 - 2 * inset));
+    out.push({ x: tx, y: box.y }); // 上边
+    out.push({ x: tx, y: box.y + box.h }); // 下边
+    out.push({ x: box.x, y: ty }); // 左边
+    out.push({ x: box.x + box.w, y: ty }); // 右边
+  }
+  return out;
+}
+
+/** 由锚点对 + 曲率生成三次贝塞尔（返回控制点、采样点、中点、法向） */
+export function bezierFromAnchors(
+  p0: { x: number; y: number },
+  p3: { x: number; y: number },
+  curvature: number,
+): {
+  c1: { x: number; y: number };
+  c2: { x: number; y: number };
+  d: string;
+  mid: { x: number; y: number };
+  nx: number;
+  ny: number;
+} {
+  const dx = p3.x - p0.x;
+  const dy = p3.y - p0.y;
+  const len = Math.hypot(dx, dy) || 1;
+  const bow = len * curvature;
+  // 法向（垂直于连线方向）
+  const nxu = (-dy / len) * bow;
+  const nyu = (dx / len) * bow;
+  const c1 = { x: p0.x + dx * 0.35 + nxu, y: p0.y + dy * 0.35 + nyu };
+  const c2 = { x: p0.x + dx * 0.65 + nxu, y: p0.y + dy * 0.65 + nyu };
+  const mid = {
+    x: 0.125 * p0.x + 0.375 * c1.x + 0.375 * c2.x + 0.125 * p3.x,
+    y: 0.125 * p0.y + 0.375 * c1.y + 0.375 * c2.y + 0.125 * p3.y,
+  };
+  // 曲线在中点的切向 → 法向（归一：优先朝上，次优先朝右）
+  const tx = p3.x + c2.x - c1.x - p0.x;
+  const ty = p3.y + c2.y - c1.y - p0.y;
+  const tl = Math.hypot(tx, ty) || 1;
+  let nx = -ty / tl;
+  let ny = tx / tl;
+  if (ny > 0 || (Math.abs(ny) < 0.15 && nx < 0)) {
+    nx = -nx;
+    ny = -ny;
+  }
+  return {
+    c1,
+    c2,
+    d: `M ${p0.x} ${p0.y} C ${c1.x} ${c1.y}, ${c2.x} ${c2.y}, ${p3.x} ${p3.y}`,
+    mid,
+    nx,
+    ny,
+  };
+}
+
+/**
+ * 从 path d 推断连线当前鼓向：'left' / 'right' / 'auto'（无法判断时）。
+ *
+ * 用于「Opp」一键反向操作 —— 当 routingSide 未显式设置、靠算法自动选择时，
+ * 需要知道当前到底选了哪一侧才能翻到另一边。
+ *
+ * 实现：从 M..C 路径里取第一个控制点 c1，量它相对弦（p0→p3）法向的偏移方向。
+ * 按 bezierFromAnchors 的约定：正曲率 → 控制点向（-dy, dx）方向偏移 → 对水平 L→R 连线为向下 →
+ * 视觉上是「右侧」（绕到右边）；负曲率为「左侧」。
+ */
+export function inferBowSide(d: string): 'left' | 'right' | 'auto' {
+  const m = d.match(
+    /^M (-?[\d.]+) (-?[\d.]+) C (-?[\d.]+) (-?[\d.]+), (-?[\d.]+) (-?[\d.]+), (-?[\d.]+) (-?[\d.]+)$/,
+  );
+  if (!m) return 'auto';
+  const v = m.slice(1).map(Number) as number[];
+  const x0 = v[0]!;
+  const y0 = v[1]!;
+  const c1x = v[2]!;
+  const c1y = v[3]!;
+  const x3 = v[6]!;
+  const y3 = v[7]!;
+  if (Math.hypot(x3 - x0, y3 - y0) < 1e-6) return 'auto';
+  // 控制点相对弦法向 (-dy, dx) 的偏移分量
+  const nOffset = (c1x - x0) * -(y3 - y0) + (c1y - y0) * (x3 - x0);
+  if (Math.abs(nOffset) < 1e-6) return 'auto';
+  return nOffset > 0 ? 'right' : 'left';
+}
+
+/** 线段是否跨越（用于交叉计数；共线/重合不计） */
+function segmentsCross(
+  a1: { x: number; y: number },
+  a2: { x: number; y: number },
+  b1: { x: number; y: number },
+  b2: { x: number; y: number },
+): boolean {
+  const d = (
+    p: { x: number; y: number },
+    q: { x: number; y: number },
+    r: { x: number; y: number },
+  ): number => (q.x - p.x) * (r.y - p.y) - (q.y - p.y) * (r.x - p.x);
+  const d1 = d(a1, a2, b1);
+  const d2 = d(a1, a2, b2);
+  const d3 = d(b1, b2, a1);
+  const d4 = d(b1, b2, a2);
+  return ((d1 > 0 && d2 < 0) || (d1 < 0 && d2 > 0)) && ((d3 > 0 && d4 < 0) || (d3 < 0 && d4 > 0));
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// Line jumps 跳线（Issue #4）—— 交叉可读
+//
+// 设计：交叉无法完全避免时，不强求消除，而是让交叉**可读**。
+// 在被跨越的那条线（under）上，于交点处绘制一个跨越小弧（hop），
+// 明确「哪条在上、哪条在下」。参照 Miro 的 Line jumps；
+// 但因 Miro 仅支持 straight / orthogonal 线型，曲线需自绘（此处实现）。
+// ═══════════════════════════════════════════════════════════════════
+
+/** 一条边与另一条边的交叉点（含上下关系） */
+export interface EdgeCrossing {
+  x: number;
+  y: number;
+  /** 位于下方的边（应绘制跳线弧）在多段线数组中的索引 */
+  under: number;
+  /** 位于上方的边的索引 */
+  over: number;
+}
+
+/**
+ * 计算所有边两两之间的交叉点。
+ * 上下关系由数组顺序决定：索引大者绘制在后 → 位于上方。
+ *
+ * @param polylines 各边的折线（世界坐标），按绘制顺序排列
+ */
+export function findCrossings(
+  polylines: readonly (readonly { x: number; y: number }[])[],
+): EdgeCrossing[] {
+  const out: EdgeCrossing[] = [];
+  for (let i = 0; i < polylines.length; i++) {
+    for (let j = i + 1; j < polylines.length; j++) {
+      const a = polylines[i]!;
+      const b = polylines[j]!;
+      for (let m = 0; m + 1 < a.length; m++) {
+        for (let n = 0; n + 1 < b.length; n++) {
+          const p = segIntersectPoint(a[m]!, a[m + 1]!, b[n]!, b[n + 1]!);
+          if (p) out.push({ x: p.x, y: p.y, under: i, over: j });
+        }
+      }
+    }
+  }
+  return out;
+}
+
+/** 求两线段交点（不平行且在线段范围内时返回交点，否则 null） */
+function segIntersectPoint(
+  a1: { x: number; y: number },
+  a2: { x: number; y: number },
+  b1: { x: number; y: number },
+  b2: { x: number; y: number },
+): { x: number; y: number } | null {
+  const r = { x: a2.x - a1.x, y: a2.y - a1.y };
+  const s = { x: b2.x - b1.x, y: b2.y - b1.y };
+  const denom = r.x * s.y - r.y * s.x;
+  if (Math.abs(denom) < 1e-12) return null;
+  const t = ((b1.x - a1.x) * s.y - (b1.y - a1.y) * s.x) / denom;
+  const u = ((b1.x - a1.x) * r.y - (b1.y - a1.y) * r.x) / denom;
+  // 严格落在两条线段内部（留 epsilon 避免端点误判）
+  if (t <= 1e-9 || t >= 1 - 1e-9 || u <= 1e-9 || u >= 1 - 1e-9) return null;
+  return { x: a1.x + r.x * t, y: a1.y + r.y * t };
+}
+
+/**
+ * 在折线上插入跳线弧：位于交叉点处「跨过去」的小拱形。
+ *
+ * 实现：在每个跳线点处，沿路径方向前后各留 `radius` 距离，用三次贝塞尔
+ * 拱起一个垂直于路径方向的小弧（控制点沿法向外推）。
+ *
+ * @param pts 原始折线
+ * @param jumpPoints 跳线点（通常取 EdgeCrossing 中 under === 本边索引的那些）
+ * @param radius 跳线弧半径（默认 5）
+ */
+export function pathWithJumps(
+  pts: readonly { x: number; y: number }[],
+  jumpPoints: readonly { x: number; y: number }[],
+  radius = 5,
+): string {
+  if (pts.length === 0) return '';
+  if (pts.length === 1 || jumpPoints.length === 0) {
+    return (
+      `M ${pts[0]!.x} ${pts[0]!.y}` +
+      pts
+        .slice(1)
+        .map((p) => ` L ${p.x} ${p.y}`)
+        .join('')
+    );
+  }
+  // 收集每段上的跳线点（按沿程参数 t 排序）
+  type Jump = { seg: number; t: number; x: number; y: number };
+  const jumps: Jump[] = [];
+  for (let i = 0; i + 1 < pts.length; i++) {
+    const a = pts[i]!;
+    const b = pts[i + 1]!;
+    const dx = b.x - a.x;
+    const dy = b.y - a.y;
+    const segLen = Math.hypot(dx, dy);
+    if (segLen < 1e-9) continue;
+    for (const jp of jumpPoints) {
+      // 跳线点在该段上的投影参数
+      const t = ((jp.x - a.x) * dx + (jp.y - a.y) * dy) / (segLen * segLen);
+      if (t <= 0.02 || t >= 0.98) continue;
+      // 点到线段的距离应足够小（确实落在这条线上）
+      const px = a.x + dx * t;
+      const py = a.y + dy * t;
+      if (Math.hypot(jp.x - px, jp.y - py) > Math.max(1.5, radius)) continue;
+      jumps.push({ seg: i, t, x: px, y: py });
+    }
+  }
+  jumps.sort((u, v) => (u.seg === v.seg ? u.t - v.t : u.seg - v.seg));
+
+  let d = `M ${pts[0]!.x} ${pts[0]!.y}`;
+  let ji = 0;
+  for (let i = 0; i + 1 < pts.length; i++) {
+    const a = pts[i]!;
+    const b = pts[i + 1]!;
+    const dx = b.x - a.x;
+    const dy = b.y - a.y;
+    const segLen = Math.hypot(dx, dy) || 1;
+    const ux = dx / segLen;
+    const uy = dy / segLen;
+    // 法向（用于拱起方向）：统一取 (-uy, ux)
+    const nxp = -uy;
+    const nyp = ux;
+    while (ji < jumps.length && jumps[ji]!.seg === i) {
+      const j = jumps[ji]!;
+      // 沿路径方向的距离参数
+      const dist = j.t * segLen;
+      const r = Math.min(radius, dist, segLen - dist);
+      if (r < 1) {
+        ji++;
+        continue;
+      }
+      const enter = { x: j.x - ux * r, y: j.y - uy * r };
+      const exit = { x: j.x + ux * r, y: j.y + uy * r };
+      // 控制点沿法向外推，形成拱形（跳线）
+      const c1 = { x: enter.x + nxp * r * 1.3, y: enter.y + nyp * r * 1.3 };
+      const c2 = { x: exit.x + nxp * r * 1.3, y: exit.y + nyp * r * 1.3 };
+      d += ` L ${enter.x} ${enter.y} C ${c1.x} ${c1.y}, ${c2.x} ${c2.y}, ${exit.x} ${exit.y}`;
+      ji++;
+    }
+    d += ` L ${b.x} ${b.y}`;
+  }
+  return d;
+}
+
+/**
+ * 曲率自适应贝塞尔路由（外围绕行优先）—— 新主入口。
+ *
+ * 与旧 routeEdge（trunk 折线 + A* 最短路径）的根本区别：优化目标不是「路径最短」，
+ * 而是按图绘制美学优先级排序：
+ *     不穿节点 → 走外围 → 少交叉 → 少弯曲 → 短路径
+ *
+ * 做法：枚举「锚点对 × 曲率档位」，对每个组合生成单条三次贝塞尔，采样检测穿障，
+ * 对不穿障者按美学评分排序取优。全部组合均穿障时**降级为直线直穿**（SBGN
+ * crossing boundary only twice）——一条明确穿过卡片的直线，优于看似绕开、实际仍穿障的折线。
+ *
+ * @param a 源盒
+ * @param b 靶盒
+ * @param obstacles 障碍集（不含源/靶自身）
+ * @param existingPolylines 已路由的其它边（世界坐标折线），用于交叉罚分
+ * @param opts 选项
+ */
+export function routeAesthetic(
+  a: Box,
+  b: Box,
+  obstacles: readonly RouteObstacle[],
+  existingPolylines: readonly (readonly { x: number; y: number }[])[] = [],
+  opts: {
+    curvatureSteps?: readonly number[];
+    weights?: AestheticWeights;
+    /** 每条边的锚点采样数（默认 3 → 每盒 12 个候选） */
+    anchorsPerSide?: number;
+    /** 穿障检测外扩（默认 DEFAULT_BLOCK_PADDING） */
+    blockPadding?: number;
+    /** 贝塞尔采样数（默认 20，兼顾精度与成本） */
+    samples?: number;
+    /**
+     * 强制绕行侧 —— 对标 markvault-js 的 forceSide（我此前缺失、值得学的一点）。
+     *
+     * 定义（面向「源 → 靶」的行进方向）：
+     *   'left'  = 鼓向左侧（曲率 ≤ 0）
+     *   'right' = 鼓向右侧（曲率 ≥ 0）
+     *
+     * 指定后只在该侧枚举曲率，**优先于评分自动选择** —— 让用户一键定向，不必拖 bend 控制点。
+     * 若该侧无解，回退到两侧全枚举（保证可用性，不因用户指定而画不出线）。
+     */
+    forceSide?: 'left' | 'right';
+    /**
+     * 「走廊集」的外扩半径（默认 DEFAULT_CORRIDOR_MARGIN）。
+     * 距两端点中心连线该距离内的障碍才算"挡在路上"，参与内凸判定与拥挤判定。
+     */
+    corridorMargin?: number;
+    /**
+     * 目标净空（世界 px）：连线与卡片之间期望留出的空白，低于它即罚分。
+     * 默认约 3 倍节点高（与布局的兄弟间距同尺度）—— 这是"侧边优先"的力度旋钮：
+     * 调大 → 连线更坚持绕到开阔的外侧；调小 → 容许从较窄的缝里穿过。
+     */
+    clearTarget?: number;
+  } = {},
+  /** 空旷区域（走廊内无障碍）时是否优先直连（默认 true：能直连就不做无谓弯曲） */
+  preferStraight = true,
+): RouteResult {
+  const steps = opts.curvatureSteps ?? DEFAULT_CURVATURE_STEPS;
+  const w: Required<AestheticWeights> = {
+    crossing: opts.weights?.crossing ?? 12,
+    inward: opts.weights?.inward ?? 8,
+    // 净空罚分（侧边优先的核心）：权重需显著 —— 否则"贴着节点群挤过去"的路径
+    // 因长度短、曲率小而胜出。设 14（高于 length，低于 crossing/inward）。
+    clearance: opts.weights?.clearance ?? 14,
+    // 曲率罚分：**必须与 clearance 同量级**，否则 bend 完全拉不住净空项。
+    //
+    // 两者取值域：clearance 项 ∈ [0, 14]，bend 项 ∈ [0, bend × 2]（最大 |c| = 2）。
+    // 此前 bend=0.4 → 域只有 [0, 0.8]，比净空项小一个数量级：
+    // "把曲率拉满"总能靠改善净空赚回 5~13 分，却只付出 0.8 分代价 ——
+    // 结果每条被挡的边都撑出 |c|≈2、弧高 150% 弦长的巨型弧，与树线交叉数翻倍。
+    // 取 2.5 后 bend 域为 [0, 5]，与净空收益同量级，两个旋钮才都真正生效。
+    bend: opts.weights?.bend ?? 2.5,
+    length: opts.weights?.length ?? 0.5,
+  };
+
+  const blockPad = opts.blockPadding ?? DEFAULT_BLOCK_PADDING;
+  const samples = opts.samples ?? 20;
+
+  const aAnchors = edgeAnchorCandidates(a, opts.anchorsPerSide ?? 3);
+  const bAnchors = edgeAnchorCandidates(b, opts.anchorsPerSide ?? 3);
+
+  // —— 障碍分层 ——
+  // ① 走廊集 corridorSet：距「两端点中心连线」corridorMargin 内的障碍 —— 用于粗筛快速否决。
+  //
+  //    注意：不能用两端点盒的包围盒来筛 —— 那条带子只有节点高度那么高，
+  //    中间的节点簇会被整片漏掉（表现为「从节点簇中间的缝隙直穿而过而评分看不出问题」）。
+  //
+  // ② 贴缝集 nearBand：直线弦两侧 bandHalf（约一个节点高）内的障碍。
+  //
+  //    必须把"撞上卡片"和"贴着卡片走"分开看：
+  //      · 撞上（blockPad 内）→ 没得选，必须绕；
+  //      · 没撞上但贴着走（bandHalf 内）→ **有得选**：直穿缝隙 or 绕到外侧。
+  //    后者正是用户反馈的「走中心」形态，理应由评分去权衡。
+  //    此前只判"有没有撞上"，于是穿缝隙的边一律直接走直线 —— corridor / bend
+  //    两个权重完全没机会参与（实测四组参数结果一模一样）。
+  //
+  // ③ 全量集 obstacles：最终避障复核（曲率大时曲线鼓到包围盒之外，①看不到）。
+  const ac = { x: a.x + a.w / 2, y: a.y + a.h / 2 };
+  const bc = { x: b.x + b.w / 2, y: b.y + b.h / 2 };
+  const corridorSet = corridorObstacles(
+    ac,
+    bc,
+    opts.corridorMargin ?? DEFAULT_CORRIDOR_MARGIN,
+    obstacles,
+  );
+  const nearObstacles = corridorSet;
+
+  // 目标净空：约 3 倍节点高。与"净空罚分"用同一个尺度，保证快路径与评分口径一致。
+  const clearTarget = opts.clearTarget ?? Math.max(80, ((a.h + b.h) / 2) * 3);
+
+  // 贴缝：直线离某些卡片不足目标净空 —— 即"要从节点群中间挤过去"。
+  // 这类边不能走快路径，必须交给评分去权衡"直穿"还是"绕外侧"。
+  const nearBand = corridorSet.filter((o) =>
+    segmentIntersectsRect(ac.x, ac.y, bc.x, bc.y, o, clearTarget),
+  );
+  const threading = nearBand.length > 0;
+
+  // 障碍质心（用于"内凸"判定）：只取**贴着路径的**障碍。
+  // 用 corridorSet 全集会掺入远离路径的旁支节点，把质心拽到无关方向，
+  // 结果"绕开真障碍"的一侧反被判为内凸而罚分 —— 方向判断彻底失效。
+  const centroid = threading
+    ? {
+        x: nearBand.reduce((s, o) => s + o.x + o.w / 2, 0) / nearBand.length,
+        y: nearBand.reduce((s, o) => s + o.y + o.h / 2, 0) / nearBand.length,
+      }
+    : null;
+
+  let best: {
+    score: number;
+    bez: ReturnType<typeof bezierFromAnchors>;
+    p0: { x: number; y: number };
+    p3: { x: number; y: number };
+    c: number;
+    crossings: number;
+    inward: number;
+    tightRatio: number;
+  } | null = null;
+
+  const straightLen =
+    Math.hypot(b.x + b.w / 2 - (a.x + a.w / 2), b.y + b.h / 2 - (a.y + a.h / 2)) || 1;
+
+  // 外层：锚点对（按端点距离升序，便于早停 —— 近的锚点通常更自然）
+  const pairs: { p0: { x: number; y: number }; p3: { x: number; y: number }; dist: number }[] = [];
+  for (const p0 of aAnchors) {
+    for (const p3 of bAnchors) {
+      pairs.push({ p0, p3, dist: Math.hypot(p3.x - p0.x, p3.y - p0.y) });
+    }
+  }
+  pairs.sort((u, v) => u.dist - v.dist);
+  // 不做距离剪枝：**绕开障碍恰恰需要"远"的锚点对**（如源右下 → 靶右上，弦更长、
+  // 相同曲率下绝对偏移更大）。曾按距离升序只取前 48 对，结果把能绕开的组合全剪掉了，
+  // 导致本可绕行的场景误判为无解而降级直穿。改由早停（找到优质解即停）来控制成本。
+  const considered = pairs;
+
+  // preferStraight 快路径：最近锚点对的直线本身畅通（不穿障、不与已有边交叉）→ 直接直连。
+  //
+  // 意图：关系线只有在"确实需要绕"的时候才弯。直线通畅时画一条弧线属于无谓装饰，
+  // 既增加视觉噪声也违背「最短路径」直觉。两种情况不启用：
+  //   · forceSide —— 用户已明确指定绕行方向，直线不满足该约束；
+  //   · threading —— 直线要从节点缝里挤过去时不走快路径，交给下层的走廊穿越罚分
+  //     去权衡"直穿"还是"绕外侧"（否则永远直穿，权重形同虚设）。
+  if (preferStraight && !opts.forceSide && !threading && pairs.length > 0) {
+    const first = pairs[0]!;
+    const p0 = first.p0;
+    const p3 = first.p3;
+    if (!polylineHitsObstacle([p0, p3], obstacles, blockPad)) {
+      let cross = 0;
+      for (const other of existingPolylines) {
+        for (let j = 0; j + 1 < other.length; j++) {
+          if (segmentsCross(p0, p3, other[j]!, other[j + 1]!)) cross++;
+        }
+      }
+      if (cross === 0) {
+        const mid = { x: (p0.x + p3.x) / 2, y: (p0.y + p3.y) / 2 };
+        const dx = p3.x - p0.x;
+        const dy = p3.y - p0.y;
+        const dl = Math.hypot(dx, dy) || 1;
+        let nx = -dy / dl;
+        let ny = dx / dl;
+        if (ny > 0 || (Math.abs(ny) < 0.15 && nx < 0)) {
+          nx = -nx;
+          ny = -ny;
+        }
+        return {
+          d: `M ${p0.x} ${p0.y} L ${p3.x} ${p3.y}`,
+          points: [p0, p3],
+          routed: false,
+          mid,
+          nx,
+          ny,
+        };
+      }
+    }
+  }
+
+  // 曲率档处理（三处约束）：
+  // ① forceSide：只保留用户指定侧（left → c ≤ 0；right → c ≥ 0）—— 严格定向，
+  //    该侧无解则由下方「直穿降级」兜底（与 markvault 的 forceSide → routeSide 行为一致）。
+  // ② 按 |c| 升序：先试平缓曲率（视觉更自然），命中即早停，兼顾观感与性能。
+  // ③ 弧高上限：mid 偏移 = 0.75 × chord × |c|，限制它**不超过弦长本身**
+  //    （即 0.75 × |c| ≤ 1 → |c| ≤ 1.33）。
+  //    越过这条线后曲线看起来是"甩出去绕一大圈"，而不是"把两点连起来" ——
+  //    那既不是侧边优先，也不是避障，只是把线丢到远处（实测出现弧高 150% 弦长的巨型弧）。
+  const MAX_ABS_C = 1.33;
+  const byAbs = (arr: readonly number[]): number[] =>
+    [...arr].sort((u, v) => Math.abs(u) - Math.abs(v));
+  const orderedSteps = byAbs(
+    (opts.forceSide
+      ? steps.filter((c) => (opts.forceSide === 'left' ? c <= 0 : c >= 0))
+      : steps
+    ).filter((c) => Math.abs(c) <= MAX_ABS_C),
+  );
+
+  for (const { p0, p3 } of considered) {
+    const chord = Math.hypot(p3.x - p0.x, p3.y - p0.y) || 1;
+    for (const c of orderedSteps) {
+      const bez = bezierFromAnchors(p0, p3, c);
+      // 采样整条曲线，检测是否穿障
+      const pts = sampleCubic(p0, bez.c1, bez.c2, p3, samples);
+      // 两级避障：① 包围盒粗筛快速否决（绝大多数候选在此夭折）；
+      // ② 全量障碍复核 —— 不可省。曲率较大时曲线会鼓到两盒包围盒之外，
+      //    粗筛看不到外侧的障碍，只靠 ① 会产出"看似绕开、实则穿障"的路径
+      //    （表现：大弧穿过了远处的卡片）。
+      if (polylineHitsObstacle(pts, nearObstacles, blockPad)) continue;
+      if (polylineHitsObstacle(pts, obstacles, blockPad)) continue;
+
+      // —— 美学评分（越低越好）——
+      // 1) 交叉：与已路由边的折线求交
+      let crossings = 0;
+      for (const other of existingPolylines) {
+        for (let i = 0; i + 1 < pts.length; i++) {
+          for (let j = 0; j + 1 < other.length; j++) {
+            if (segmentsCross(pts[i]!, pts[i + 1]!, other[j]!, other[j + 1]!)) crossings++;
+          }
+        }
+      }
+      // 2) 内凸：曲线中点朝障碍质心方向偏移 → 罚分（鼓励外绕）
+      let inward = 0;
+      if (centroid) {
+        const lineMid = { x: (p0.x + p3.x) / 2, y: (p0.y + p3.y) / 2 };
+        const toCx = centroid.x - lineMid.x;
+        const toCy = centroid.y - lineMid.y;
+        const cl = Math.hypot(toCx, toCy) || 1;
+        // 曲线中点相对直线中点的位移在"质心方向"上的投影（按弦长归一化）
+        inward = ((bez.mid.x - lineMid.x) * toCx + (bez.mid.y - lineMid.y) * toCy) / (cl * chord);
+        if (inward < 0) inward = 0; // 外凸不奖励，仅惩罚内凸
+      }
+      // 3) 净空罚分（侧边优先的核心）：采样点「离最近卡片不足 clearTarget」的占比。
+      //
+      //    用户的「又走中心了」本质是：线没撞上任何卡片，却贴着节点群从缝隙里挤过去。
+      //    早前的「走廊穿越占比」抓不到这种形态 —— 缝隙一宽，沿弦的走廊占比照样很低，
+      //    于是评分认为这条线很好。改用路径规划里的标准 clearance 成本：
+      //    直接量每个采样点离最近卡片有多远，低于目标净空就罚分。
+      //    这样"绕到节点群外侧"天然优于"从缝里穿过去"，且与节点间距尺度一致。
+      let tight = 0;
+      for (const q of pts) {
+        let minD = Infinity;
+        for (const o of nearObstacles) {
+          const d = pointClearance(q, o);
+          if (d < minD) minD = d;
+        }
+        if (minD <= clearTarget) tight++;
+      }
+      const tightRatio = pts.length > 0 ? tight / pts.length : 0;
+
+      const score =
+        w.crossing * crossings +
+        w.inward * inward +
+        w.clearance * tightRatio +
+        w.bend * Math.abs(c) +
+        w.length * (chord / straightLen);
+      if (!best || score < best.score) {
+        best = { score, bez, p0, p3, c, crossings, inward, tightRatio };
+      }
+    }
+    // 早停：已找到「无交叉 + 不内凸 + 曲率温和」的解即可收工，无需再枚举更远的锚点对。
+    //
+    // 判据**不能**用净空占比：它随 |c| 单调递增地改善，按 |c| 升序枚举时一旦写进早停，
+    // 就等于"一路加大曲率直到净空达标才停" —— 评分被完全架空，clearance / bend
+    // 两个权重变成死旋钮（实测四组参数结果一模一样）。
+    // 改用 |c| 上界：命中的是"就近那条平缓弧"，被挡住的边则交给评分去权衡。
+    if (best && best.crossings === 0 && best.inward === 0 && Math.abs(best.c) <= 0.45) break;
+  }
+
+  if (best) {
+    return {
+      d: best.bez.d,
+      points: [best.p0, best.bez.mid, best.p3],
+      // routed = 是否真的靠"弯曲"绕行（曲率为 0 即直连，未做绕障）
+      routed: Math.abs(best.c) > 0.01,
+      mid: best.bez.mid,
+      nx: best.bez.nx,
+      ny: best.bez.ny,
+    };
+  }
+
+  // 直穿降级：所有组合均穿障 → 取最近锚点对连直线（SBGN：crossing boundary only twice）
+  const straight = considered[0] ?? {
+    p0: { x: a.x + a.w / 2, y: a.y + a.h / 2 },
+    p3: { x: b.x + b.w / 2, y: b.y + b.h / 2 },
+  };
+  const mid = { x: (straight.p0.x + straight.p3.x) / 2, y: (straight.p0.y + straight.p3.y) / 2 };
+  const dx = straight.p3.x - straight.p0.x;
+  const dy = straight.p3.y - straight.p0.y;
+  const dl = Math.hypot(dx, dy) || 1;
+  let nx = -dy / dl;
+  let ny = dx / dl;
+  if (ny > 0 || (Math.abs(ny) < 0.15 && nx < 0)) {
+    nx = -nx;
+    ny = -ny;
+  }
+  return {
+    d: `M ${straight.p0.x} ${straight.p0.y} L ${straight.p3.x} ${straight.p3.y}`,
+    points: [straight.p0, straight.p3],
+    routed: false,
+    mid,
+    nx,
+    ny,
+  };
+}
