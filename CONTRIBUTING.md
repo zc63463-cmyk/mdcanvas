@@ -99,7 +99,7 @@ node scripts/analyze-export-classification.mjs
 
 | 文件 | 行数 | 备注 |
 |---|---|---|
-| `apps/canvas/src/MindmapStage.tsx` | 1,738 | `StageContent` 1,394 行，管着 10 个面板 |
+| `apps/canvas/src/MindmapStage.tsx` | 1,691 | `StageContent` 1,343 行，管着 10 个面板（已抽 2 个 hook，持续拆分中） |
 | `packages/react/src/render/MapView.tsx` | 1,455 | `MapView` 1,093 行，43 Hooks |
 | `packages/react/src/render/edgeRouting.ts` | 809 | 23 函数均 35 行，**函数粒度健康，暂不拆** |
 | `packages/react/src/chrome/EdgeEditor.tsx` | 785 | 20 函数均 39 行，**同上** |
@@ -107,6 +107,10 @@ node scripts/analyze-export-classification.mjs
 > 判断是否该拆，看**函数均长**而不是文件行数。
 > `edgeRouting` / `EdgeEditor` 均长 35–39 行，属"大而清晰"；
 > `StageContent` / `MapView` 是单个函数上千行，才需要拆。
+
+**序列化格式契约**：`.mm.md` 的 canonical 输出在分支（heading）之间保留一个空行
+（保住手写分段，避免首次保存产生全量 diff）。空行必须插在**笔记块之前**——
+笔记块归属其后的节点，插在之后会拆开「笔记 ↔ 所属节点」。见 CHANGELOG 1.3.1。
 
 ---
 
@@ -120,26 +124,45 @@ node scripts/analyze-export-classification.mjs
 - 未知字段**全部透传**（`Note` 有 `[key: string]: unknown`），新字段按 `KNOWN_NOTE_ORDER` 排序。
 - 未注册 kind 不校验 + 保留（W-UNKNOWN-KIND），保证前向兼容。
 - 公开接口变更视为 major，须同步 `CHANGELOG.md` 与 `docs/adr/ADR-0004`。
-  > ⚠️ v1.3.0（`note.desc` 幕布描述）已全链路实现但**未进 CHANGELOG**，待补。
+  > ✅ v1.3.0（`note.desc` 幕布描述）已于 2026-09-02 补录进 CHANGELOG。
+  > 教训：实现时就要写，别等事后补——这是三项目共享的协议层，下游无从得知。
+- 改序列化格式（canonical 输出）需同步 `serializer-roundtrip.test.ts` 的 canonical 用例，
+  并确认往返无损 + 幂等。用真实文件验证：
+  ```bash
+  cd apps/canvas && npx vite-node scripts/diag-roundtrip-real.mts
+  ```
 
 ---
 
 ## 六、测试
 
-- 生产 : 测试行数比约 **1 : 0.71**（基线：kernel 296 + react 443 = **739**）。
+- 生产 : 测试行数比约 **1 : 0.71**（基线：kernel 297 + react 443 + canvas 15 = **755**）。
 - 改行为必须有测试；改结构（如拆分、导出面）**测试全绿不等于行为不变**，
   需额外冒烟（见规划文档「验证方式」一节）。
 - **新写的守卫必须做变异测试**：改源码复现缺陷，确认测试真的会红。
   本项目已两次遇到"以为守得住、实际守不住"。
+  （`check-code-budget.mjs` 已做过：注入一个 `any` → 门禁报超预算且 exit 1。）
+- ⚠️ apps 层**不要整体渲染 `MindmapStage`**——jsdom 下会挂起（SIGTERM）。
+  保护靠：抽出 hook 用 `renderHook` 单独测（见 `tests/useDocumentActions.test.tsx`）。
 
 ---
 
 ## 七、本地门禁
 
 ```bash
-pnpm gate:fast   # 提交前：typecheck + depcruise + lint（~1 分钟）
-pnpm gate        # 推送前：+ 739 测试（2-3 分钟）
+pnpm gate:fast   # 提交前：typecheck + depcruise + lint + budget（~1 分钟）
+pnpm gate        # 推送前：+ 755 测试（2-3 分钟）
+pnpm budget      # 单跑债务预算
+pnpm analyze     # 单跑结构实测（规模 / 导出面 / 复杂度热点）
 ```
+
+**债务预算（`pnpm budget`）**：冻结存量债务、**只减不增**。
+`any` 与 `@ts-ignore` 必须为 0；非空断言、`as`、console、TODO、default export、超 600 行文件数
+各有上限（见 `scripts/check-code-budget.mjs` 的 `CODE_BUDGET`）。
+统计口径为**生产代码**（测试里的 `!` 是合理的"断言必非空"语义，不计入；配置文件不计入）。
+
+与 `biome lint` 的分工：lint 看**风格**，budget 看**债务总量趋势**——
+lint 允许存量 warning，budget 不允许债务增长。
 
 `core.hooksPath = .githooks`：**pre-commit 只跑快检**，**pre-push 跑全量**。
 所以没跑过测试别 push，会被钩子拦下。

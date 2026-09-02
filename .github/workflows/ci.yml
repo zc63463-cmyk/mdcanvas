@@ -8,6 +8,7 @@ name: CI
 #   3. build     —— 3 个包构建 + canvas vite build
 #   4. depcruise —— 架构依赖守护（kernel 零依赖 / 无循环 / 无跨 app）
 #   5. lint      —— biome 代码检查（只在 error 时失败，warning 不阻塞）
+#   6. budget    —— 代码债务预算：冻结存量、禁止增长（any / ts-ignore 必须为 0）
 #
 # 状态说明：本仓库当前尚未配置 git remote，本文件为「就绪待推送」——
 #          一旦 git remote add origin <url> 并推送，CI 自动生效。
@@ -52,8 +53,8 @@ jobs:
       - name: 类型检查（3 包）
         run: pnpm typecheck
 
-      # ── 门禁 2/4：测试 ──────────────────────────────
-      - name: 测试（kernel 296 + react 450）
+      # ── 门禁 2/5：测试 ──────────────────────────────
+      - name: 测试（755 个：kernel 297 + react 443 + canvas 15）
         run: pnpm test
 
       # ── 门禁 3/4：构建 ──────────────────────────────
@@ -64,7 +65,13 @@ jobs:
       - name: 架构依赖守护（dependency-cruiser）
         run: pnpm depcruise
 
-      # ── 门禁 5/5：代码检查 ──────────────────────────
+      # ── 门禁 5/6：代码检查 ──────────────────────────
       # 只在 error 时失败；warning（存量 any/console 等）不阻塞，见 ADR-0005
       - name: 代码检查（biome lint）
         run: pnpm lint
+
+      # ── 门禁 6/6：债务预算 ──────────────────────────
+      # 冻结存量债务、禁止增长（any/ts-ignore 必须为 0，其余只减不增）。
+      # 与 biome lint 的分工：lint 看「风格」，budget 看「债务总量趋势」。
+      - name: 代码债务预算（只减不增）
+        run: pnpm budget
