@@ -1,7 +1,7 @@
 #!/bin/sh
 # MindCanvas · pre-push 门禁
 #
-# 跑全量 gate：typecheck（3 包） + test（739 个） + depcruise（架构守护）。
+# 跑全量 gate：typecheck（3 包） + test（744 个） + depcruise（架构守护）。
 # 耗时约 2-3 分钟 —— 推送是最后一道本地防线，值得等。
 #
 # 绕过（仅限紧急场景）：git push --no-verify
