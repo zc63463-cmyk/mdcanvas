@@ -99,7 +99,8 @@ describe('主题上下文：运行时切换', () => {
     let err: unknown = null
     function Boom() {
       try {
-        useTheme()
+        // biome-ignore lint/correctness/useHookAtTopLevel: 本用例即验证 useTheme 在 ThemeProvider 外抛错，必须置于 try 内调用
+        useTheme();
       } catch (e) {
         err = e
       }
