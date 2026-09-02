@@ -1,4 +1,6 @@
 import { defineConfig, mergeConfig } from 'vitest/config';
+// 注意：不要给 './vite.config' 加 .ts 扩展名 —— 实测会让 vitest 加载配置时挂起（SIGTERM）。
+// 代价是 Vite 提示 configLoader: 'native' 警告，仅为告警，不影响运行。
 import viteConfig from './vite.config';
 
 /**

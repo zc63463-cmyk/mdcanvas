@@ -127,10 +127,21 @@ describe('canonical writer · round-trip', () => {
     expect(p2.diagnostics).toEqual([]);
   });
 
-  it('canonical 格式：2 空格缩进 / 笔记三行块 / 末尾 LF', () => {
+  it('canonical 格式：2 空格缩进 / 分支间空行分段 / 笔记三行块 / 末尾 LF', () => {
+    // 分支（heading）之间留一个空行：保住手写的分段可读性，
+    // 否则首次保存会把整篇压成一坨，产生全量 diff（格式不保真）。
+    // 注意此为刻意变更——旧格式无空行，见 CHANGELOG 1.3.1。
     const out = serializeMm(parseMm('# 根\n## 分支\n- 甲\n  - 乙').root!);
-    expect(out).toBe('# 根\n## 分支\n### 甲\n#### 乙\n');
+    expect(out).toBe('# 根\n\n## 分支\n\n### 甲\n\n#### 乙\n');
+    // 笔记块归属其**后**的节点，故空行插在笔记块之前（不拆开「笔记 ↔ 所属节点」）
     const noted = serializeMm(parseMm('# 根\n<!--\none_liner: x\n-->\n## 分支').root!);
-    expect(noted).toBe('# 根\n<!--\none_liner: x\n-->\n## 分支\n');
+    expect(noted).toBe('# 根\n\n<!--\none_liner: x\n-->\n## 分支\n');
+  });
+
+  it('分段空行不影响往返：多次序列化幂等', () => {
+    const once = serializeMm(parseMm('# 根\n## A\n- a\n## B\n- b').root!);
+    const twice = serializeMm(parseMm(once).root!);
+    expect(twice).toBe(once);
+    expect(once).toContain('\n\n## B');
   });
 });

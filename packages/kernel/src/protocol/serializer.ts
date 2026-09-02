@@ -96,6 +96,14 @@ function emitNode(
   headingLevel: number,
   listIndent: number,
 ): void {
+  // 规范分段：非首个 heading 前留一个空行。
+  //
+  // 纯文本事实源要求「用户手写的分段能保住」——否则首次保存会把整篇压成一坨，
+  // 产生全量 diff，削弱 .mm.md 可读 / 可 diff / 外部编辑器友好的价值。
+  //
+  // 必须放在笔记块**之前**：笔记块归属其后的节点（解析规则如此），
+  // 若放在笔记之后，空行会插到「笔记 ↔ 所属节点」之间，把两者拆开。
+  if (mode === 'heading' && out.length > 0) out.push('');
   if (node.note) {
     out.push('<!--');
     out.push(...noteToLines(node.note));
