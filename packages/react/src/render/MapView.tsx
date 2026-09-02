@@ -63,6 +63,7 @@ import { PinchTracker } from './pinch.js';
 import { buildSceneFromLayout, CANVAS_AUTO_NODES } from './sceneBuilder.js';
 import { FrameScheduler } from './scheduler.js';
 import { lerpNodeFrame, type NodeFrame, toNodeFrame } from './transition.js';
+import { hitNodeAt, useMapGestures, worldPointOf } from './useMapGestures.js';
 import { estimatePanVelocity, type PanSample, ViewportController } from './viewport.js';
 
 export interface MapViewProps {
@@ -608,15 +609,17 @@ export function MapView({
   useEffect(() => () => frame.dispose(), [frame]);
 
   // ---------- 交互：pan（拖拽 + 惯性阻尼）/ zoom（滚轮 + 越界回弹）/ fit（双击）/ 点选 ----------
-  const dragRef = useRef<{
-    id: number;
-    x: number;
-    y: number;
-    moved: boolean;
-    samples: PanSample[];
-  } | null>(null);
-  // R2：多指 pinch 缩放跟踪（≥2 指 → 缩放模式，抑制 pan/节点拖拽；zoomAt 以指间中点为锚）
-  const pinch = useRef(new PinchTracker());
+  // 画布手势：状态（pinch / dragRef）与结束类处理器已抽到 useMapGestures，
+  // 起始类处理器（onPointerDown / onPointerMove）仍在下面，共享同一份 ref 状态。
+  const { pinch, dragRef, onPointerUp, onPointerCancel } = useMapGestures({
+    viewport,
+    layout,
+    visibleNodes,
+    nodeDrag,
+    setNodeDrag,
+    onNodeMove: (op) => onNodeMoveRef.current?.(op),
+    onNodeClick: (ln, info) => onNodeClickRef.current?.(ln, info),
+  });
   const wheelRef = useRef<HTMLDivElement | null>(null);
   useEffect(() => {
     const el = wheelRef.current;
@@ -737,7 +740,11 @@ export function MapView({
             let targetId: string | null = null;
             let mode: DropMode = 'child';
             // 排除拖拽中的节点自身（dragExcluded），否则会命中自己
-            const target = hitNodeAt(visibleNodes, w, (ln) => dragExcluded?.has(ln.node.id) ?? false);
+            const target = hitNodeAt(
+              visibleNodes,
+              w,
+              (ln) => dragExcluded?.has(ln.node.id) ?? false,
+            );
             if (target) {
               targetId = target.node.id;
               mode = dropModeFor(target.box, w);
@@ -769,43 +776,8 @@ export function MapView({
             d.y = e.clientY;
           }
         }}
-        onPointerUp={(e) => {
-          // R2：指头抬起——退出登记（剩一指重新按下即可恢复 pan）
-          pinch.current.up(e.pointerId);
-          // 节点拖拽结束（M5-T5）：合法落点 → move-node op；非法/无目标 → 拒绝；未移动 → 点击选中
-          const nd = nodeDrag;
-          if (nd && nd.pointerId === e.pointerId) {
-            if (nd.moved) {
-              const plan = nd.targetId ? planDrop(layout, nd.nodeId, nd.targetId, nd.mode) : null;
-              if (plan?.valid && plan.op) onNodeMoveRef.current?.(plan.op);
-              // 非法（成环/自拖/根目标）→ 不执行任何 op
-            } else {
-              const ln = layout.nodes.find((n) => n.node.id === nd.nodeId);
-              if (ln)
-                onNodeClickRef.current?.(ln, { shift: e.shiftKey, sx: e.clientX, sy: e.clientY });
-            }
-            setNodeDrag(null);
-            return;
-          }
-          const d = dragRef.current;
-          if (!d || d.id !== e.pointerId) return;
-          dragRef.current = null;
-          if (d.moved) {
-            // M5-T4：松手速度高于阈值 → 惯性滑行（指数衰减缓停）
-            const { vx, vy } = estimatePanVelocity(d.samples);
-            if (Math.hypot(vx, vy) >= PAN_INERTIA_TRIGGER) viewport.animateInertia(vx, vy);
-            return;
-          }
-          // 点击：世界坐标命中检测（可见节点自后向前取顶）
-          const w = worldPointOf(e, e.currentTarget, viewport);
-          const ln = hitNodeAt(visibleNodes, w);
-          if (ln) onNodeClickRef.current?.(ln, { shift: e.shiftKey, sx: e.clientX, sy: e.clientY });
-        }}
-        onPointerCancel={(e) => {
-          pinch.current.up(e.pointerId);
-          if (dragRef.current?.id === e.pointerId) dragRef.current = null;
-          setNodeDrag((d) => (d?.pointerId === e.pointerId ? null : d));
-        }}
+        onPointerUp={onPointerUp}
+        onPointerCancel={onPointerCancel}
         onContextMenu={(e) => {
           e.preventDefault();
           const w = worldPointOf(e, e.currentTarget, viewport);
@@ -1241,43 +1213,6 @@ export function MapView({
       </div>
     </div>
   );
-}
-
-/** 可见节点（= layout.nodes 的元素）；交互辅助函数用 */
-type VisibleNode = LayoutResult['nodes'][number];
-
-/**
- * 指针事件 → 世界坐标（扣掉容器偏移）。
- *
- * 这是所有命中测试 / 拖拽定位的公共第一步。原先在 onPointerDown / onPointerUp /
- * onContextMenu / onDoubleClick 里各写一遍（4 处重复），收敛到此处。
- */
-function worldPointOf(
-  e: { clientX: number; clientY: number },
-  el: { getBoundingClientRect(): { left: number; top: number } },
-  viewport: ViewportController,
-): { x: number; y: number } {
-  const rect = el.getBoundingClientRect();
-  return viewport.toWorld(e.clientX - rect.left, e.clientY - rect.top);
-}
-
-/**
- * 自后向前命中可见节点（后绘制的在上，故倒序遍历），返回最顶层的命中项。
- *
- * `skip` 用于排除：拖拽时跳过根节点（depth===0 不可拖）、
- * 以及拖拽中被排除的节点自身（dragExcluded）。
- */
-function hitNodeAt(
-  visible: readonly VisibleNode[],
-  w: { x: number; y: number },
-  skip?: (ln: VisibleNode) => boolean,
-): VisibleNode | null {
-  for (let i = visible.length - 1; i >= 0; i--) {
-    const ln = visible[i]!;
-    if (skip?.(ln)) continue;
-    if (nodeHitTest(ln.box, w.x, w.y, 6)) return ln;
-  }
-  return null;
 }
 
 /** 实体 kind chip 起点（contentX - kindW - 6；与内核 displayMetrics 排版一致） */
