@@ -4,88 +4,92 @@
  * - 快捷键：6 个必做 + 保存（Ctrl+S）+ 折叠（Space）——经 matchEditorKey 分发
  * - 玻璃 chrome 恒定（K3 决策 3）；性能面板消费 MapView stats
  */
+
+import type { EditableNode, Entity } from '@mindcanvas/kernel';
+import { LayoutCache, REGISTERED_KINDS, refKey } from '@mindcanvas/kernel';
+import type {
+  AssetHost,
+  AssetItem,
+  DocEdge,
+  DocumentHost,
+  EdgeManual,
+  EdgeRouteEntry,
+  EdgeStyle,
+  FreeEdge,
+  FsFileSystemWindow,
+  MapStats,
+  MindDoc,
+  TreeEdgeAnn,
+} from '@mindcanvas/react';
 import {
+  AssetPanel,
+  anchorOfNode,
+  appendEdge,
+  assetDiagnostics,
+  buildEditable,
+  buildEntities,
+  CHROME,
+  ContextMenu,
+  collapsedAncestors,
+  collectEntityRelations,
+  collectFreeEdges,
+  collectNodeChoices,
+  contextMenuItemsFor,
+  createCharMeasure,
+  createReactRegistries,
+  DemoAssetHost,
+  DemoPlugin,
+  EdgeEditor,
+  EditorController,
+  EntityGraphPanel,
+  EntityPicker,
+  edgesOf,
+  exportPng,
+  exportSvg,
+  FlipCard,
+  findDuplicateEdge,
+  formatNote,
+  getNodeLabel,
+  installBeforeUnload,
+  isEscapedEntityInput,
+  isMindDocFile,
+  LinkCreator,
+  LocalDocHost,
+  LocalEntityStore,
+  layoutDemo,
+  MapView,
+  matchEditorKey,
+  mergeStyleAt,
+  OutlinePanel,
+  PluginHost,
+  patchEdgeAt,
+  QaEditor,
+  removeEdgeAt,
+  SearchPanel,
+  ShortcutHelpPanel,
+  scaleNoticeFor,
+  searchMind,
+  ThemeProvider,
+  ThemeSwitcher,
+  TreeEdgeEditor,
+  unescapeEntityInput,
+  useEditor,
+  useTheme,
+} from '@mindcanvas/react';
+import {
+  type CSSProperties,
+  type Dispatch,
+  type RefObject,
+  type SetStateAction,
   useCallback,
   useEffect,
   useMemo,
   useRef,
   useState,
-  type CSSProperties,
-  type Dispatch,
-  type RefObject,
-  type SetStateAction,
 } from 'react';
-import {
-  AssetPanel,
-  CHROME,
-  ContextMenu,
-  DemoAssetHost,
-  EditorController,
-  FlipCard,
-  LocalDocHost,
-  MapView,
-  OutlinePanel,
-  PluginHost,
-  QaEditor,
-  SearchPanel,
-  ShortcutHelpPanel,
-  ThemeProvider,
-  ThemeSwitcher,
-  buildEditable,
-  buildEntities,
-  createCharMeasure,
-  createReactRegistries,
-  DemoPlugin,
-  EntityGraphPanel,
-  EntityPicker,
-  exportPng,
-  formatNote,
-  installBeforeUnload,
-  layoutDemo,
-  matchEditorKey,
-  scaleNoticeFor,
-  searchMind,
-  useEditor,
-  useTheme,
-} from '@mindcanvas/react';
-import { collectEntityRelations } from '@mindcanvas/react';
-import { collapsedAncestors } from '@mindcanvas/react';
-import { exportSvg } from '@mindcanvas/react';
-import { isMindDocFile } from '@mindcanvas/react';
-import { isEscapedEntityInput, unescapeEntityInput } from '@mindcanvas/react';
-import { LocalEntityStore } from '@mindcanvas/react';
-import { contextMenuItemsFor, getNodeLabel } from '@mindcanvas/react';
-import {
-  EdgeEditor,
-  LinkCreator,
-  TreeEdgeEditor,
-  collectNodeChoices,
-  anchorOfNode,
-  appendEdge,
-  patchEdgeAt,
-  mergeStyleAt,
-  removeEdgeAt,
-  edgesOf,
-  findDuplicateEdge,
-} from '@mindcanvas/react';
-import type { TreeEdgeAnn } from '@mindcanvas/react';
-import type { EdgeRouteEntry } from '@mindcanvas/react';
-import type { EdgeManual } from '@mindcanvas/react';
-import { collectFreeEdges } from '@mindcanvas/react';
-import type { FreeEdge, DocEdge, EdgeStyle } from '@mindcanvas/react';
-import { refKey, REGISTERED_KINDS } from '@mindcanvas/kernel';
-import type {
-  DocumentHost,
-  FsFileSystemWindow,
-  MindDoc,
-  AssetHost,
-  AssetItem,
-  MapStats,
-} from '@mindcanvas/react';
-import { assetDiagnostics } from '@mindcanvas/react';
-import { LayoutCache } from '@mindcanvas/kernel';
-import type { EditableNode, Entity } from '@mindcanvas/kernel';
 import gatewaySource from './demo/gateway.mm.md?raw';
+import { useDocumentActions } from './hooks/useDocumentActions.js';
+import { useExportActions } from './hooks/useExportActions.js';
 import { PerfPanel } from './PerfPanel.js';
 
 /** gateway 实体标题表（缺口 → unresolved 演示；同 gateway.mm.md refs） */
@@ -285,7 +289,6 @@ function StageContent({
   controllerRef,
   controller,
 }: StageContentProps) {
-
   // B1 文档切换：新 source → controller.reset（清 history/折叠/选中）+ 实体表重建 + 展开收起 + 适配视图
   // 首挂跳过（controller 首次创建 + MapView 初始 fit 已处理；避免重复动画）
   const firstDocEffectRef = useRef(true);
@@ -320,81 +323,24 @@ function StageContent({
     apiRef.current?.focusNode(id);
   };
 
-  // ---------- B1 文档操作（打开/新建/保存/另存为；未保存守卫） ----------
-  const applyDoc = async (next: MindDoc): Promise<void> => {
-    if (controller.dirty && !window.confirm('当前文档有未保存的修改，确定放弃并切换？')) return;
-    setDoc(next);
-    docHost.remember(next);
-  };
-  const handleOpen = async (): Promise<void> => {
-    const opened = await docHost.open();
-    if (opened) {
-      await applyDoc(opened);
-      return;
-    }
-    // FS 取消 → 不动；浏览器不支持 → 隐藏 file input 兜底读取
-    const w = window as unknown as FsFileSystemWindow;
-    if (typeof w.showOpenFilePicker !== 'function') fileInputRef.current?.click();
-  };
-  const handleNew = (): void => {
-    void applyDoc(docHost.create('未命名.mm.md', '# 未命名\n'));
-  };
-  const handleSave = async (): Promise<void> => {
-    if (autoSaveTimer.current) {
-      clearTimeout(autoSaveTimer.current);
-      autoSaveTimer.current = null;
-    }
-    const source = controller.serialize();
-    const result = await docHost.save({ ...doc, source });
-    if (result === 'cancelled') return;
-    setDoc((d) => ({ ...d, source, saved: true, ts: Date.now() }));
-    controller.markSaved();
-    docHost.remember({ ...doc, source, saved: true, ts: Date.now() });
-  };
-  const handleSaveAs = async (): Promise<void> => {
-    const source = controller.serialize();
-    const result = await docHost.save({ ...doc, source, handle: undefined });
-    if (result === 'cancelled') return;
-    setDoc((d) => ({ ...d, source, saved: true, ts: Date.now() }));
-    controller.markSaved();
-  };
+  // 文档操作（打开/新建/保存/另存为）与导出已抽至 hooks/：
+  //   useDocumentActions —— 依赖 autoSaveTimer，在其定义之后调用（见下）
+  //   useExportActions   —— 依赖 layout，在 layout 之后调用（见下）
   // GH-T4：全图 SVG 导出（下载 .svg；主题令牌保持）
-  const handleExport = (): void => {
-    if (!layout) return;
-    const svg = exportSvg(layout, token, { title: doc.name });
-    const blob = new Blob([svg], { type: 'image/svg+xml' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = doc.name.replace(/\.mm\.md$/i, '') + '.svg';
-    a.click();
-    URL.revokeObjectURL(url);
-  };
-  // N3：PNG 导出（2x 分辨率；外链资产污染画布 → 降级下载 SVG 并提示）
-  const handleExportPng = async (): Promise<void> => {
-    if (!layout) return;
-    const svg = exportSvg(layout, token, { title: doc.name });
-    const name = doc.name.replace(/\.mm\.md$/i, '');
-    const download = (blob: Blob, ext: string): void => {
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = name + ext;
-      a.click();
-      URL.revokeObjectURL(url);
-    };
-    const r = await exportPng(layout, token, { title: doc.name });
-    if (r.ok) {
-      download(r.blob, '.png');
-      return;
-    }
-    download(new Blob([svg], { type: 'image/svg+xml' }), '.svg');
-    if (r.reason === 'tainted') alert('画布含外部图片，无法导出 PNG，已改为导出 SVG。');
-    else alert('当前环境不支持导出 PNG，已改为导出 SVG。');
-  };
 
   // GH-T3：自动保存（debounce 300ms；仅已落盘文档；手动 Ctrl+S 取消 pending；失败静默由手动保存兜底）
   const autoSaveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // 文档操作（打开/新建/保存/另存为）—— 依赖 autoSaveTimer，故在其定义之后调用
+  const { applyDoc, handleOpen, handleNew, handleSave, handleSaveAs } = useDocumentActions({
+    controller,
+    docHost,
+    doc,
+    setDoc,
+    fileInputRef,
+    autoSaveTimer,
+  });
+
   useEffect(() => {
     if (!controller.dirty || !doc.saved || !doc.handle) return;
     if (autoSaveTimer.current) clearTimeout(autoSaveTimer.current);
@@ -626,6 +572,13 @@ function StageContent({
       descExpandedIds,
     ],
   );
+
+  // 导出（SVG / PNG）—— 依赖 layout，故在其定义之后调用
+  const { handleExport, handleExportPng } = useExportActions({
+    layout,
+    token,
+    docName: doc.name,
+  });
 
   // 全局快捷键（editing 时输入框自行拦截；此处只处理画布层）
   useEffect(() => {
