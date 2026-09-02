@@ -155,7 +155,7 @@ node scripts/analyze-export-classification.mjs
 
 ```bash
 pnpm gate:fast   # 提交前：typecheck + depcruise + lint + budget（~1 分钟）
-pnpm gate        # 推送前：+ 755 测试（2-3 分钟）
+pnpm gate        # 推送前：+ 764 测试（2-3 分钟）
 pnpm budget      # 单跑债务预算
 pnpm analyze     # 单跑结构实测（规模 / 导出面 / 复杂度热点）
 ```

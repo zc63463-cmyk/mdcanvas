@@ -1,7 +1,7 @@
 # 后续开发指导
 
 > 日期：2026-09-02 · 基于当前实测状态编写
-> 门禁基线：**755 全绿**（kernel 297 + react 443 + canvas 15）
+> 门禁基线：**764 全绿**（kernel 297 + react 443 + canvas 15）
 > 相关：`CONTRIBUTING.md`（规范）· `docs/2026-09-02-code-structure-plan.md`（结构规划）
 > · `docs/specs/2026-09-02-mm-md-protocol.md`（协议规格）
 
@@ -129,7 +129,7 @@
 
 ```bash
 pnpm gate:fast   # 提交前：typecheck + depcruise + lint + budget（~1 分钟）
-pnpm gate        # 推送前：+ 755 测试（2-3 分钟）
+pnpm gate        # 推送前：+ 764 测试（2-3 分钟）
 pnpm budget      # 债务预算（只减不增）
 pnpm analyze     # 结构实测
 ```

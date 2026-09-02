@@ -90,6 +90,7 @@ import {
 import gatewaySource from './demo/gateway.mm.md?raw';
 import { useDocumentActions } from './hooks/useDocumentActions.js';
 import { useExportActions } from './hooks/useExportActions.js';
+import { StartupScreen } from './StartupScreen.js';
 import { PerfPanel } from './PerfPanel.js';
 
 /** gateway 实体标题表（缺口 → unresolved 演示；同 gateway.mm.md refs） */
@@ -187,6 +188,30 @@ function StageInner() {
   // 正确修复（P2，需重构）：把 StageInner 拆成「数据加载层」+「渲染层」两个组件——
   // 外层在 editable/controller 为 null 时直接返回错误提示，内层接收**非 null** 的
   // controller 后，所有 Hook 无条件调用。这是 React 官方推荐的解法。
+
+  // ---------- S2 启动页：有最近文档时先进入口，而非直接打开内置示例 ----------
+  // 初值只算一次：有最近文档 → 显示启动页；没有（全新用户）→ 沿用内置示例。
+  const [showStartup, setShowStartup] = useState(() => docHost.recent().length > 0);
+
+  // 启动页优先于其它分支：它不读画布状态，controller 是否就绪都无关。
+  // 放在全部 Hook 之后（useState 是最后一个 Hook），Hook 调用数恒定。
+  if (showStartup) {
+    return (
+      <StartupScreen
+        recent={docHost.recent()}
+        onOpenRecent={(d) => {
+          setDoc(d);
+          docHost.remember(d); // 刷新 ts，下次启动仍是它排第一
+          setShowStartup(false);
+        }}
+        onNew={() => {
+          setDoc(docHost.create('未命名.mm.md', '# 未命名\n'));
+          setShowStartup(false);
+        }}
+        onUseSample={() => setShowStartup(false)}
+      />
+    );
+  }
 
   // 解析失败降级：controller 为 null 说明数据管线解析失败（editable 为 null）。
   // 此早退位于本组件全部 Hook 之后，Hook 调用数恒定 —— 符合 React Hooks 规则（ADR-0007）。

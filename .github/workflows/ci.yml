@@ -4,7 +4,7 @@ name: CI
 #
 # 门禁项（与本地 pnpm gate 完全一致，避免「本地过/CI 挂」）：
 #   1. typecheck —— 3 个包 tsc --noEmit（kernel / react / canvas）
-#   2. test      —— 755 个测试（kernel 297 + react 443 + canvas 15）
+#   2. test      —— 764 个测试（kernel 297 + react 443 + canvas 24）
 #   3. build     —— 3 个包构建 + canvas vite build
 #   4. depcruise —— 架构依赖守护（kernel 零依赖 / 无循环 / 无跨 app）
 #   5. lint      —— biome 代码检查（只在 error 时失败，warning 不阻塞）
@@ -54,7 +54,7 @@ jobs:
         run: pnpm typecheck
 
       # ── 门禁 2/5：测试 ──────────────────────────────
-      - name: 测试（755 个：kernel 297 + react 443 + canvas 15）
+      - name: 测试（755 个：kernel 297 + react 443 + canvas 24）
         run: pnpm test
 
       # ── 门禁 3/4：构建 ──────────────────────────────
