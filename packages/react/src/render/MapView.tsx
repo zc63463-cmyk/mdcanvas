@@ -609,17 +609,19 @@ export function MapView({
   useEffect(() => () => frame.dispose(), [frame]);
 
   // ---------- 交互：pan（拖拽 + 惯性阻尼）/ zoom（滚轮 + 越界回弹）/ fit（双击）/ 点选 ----------
-  // 画布手势：状态（pinch / dragRef）与结束类处理器已抽到 useMapGestures，
-  // 起始类处理器（onPointerDown / onPointerMove）仍在下面，共享同一份 ref 状态。
-  const { pinch, dragRef, onPointerUp, onPointerCancel } = useMapGestures({
-    viewport,
-    layout,
-    visibleNodes,
-    nodeDrag,
-    setNodeDrag,
-    onNodeMove: (op) => onNodeMoveRef.current?.(op),
-    onNodeClick: (ln, info) => onNodeClickRef.current?.(ln, info),
-  });
+  // 画布手势：四个处理器（Down / Move / Up / Cancel）与 pinch / dragRef 状态
+  // 全部由 useMapGestures 承载（T2 第 3 小步，渐进迁移完成）。
+  const { pinch, dragRef, onPointerDown, onPointerMove, onPointerUp, onPointerCancel } =
+    useMapGestures({
+      viewport,
+      layout,
+      visibleNodes,
+      nodeDrag,
+      setNodeDrag,
+      dragExcluded,
+      onNodeMove: (op) => onNodeMoveRef.current?.(op),
+      onNodeClick: (ln, info) => onNodeClickRef.current?.(ln, info),
+    });
   const wheelRef = useRef<HTMLDivElement | null>(null);
   useEffect(() => {
     const el = wheelRef.current;
@@ -682,100 +684,8 @@ export function MapView({
             onAssetFilesRef.current?.(files);
           }
         }}
-        onPointerDown={(e) => {
-          // 用户接管视口：打断进行中的视口动画（M5-T3）
-          viewport.cancelAnim();
-          // R2：多指登记——第二指落下进入 pinch（取消单指 pan / 节点拖拽）
-          if (pinch.current.down(e.pointerId, e.clientX, e.clientY)?.type === 'start') {
-            dragRef.current = null;
-            setNodeDrag(null);
-            return;
-          }
-          const w = worldPointOf(e, e.currentTarget, viewport);
-          // 命中节点（根不可拖拽）→ 节点拖拽重排；空白 → 画布平移
-          const hitId = hitNodeAt(visibleNodes, w, (ln) => ln.depth === 0)?.node.id ?? null;
-          if (hitId !== null) {
-            setNodeDrag({
-              nodeId: hitId,
-              pointerId: e.pointerId,
-              startX: e.clientX,
-              startY: e.clientY,
-              dx: 0,
-              dy: 0,
-              moved: false,
-              targetId: null,
-              mode: 'child',
-              valid: false,
-            });
-          } else {
-            dragRef.current = {
-              id: e.pointerId,
-              x: e.clientX,
-              y: e.clientY,
-              moved: false,
-              samples: [],
-            };
-          }
-          e.currentTarget.setPointerCapture?.(e.pointerId);
-        }}
-        onPointerMove={(e) => {
-          // R2：pinch 路径——距离比 → zoomAt(指间中点)；中点位移自然转化为平移
-          if (pinch.current.active) {
-            const ev = pinch.current.move(e.pointerId, e.clientX, e.clientY);
-            if (ev?.type === 'zoom') {
-              const rect = e.currentTarget.getBoundingClientRect();
-              viewport.zoomAt(ev.midX - rect.left, ev.midY - rect.top, ev.factor);
-            }
-            return;
-          }
-          // 节点拖拽路径（M5-T5）
-          const nd = nodeDrag;
-          if (nd) {
-            if (nd.pointerId !== e.pointerId) return;
-            const dx = e.clientX - nd.startX;
-            const dy = e.clientY - nd.startY;
-            if (!nd.moved && Math.hypot(dx, dy) <= 4) return; // 未过拖拽阈值
-            // 悬停目标：命中可见节点（排除自身子树）→ 按悬停带判定插入模式
-            const w = worldPointOf(e, e.currentTarget, viewport);
-            let targetId: string | null = null;
-            let mode: DropMode = 'child';
-            // 排除拖拽中的节点自身（dragExcluded），否则会命中自己
-            const target = hitNodeAt(
-              visibleNodes,
-              w,
-              (ln) => dragExcluded?.has(ln.node.id) ?? false,
-            );
-            if (target) {
-              targetId = target.node.id;
-              mode = dropModeFor(target.box, w);
-            }
-            const plan = targetId ? planDrop(layout, nd.nodeId, targetId, mode) : null;
-            setNodeDrag({
-              ...nd,
-              dx,
-              dy,
-              moved: true,
-              targetId,
-              mode,
-              valid: plan?.valid ?? false,
-            });
-            return;
-          }
-          // 画布平移路径（含 M5-T4 速度采样）
-          const d = dragRef.current;
-          if (!d || d.id !== e.pointerId) return;
-          const dx = e.clientX - d.x;
-          const dy = e.clientY - d.y;
-          if (!d.moved && Math.hypot(dx, dy) > 3) d.moved = true;
-          if (d.moved) {
-            // 速度采样（M5-T4 惯性：最近窗口位移/时长）
-            d.samples.push({ t: performance.now(), dx, dy });
-            if (d.samples.length > PAN_SAMPLE_WINDOW) d.samples.shift();
-            viewport.panBy(dx, dy);
-            d.x = e.clientX;
-            d.y = e.clientY;
-          }
-        }}
+        onPointerDown={onPointerDown}
+        onPointerMove={onPointerMove}
         onPointerUp={onPointerUp}
         onPointerCancel={onPointerCancel}
         onContextMenu={(e) => {
