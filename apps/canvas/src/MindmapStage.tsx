@@ -90,8 +90,9 @@ import {
 import gatewaySource from './demo/gateway.mm.md?raw';
 import { useDocumentActions } from './hooks/useDocumentActions.js';
 import { useExportActions } from './hooks/useExportActions.js';
-import { StartupScreen } from './StartupScreen.js';
 import { PerfPanel } from './PerfPanel.js';
+import { SidePanels } from './SidePanels.js';
+import { StartupScreen } from './StartupScreen.js';
 
 /** gateway 实体标题表（缺口 → unresolved 演示；同 gateway.mm.md refs） */
 const GATEWAY_TITLES: Record<string, { title: string; status?: string }> = {
@@ -1533,73 +1534,22 @@ function StageContent({
       {helpOpen && <ShortcutHelpPanel onClose={() => setHelpOpen(false)} />}
 
       {/* 批次 3：Ctrl+F 富文本搜索面板（选中 + 定位） */}
-      {searchOpen && (
-        <SearchPanel
-          search={(q) => searchMind(controller.root, q)}
-          onSelect={(id) => {
-            setExpandedQaId(null);
-            focusNode(id);
-          }}
-          onClose={() => setPanel(null)}
-        />
-      )}
-
-      {/* 批次 3：Ctrl+D 大纲面板（画布 ↔ 大纲双向联动） */}
-      {outlineOpen && (
-        <OutlinePanel
-          root={controller.root}
-          collapsed={controller.collapsed}
-          selectedId={controller.selectedId}
-          onSelect={(id) => {
-            setExpandedQaId(null);
-            focusNode(id);
-          }}
-          onToggle={(id) => controller.toggleCollapse(id)}
-        />
-      )}
-
-      {/* 批次 4：Ctrl+Shift+A 图库面板（资产实体化；清单经宿主注入，点资产 → 选中节点下插入 @img/@draw 引用） */}
-      {assetOpen && (
-        <AssetPanel
-          assets={assetList}
-          resolve={(item) => assetHost.resolveAsset(item)}
-          onInsert={(item) => {
-            if (!controller.selectedId) return;
-            const id = controller.addEntityChild(controller.selectedId, {
-              kind: item.kind,
-              id: item.id,
-            });
-            setEntities((prev) => {
-              const next = new Map(prev);
-              next.set(`${item.kind}:${item.id}`, {
-                kind: item.kind,
-                id: item.id,
-                title: item.name,
-                status: 'ready',
-                ref: null,
-              });
-              return next;
-            });
-            controller.select(id);
-            setPanel(null);
-          }}
-          onClose={() => setPanel(null)}
-        />
-      )}
-
-      {/* F1：Ctrl+Shift+R 实体关系图谱面板（点引用节点 → 画布定位；画布选中实体 → 高亮联动）
-          E4：语义边区（note.links 自由边清单，点行定位源节点）+ 星型图降级为实体下钻视图 */}
-      {relationOpen && (
-        <EntityGraphPanel
-          relations={relations}
-          activeRefKey={activeRefKey}
-          edges={edgeItems}
-          onFocusNode={(nodeId) => {
-            focusNode(nodeId);
-          }}
-          onClose={() => setPanel(null)}
-        />
-      )}
+      {/* S1：侧面板簇（搜索 / 大纲 / 图库 / 关系图谱，互斥单态）——已抽到 SidePanels */}
+      <SidePanels
+        panel={panel}
+        controller={controller}
+        assetList={assetList}
+        assetHost={assetHost}
+        setEntities={setEntities}
+        relations={relations}
+        activeRefKey={activeRefKey}
+        edgeItems={edgeItems}
+        onSelectNode={(id) => {
+          setExpandedQaId(null);
+          focusNode(id);
+        }}
+        onClose={() => setPanel(null)}
+      />
 
       {/* M1 实体 picker：@ 触发插入 / 实体节点编辑改引用（选中回传经 controller.setEntityRef） */}
       {picker && (
