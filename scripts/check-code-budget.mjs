@@ -21,8 +21,8 @@ const SKIP = new Set(['node_modules', 'dist', '.git', '.workbuddy', 'bench-asset
 const CODE_BUDGET = {
   any: 0, // 已经为零，不允许再出现
   tsIgnore: 0, // 同上
-  bang: 94, // 非空断言（生产代码；测试里的不計，见下）
-  asCast: 40, // 类型断言
+  bang: 90, // 非空断言（生产代码；测试里的不计，见下）
+  asCast: 31, // 类型断言（**不含** import/export 重命名，见统计处的 srcNoRename）
   console: 4, // console.log/warn/error/debug/info
   todo: 1, // TODO/FIXME/HACK/XXX
   defaultExport: 2, // 仅限入口组件（App / MindmapStage）；配置文件不计，见 isCounted
@@ -71,10 +71,13 @@ const actual = {
 
 const bigFiles = [];
 for (const f of prod) {
+  // `import { X as Y }` / `export { X as Y }` 的 as 是**重命名**，不是类型断言。
+  // 不剥离会把 import 重命名误计入 asCast（曾导致假性超预算），统计前先排除。
+  const srcNoRename = f.src.replace(/^(?:import|export)\s[\s\S]*?;/gm, '');
   actual.any += (f.src.match(/:\s*any\b|<any>|\bany\[\]/g) ?? []).length;
   actual.tsIgnore += (f.src.match(/@ts-(?:ignore|expect-error)/g) ?? []).length;
   actual.bang += (f.src.match(/!(?=\.|\[|\)|,|;|\s|$)/g) ?? []).length;
-  actual.asCast += (f.src.match(/\bas\s+(?:unknown|any|[A-Z]\w*)\b/g) ?? []).length;
+  actual.asCast += (srcNoRename.match(/\bas\s+(?:unknown|any|[A-Z]\w*)\b/g) ?? []).length;
   actual.console += (f.src.match(/\bconsole\.(log|warn|error|debug|info)\b/g) ?? []).length;
   actual.todo += (f.src.match(/\b(TODO|FIXME|HACK|XXX)\b/g) ?? []).length;
   actual.defaultExport += (f.src.match(/^\s*export default\b/gm) ?? []).length;
