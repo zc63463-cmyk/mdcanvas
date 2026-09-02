@@ -409,19 +409,21 @@ export function findCrossings(
   polylines: readonly (readonly { x: number; y: number }[])[],
 ): EdgeCrossing[] {
   const out: EdgeCrossing[] = [];
-  // broad phase：预计算包围盒（循环外一次算完，避免每条边重复 O(P) 扫描）
-  const boxes = polylines.map(bboxOf);
-  for (let i = 0; i < polylines.length; i++) {
-    const a = polylines[i]!;
-    const ba = boxes[i]!;
-    for (let j = i + 1; j < polylines.length; j++) {
-      // 包围盒不重叠 → 不可能相交，跳过内层 O(P²) 逐段测试
-      if (!bboxOverlap(ba, boxes[j]!)) continue;
-      const b = polylines[j]!;
+  // 预计算「折线 + 包围盒 + 原索引」，随后用 for...of 遍历而非下标访问——
+  // 在 noUncheckedIndexedAccess 下，下标访问每项都要 `!`，会凭空增加非空断言债务。
+  const items = polylines.map((pts, idx) => ({ pts, box: bboxOf(pts), idx }));
+  for (const ai of items) {
+    for (const bi of items) {
+      // 上三角：索引大者绘制在后 → 位于上方（under/over 依此判定）
+      if (bi.idx <= ai.idx) continue;
+      // broad phase：包围盒不重叠 → 不可能相交，整对跳过 O(P²) 的逐段精算
+      if (!bboxOverlap(ai.box, bi.box)) continue;
+      const a = ai.pts;
+      const b = bi.pts;
       for (let m = 0; m + 1 < a.length; m++) {
         for (let n = 0; n + 1 < b.length; n++) {
           const p = segIntersectPoint(a[m]!, a[m + 1]!, b[n]!, b[n + 1]!);
-          if (p) out.push({ x: p.x, y: p.y, under: i, over: j });
+          if (p) out.push({ x: p.x, y: p.y, under: ai.idx, over: bi.idx });
         }
       }
     }
