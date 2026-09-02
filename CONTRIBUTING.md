@@ -116,6 +116,10 @@ node scripts/analyze-export-classification.mjs
 
 ## 五、协议层（`.mm.md`）改动纪律
 
+> **协议规格书**：`docs/specs/2026-09-02-mm-md-protocol.md`
+> （行词法 / 缩进 / 实体引用与 id 校验 / 笔记块 / 结构装配 / 诊断码 / canonical 格式 / 前向兼容）。
+> 改协议实现前先读它，改完同步它。
+
 - 协议是**纯文本事实源**：手写 → 解析 → 序列化 → 再解析必须**数据无损**。
   改协议后用压力脚本验证：
   ```bash
