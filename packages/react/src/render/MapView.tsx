@@ -688,18 +688,9 @@ export function MapView({
             setNodeDrag(null);
             return;
           }
-          const rect = e.currentTarget.getBoundingClientRect();
-          const w = viewport.toWorld(e.clientX - rect.left, e.clientY - rect.top);
+          const w = worldPointOf(e, e.currentTarget, viewport);
           // 命中节点（根不可拖拽）→ 节点拖拽重排；空白 → 画布平移
-          let hitId: string | null = null;
-          for (let i = visibleNodes.length - 1; i >= 0; i--) {
-            const ln = visibleNodes[i]!;
-            if (ln.depth === 0) continue;
-            if (nodeHitTest(ln.box, w.x, w.y, 6)) {
-              hitId = ln.node.id;
-              break;
-            }
-          }
+          const hitId = hitNodeAt(visibleNodes, w, (ln) => ln.depth === 0)?.node.id ?? null;
           if (hitId !== null) {
             setNodeDrag({
               nodeId: hitId,
@@ -742,18 +733,14 @@ export function MapView({
             const dy = e.clientY - nd.startY;
             if (!nd.moved && Math.hypot(dx, dy) <= 4) return; // 未过拖拽阈值
             // 悬停目标：命中可见节点（排除自身子树）→ 按悬停带判定插入模式
-            const rect = e.currentTarget.getBoundingClientRect();
-            const w = viewport.toWorld(e.clientX - rect.left, e.clientY - rect.top);
+            const w = worldPointOf(e, e.currentTarget, viewport);
             let targetId: string | null = null;
             let mode: DropMode = 'child';
-            for (let i = visibleNodes.length - 1; i >= 0; i--) {
-              const ln = visibleNodes[i]!;
-              if (dragExcluded?.has(ln.node.id)) continue;
-              if (nodeHitTest(ln.box, w.x, w.y, 6)) {
-                targetId = ln.node.id;
-                mode = dropModeFor(ln.box, w);
-                break;
-              }
+            // 排除拖拽中的节点自身（dragExcluded），否则会命中自己
+            const target = hitNodeAt(visibleNodes, w, (ln) => dragExcluded?.has(ln.node.id) ?? false);
+            if (target) {
+              targetId = target.node.id;
+              mode = dropModeFor(target.box, w);
             }
             const plan = targetId ? planDrop(layout, nd.nodeId, targetId, mode) : null;
             setNodeDrag({
@@ -810,15 +797,9 @@ export function MapView({
             return;
           }
           // 点击：世界坐标命中检测（可见节点自后向前取顶）
-          const rect = e.currentTarget.getBoundingClientRect();
-          const w = viewport.toWorld(e.clientX - rect.left, e.clientY - rect.top);
-          for (let i = visibleNodes.length - 1; i >= 0; i--) {
-            const ln = visibleNodes[i]!;
-            if (nodeHitTest(ln.box, w.x, w.y, 6)) {
-              onNodeClickRef.current?.(ln, { shift: e.shiftKey, sx: e.clientX, sy: e.clientY });
-              break;
-            }
-          }
+          const w = worldPointOf(e, e.currentTarget, viewport);
+          const ln = hitNodeAt(visibleNodes, w);
+          if (ln) onNodeClickRef.current?.(ln, { shift: e.shiftKey, sx: e.clientX, sy: e.clientY });
         }}
         onPointerCancel={(e) => {
           pinch.current.up(e.pointerId);
@@ -827,27 +808,18 @@ export function MapView({
         }}
         onContextMenu={(e) => {
           e.preventDefault();
-          const rect = e.currentTarget.getBoundingClientRect();
-          const w = viewport.toWorld(e.clientX - rect.left, e.clientY - rect.top);
-          for (let i = visibleNodes.length - 1; i >= 0; i--) {
-            const ln = visibleNodes[i]!;
-            if (nodeHitTest(ln.box, w.x, w.y, 6)) {
-              onNodeContextRef.current?.(ln, e.clientX, e.clientY);
-              return;
-            }
-          }
-          onNodeContextRef.current?.(null, e.clientX, e.clientY);
+          const w = worldPointOf(e, e.currentTarget, viewport);
+          // 命中节点 → 传该节点；空白 → 传 null（两条分支合并为一）
+          const ln = hitNodeAt(visibleNodes, w);
+          onNodeContextRef.current?.(ln, e.clientX, e.clientY);
         }}
         onDoubleClick={(e) => {
           // 双击：命中 text 节点 → 请求进入编辑；空白/非 text → 平滑适配视图
-          const rect = e.currentTarget.getBoundingClientRect();
-          const w = viewport.toWorld(e.clientX - rect.left, e.clientY - rect.top);
-          for (let i = visibleNodes.length - 1; i >= 0; i--) {
-            const ln = visibleNodes[i]!;
-            if (nodeHitTest(ln.box, w.x, w.y, 6)) {
-              if (ln.node.type === 'text') onEditStartRef.current?.(ln.node.id);
-              return;
-            }
+          const w = worldPointOf(e, e.currentTarget, viewport);
+          const ln = hitNodeAt(visibleNodes, w);
+          if (ln) {
+            if (ln.node.type === 'text') onEditStartRef.current?.(ln.node.id);
+            return;
           }
           viewport.fitBoundsAnimated(layout.bounds);
         }}
@@ -1269,6 +1241,43 @@ export function MapView({
       </div>
     </div>
   );
+}
+
+/** 可见节点（= layout.nodes 的元素）；交互辅助函数用 */
+type VisibleNode = LayoutResult['nodes'][number];
+
+/**
+ * 指针事件 → 世界坐标（扣掉容器偏移）。
+ *
+ * 这是所有命中测试 / 拖拽定位的公共第一步。原先在 onPointerDown / onPointerUp /
+ * onContextMenu / onDoubleClick 里各写一遍（4 处重复），收敛到此处。
+ */
+function worldPointOf(
+  e: { clientX: number; clientY: number },
+  el: { getBoundingClientRect(): { left: number; top: number } },
+  viewport: ViewportController,
+): { x: number; y: number } {
+  const rect = el.getBoundingClientRect();
+  return viewport.toWorld(e.clientX - rect.left, e.clientY - rect.top);
+}
+
+/**
+ * 自后向前命中可见节点（后绘制的在上，故倒序遍历），返回最顶层的命中项。
+ *
+ * `skip` 用于排除：拖拽时跳过根节点（depth===0 不可拖）、
+ * 以及拖拽中被排除的节点自身（dragExcluded）。
+ */
+function hitNodeAt(
+  visible: readonly VisibleNode[],
+  w: { x: number; y: number },
+  skip?: (ln: VisibleNode) => boolean,
+): VisibleNode | null {
+  for (let i = visible.length - 1; i >= 0; i--) {
+    const ln = visible[i]!;
+    if (skip?.(ln)) continue;
+    if (nodeHitTest(ln.box, w.x, w.y, 6)) return ln;
+  }
+  return null;
 }
 
 /** 实体 kind chip 起点（contentX - kindW - 6；与内核 displayMetrics 排版一致） */
