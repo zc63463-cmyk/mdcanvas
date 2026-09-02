@@ -4,7 +4,8 @@
 
 | 项 | 值 |
 |---|---|
-| 状态 | 接口已冻结（semver 管理，见 `docs/adr/ADR-0004`）· 内核 v1.3.0 · **739 测试全绿** |
+| 状态 | 接口已冻结（semver 管理，见 `docs/adr/ADR-0004`）· 内核 v1.3.0 · **755 测试全绿** |
+| 仓库 | <https://github.com/zc63463-cmyk/mdcanvas>（公开） |
 | 开发规范 | **`CONTRIBUTING.md`** —— 分层、导出面、类型、文件规模、协议纪律、环境坑 |
 | 前身 | [knowledge-canvas](../knowledge-canvas)（只读参考源：协议层 / 326 测试 / 布局引擎的移植出处） |
 | 平台 | Web-first（PWA + local-first），库优先（`packages/kernel` headless / `packages/react` 渲染器 / `apps/canvas` 应用入口） |
@@ -27,7 +28,7 @@
 
 ```bash
 pnpm install
-pnpm gate                  # 全量门禁：typecheck + 739 测试 + depcruise + lint（2-3 分钟）
+pnpm gate                  # 全量门禁：typecheck + 755 测试 + depcruise + lint + budget（2-3 分钟）
 pnpm --filter canvas dev
 ```
 

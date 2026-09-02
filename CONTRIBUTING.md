@@ -195,7 +195,9 @@ refactor(stage): ADR-0007 StageInner 拆分——条件 Hook 调用归零
 <动机 / 方案 / 验证 / 门禁结果>
 ```
 
-⚠️ 当前**无 git remote**（I1 未做），历史仅存本地。
-`git log` 只有 2026-09-01 之后的提交，8 月历史在
+✅ **已建 git 远端**（2026-09-02）：<https://github.com/zc63463-cmyk/mdcanvas>，
+成果不再单点。⚠️ 该仓库当前为**公开**，提交前确认不含私密内容。
+
+⚠️ 本机历史曾断裂：8 月历史（157 commits）不在主仓库里，存于
 `E:\Development\MyAwesomeApp\mindcanvas-backup-20260831.bundle`。
-改核心文件前先自留副本。
+两份 bundle 与当前仓库历史**不连续**，无法自动拼接，都留着别删。
