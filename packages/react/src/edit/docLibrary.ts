@@ -1,0 +1,151 @@
+/**
+ * 文档库（文件管理的数据层）—— 历史文件清单 + 分类（标签）管理。
+ *
+ * 与 `DocumentHost.recent()` 的分工：
+ * - `recent()`：最近 8 条、含 source，服务于「启动页继续上次」的快速恢复
+ * - `DocLibrary`：**全量**文档条目 + 分类，服务于文件管理器（列表/筛选/重命名/删除）
+ *
+ * 存储取舍（重要）：
+ * localStorage 限额约 5MB，若全量存 source 会在文档一多时撑爆。
+ * 故**只为最近 SOURCE_KEEP 条保留源码快照**，更早的条目只存元数据
+ * （id/名称/时间/标签）。元数据条目打开时需重新关联文件——
+ * 这与现有 `recent()` 恢复后 handle 失效的行为一致，不引入新概念。
+ *
+ * 不是什么：不做文件内容同步、不做云端。纯本地元数据索引。
+ */
+import type { MindDoc } from './document.js';
+
+const LIB_KEY = 'mindcanvas.library.v1';
+/** 保留源码快照的条目数（其余只存元数据） */
+const SOURCE_KEEP = 8;
+
+/** 文档库条目 */
+export interface DocEntry {
+  /** 稳定 id（与 MindDoc.id 一致） */
+  id: string;
+  name: string;
+  /** 最近访问时间 */
+  ts: number;
+  /** 分类标签（可多个；空数组 = 未分类） */
+  tags: string[];
+  /** 源码快照（仅最近若干条有） */
+  source?: string;
+}
+
+/** 标签排序：中文按拼音、英文按字典序（默认 sort 按码点排，中文顺序反直觉） */
+function cmpTag(a: string, b: string): number {
+  return a.localeCompare(b, 'zh-Hans-CN');
+}
+
+/** 未分类的固定标签（筛选 UI 用，不写进 tags） */
+export const UNTAGGED = '__untagged__';
+
+function isEntry(x: unknown): x is DocEntry {
+  if (typeof x !== 'object' || x === null) return false;
+  const o = x as Record<string, unknown>;
+  return (
+    typeof o.id === 'string' &&
+    typeof o.name === 'string' &&
+    typeof o.ts === 'number' &&
+    Array.isArray(o.tags) &&
+    o.tags.every((t) => typeof t === 'string')
+  );
+}
+
+export class DocLibrary {
+  private load(): DocEntry[] {
+    try {
+      const raw = localStorage.getItem(LIB_KEY);
+      if (!raw) return [];
+      const parsed: unknown = JSON.parse(raw);
+      return Array.isArray(parsed) ? parsed.filter(isEntry) : [];
+    } catch {
+      return []; // localStorage 禁用/损坏 → 退化为内存态，不阻断主流程
+    }
+  }
+
+  private save(list: DocEntry[]): void {
+    try {
+      localStorage.setItem(LIB_KEY, JSON.stringify(list));
+    } catch {
+      // 配额满：优先丢弃源码快照再试一次（保住元数据）
+      try {
+        const slim = list.map((e, i) => (i < SOURCE_KEEP ? e : { ...e, source: undefined }));
+        localStorage.setItem(LIB_KEY, JSON.stringify(slim));
+      } catch {
+        // 仍失败则静默——文件管理是增强能力，不能拖垮文档读写
+      }
+    }
+  }
+
+  /** 全部条目（新的在前） */
+  list(): DocEntry[] {
+    return this.load().sort((a, b) => b.ts - a.ts);
+  }
+
+  get(id: string): DocEntry | undefined {
+    return this.load().find((e) => e.id === id);
+  }
+
+  /**
+   * 登记/更新一条（按 id 去重，更新时间戳）。
+   * 超出 SOURCE_KEEP 的旧条目会被剥掉 source。
+   */
+  upsert(doc: Pick<MindDoc, 'id' | 'name' | 'source'> & { tags?: string[] }): DocEntry {
+    const list = this.load().filter((e) => e.id !== doc.id);
+    const entry: DocEntry = {
+      id: doc.id,
+      name: doc.name,
+      ts: Date.now(),
+      tags: doc.tags ?? this.get(doc.id)?.tags ?? [],
+      source: doc.source,
+    };
+    list.unshift(entry);
+    this.persistSorted(list);
+    return entry;
+  }
+
+  rename(id: string, name: string): void {
+    const list = this.load();
+    const hit = list.find((e) => e.id === id);
+    if (!hit) return;
+    hit.name = name;
+    this.save(list);
+  }
+
+  setTags(id: string, tags: string[]): void {
+    const list = this.load();
+    const hit = list.find((e) => e.id === id);
+    if (!hit) return;
+    // 去重 + 去空白 + 稳定排序（避免同名标签重复堆积）
+    // 用 localeCompare 而非默认 sort：后者按 UTF-16 码点排，中文顺序反直觉
+    hit.tags = [...new Set(tags.map((t) => t.trim()).filter((t) => t.length > 0))].sort(cmpTag);
+    this.save(list);
+  }
+
+  remove(id: string): void {
+    this.save(this.load().filter((e) => e.id !== id));
+  }
+
+  /** 全部已用标签（按字典序） */
+  allTags(): string[] {
+    const set = new Set<string>();
+    for (const e of this.load()) for (const t of e.tags) set.add(t);
+    return [...set].sort(cmpTag);
+  }
+
+  /** 按标签筛选（UNTAGGED 表示「无标签」） */
+  byTag(tag: string | null): DocEntry[] {
+    const all = this.list();
+    if (tag === null) return all;
+    if (tag === UNTAGGED) return all.filter((e) => e.tags.length === 0);
+    return all.filter((e) => e.tags.includes(tag));
+  }
+
+  /** 排序后落盘，并只保留最近若干条的源码快照 */
+  private persistSorted(list: DocEntry[]): void {
+    list.sort((a, b) => b.ts - a.ts);
+    const slimmed = list.map((e, i) => (i < SOURCE_KEEP ? e : { ...e, source: undefined }));
+    this.save(slimmed);
+  }
+}

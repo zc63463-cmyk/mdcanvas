@@ -39,6 +39,7 @@ import {
   createReactRegistries,
   DemoAssetHost,
   DemoPlugin,
+  DocLibrary,
   EdgeEditor,
   EditorController,
   EntityGraphPanel,
@@ -88,6 +89,7 @@ import {
   useState,
 } from 'react';
 import gatewaySource from './demo/gateway.mm.md?raw';
+import { FileManager } from './FileManager.js';
 import { useDocumentActions } from './hooks/useDocumentActions.js';
 import { useExportActions } from './hooks/useExportActions.js';
 import { PerfPanel } from './PerfPanel.js';
@@ -428,6 +430,8 @@ function StageContent({
 
   // 批次 2：? 快捷键帮助面板 + 节点右键菜单（{ 节点, 屏幕坐标 }；null = 关闭）
   const [helpOpen, setHelpOpen] = useState(false);
+  // 文件管理器（文档库 UI）：独立于 `panel` 单态——它是模态浮层，不是侧面板
+  const [fileManagerOpen, setFileManagerOpen] = useState(false);
   const [ctxMenu, setCtxMenu] = useState<{ nodeId: string; x: number; y: number } | null>(null);
 
   // v1.3.0 幕布描述（note.desc）：正在编辑描述的节点 id + 已展开全文的节点集合
@@ -542,6 +546,18 @@ function StageContent({
   const assetHostRef = useRef<AssetHost | null>(null);
   if (assetHostRef.current === null) assetHostRef.current = new DemoAssetHost(DEMO_ASSETS, '/');
   const assetHost = assetHostRef.current;
+
+  // 文档库（文件管理的索引层）：只登记已落盘的文档，
+  // 新建未保存的不进库（否则关掉就留下一堆空条目）。
+  const libraryRef = useRef<DocLibrary | null>(null);
+  if (libraryRef.current === null) libraryRef.current = new DocLibrary();
+  const library = libraryRef.current;
+
+  // 文档落盘 → 登记进文档库（文件管理的索引来源）。
+  // 只在 saved 时登记：新建未保存的文档不进库，否则关掉就留下一堆空条目。
+  useEffect(() => {
+    if (doc.saved) library.upsert({ id: doc.id, name: doc.name, source: doc.source });
+  }, [doc.id, doc.name, doc.source, doc.saved, library]);
   // 异步清单（宿主可换 HTTP/FS 实现）；插入/上传后由 Stage 更新本地副本
   const [assetList, setAssetList] = useState<AssetItem[]>([]);
 
@@ -1140,6 +1156,13 @@ function StageContent({
         <DocBtn label="另存为" onClick={() => void handleSaveAs()} />
         <DocBtn label="导出" onClick={handleExport} />
         <DocBtn label="导出 PNG" onClick={() => void handleExportPng()} />
+        <DocBtn
+          label="文件管理"
+          onClick={() => {
+            setDocMenuOpen(false);
+            setFileManagerOpen(true);
+          }}
+        />
       </div>
       {/* 最近文档下拉（B1：localStorage 列表，点击切换；未保存守卫生效） */}
       {docMenuOpen && (
@@ -1532,6 +1555,49 @@ function StageContent({
 
       {/* 批次 2：? 快捷键帮助面板 */}
       {helpOpen && <ShortcutHelpPanel onClose={() => setHelpOpen(false)} />}
+
+      {/* 文件管理器：历史文件 / 新建 / 分类管理 */}
+      {fileManagerOpen && (
+        <div
+          style={{
+            position: 'absolute',
+            inset: 0,
+            zIndex: 60,
+            display: 'grid',
+            placeItems: 'center',
+            background: 'rgba(0,0,0,.45)',
+          }}
+          onClick={() => setFileManagerOpen(false)}
+        >
+          <div onClick={(e) => e.stopPropagation()}>
+            <FileManager
+              library={library}
+              onOpen={(entry) => {
+                if (entry.source !== undefined) {
+                  // 有源码快照 → 直接恢复（但文件句柄已失效，保存时需重新选）
+                  setDoc({
+                    id: entry.id,
+                    name: entry.name,
+                    source: entry.source,
+                    saved: true,
+                    ts: entry.ts,
+                  });
+                  setFileManagerOpen(false);
+                } else {
+                  // 只剩元数据（靠前的旧条目）→ 走重新选文件
+                  setFileManagerOpen(false);
+                  void handleOpen();
+                }
+              }}
+              onCreate={() => {
+                setFileManagerOpen(false);
+                handleNew();
+              }}
+              onClose={() => setFileManagerOpen(false)}
+            />
+          </div>
+        </div>
+      )}
 
       {/* 批次 3：Ctrl+F 富文本搜索面板（选中 + 定位） */}
       {/* S1：侧面板簇（搜索 / 大纲 / 图库 / 关系图谱，互斥单态）——已抽到 SidePanels */}

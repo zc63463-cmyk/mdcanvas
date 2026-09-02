@@ -3,29 +3,27 @@
  * theme：三主题令牌系统（ADR-0003）；render：渲染核心（T2 按需渲染 + 视口裁剪/LOD）。
  */
 
-export {
-  assetDiagnostics,
-  hasAssetIn,
-} from './chrome/assetDiagnostics.js';
-
-export {
-  DemoAssetHost,
-  kindOfFileName,
-} from './chrome/assetHost.js';
-export type { AssetHost } from './chrome/assetHost.js';
-
-export { AssetPanel } from './chrome/AssetPanel.js';
+export type { EntityRef } from '@mindcanvas/kernel';
 export type {
   AssetItem,
   AssetPanelProps,
 } from './chrome/AssetPanel.js';
-
-export { ContextMenu } from './chrome/ContextMenu.js';
+export { AssetPanel } from './chrome/AssetPanel.js';
+export {
+  assetDiagnostics,
+  hasAssetIn,
+} from './chrome/assetDiagnostics.js';
+export type { AssetHost } from './chrome/assetHost.js';
+export {
+  DemoAssetHost,
+  kindOfFileName,
+} from './chrome/assetHost.js';
 export type {
   ContextMenuItem,
   ContextMenuProps,
 } from './chrome/ContextMenu.js';
-
+export { ContextMenu } from './chrome/ContextMenu.js';
+export type { DescBlockProps } from './chrome/DescBlock.js';
 export {
   DESC_BAR_W,
   DESC_EDIT_MIN_LINES,
@@ -36,8 +34,10 @@ export {
   DescBlock,
   estimateDescHeight,
 } from './chrome/DescBlock.js';
-export type { DescBlockProps } from './chrome/DescBlock.js';
-
+export type {
+  NodeChoice,
+  TreeEdgeAnn,
+} from './chrome/EdgeEditor.js';
 export {
   appendEdge,
   collectNodeChoices,
@@ -49,71 +49,58 @@ export {
   mergeStyleAt,
   patchEdgeAt,
   REL_TEMPLATES,
-  removeEdgeAt,
   RoutingSideToggle,
+  removeEdgeAt,
   TreeEdgeEditor,
 } from './chrome/EdgeEditor.js';
-export type {
-  NodeChoice,
-  TreeEdgeAnn,
-} from './chrome/EdgeEditor.js';
-
-export {
-  collectEntityRelations,
-  radialLayout,
-} from './chrome/entityGraph.js';
-export type {
-  EntityRelation,
-  EntityRelationNode,
-} from './chrome/entityGraph.js';
-
-export { EntityGraphPanel } from './chrome/EntityGraphPanel.js';
 export type {
   EdgeListItem,
   EntityGraphPanelProps,
 } from './chrome/EntityGraphPanel.js';
 
-export {
-  isEscapedEntityInput,
-  unescapeEntityInput,
-} from './chrome/entityInput.js';
-
-export { EntityPicker } from './chrome/EntityPicker.js';
+export { EntityGraphPanel } from './chrome/EntityGraphPanel.js';
 export type {
   EntityCandidate,
   EntityPickerProps,
 } from './chrome/EntityPicker.js';
-
+export { EntityPicker } from './chrome/EntityPicker.js';
+export type { ErrorBoundaryProps } from './chrome/ErrorBoundary.js';
+export { ErrorBoundary } from './chrome/ErrorBoundary.js';
+export type {
+  EntityRelation,
+  EntityRelationNode,
+} from './chrome/entityGraph.js';
+export {
+  collectEntityRelations,
+  radialLayout,
+} from './chrome/entityGraph.js';
+export {
+  isEscapedEntityInput,
+  unescapeEntityInput,
+} from './chrome/entityInput.js';
+export type {
+  EntityHost,
+  EntityRecord,
+} from './chrome/entityStore.js';
 export {
   ENTITY_STORE_MAX,
   entityKeyOf,
   HttpEntityHost,
   LocalEntityStore,
 } from './chrome/entityStore.js';
-export type {
-  EntityHost,
-  EntityRecord,
-} from './chrome/entityStore.js';
-
-export { ErrorBoundary } from './chrome/ErrorBoundary.js';
-export type { ErrorBoundaryProps } from './chrome/ErrorBoundary.js';
-
+export type { ExportPngResult } from './chrome/exportPng.js';
 export {
   exportPng,
   readSvgSize,
   renderPng,
 } from './chrome/exportPng.js';
-export type { ExportPngResult } from './chrome/exportPng.js';
-
-export { exportSvg } from './chrome/exportSvg.js';
 export type { ExportSvgOptions } from './chrome/exportSvg.js';
-
-export { FlipCard } from './chrome/FlipCard.js';
+export { exportSvg } from './chrome/exportSvg.js';
 export type { FlipCardProps } from './chrome/FlipCard.js';
-
-export { GlassCard } from './chrome/GlassCard.js';
+export { FlipCard } from './chrome/FlipCard.js';
 export type { GlassCardProps } from './chrome/GlassCard.js';
-
+export { GlassCard } from './chrome/GlassCard.js';
+export type { GrowthCommentPanelProps } from './chrome/GrowthCommentPanel.js';
 export {
   estimateCommentAreaHeight,
   GCP_HEADER_H,
@@ -124,42 +111,36 @@ export {
   GROW_EXPAND_W,
   GrowthCommentPanel,
 } from './chrome/GrowthCommentPanel.js';
-export type { GrowthCommentPanelProps } from './chrome/GrowthCommentPanel.js';
-
-export { formatNote } from './chrome/note.js';
 export type { NoteSection } from './chrome/note.js';
-
-export { OutlinePanel } from './chrome/OutlinePanel.js';
+export { formatNote } from './chrome/note.js';
 export type { OutlinePanelProps } from './chrome/OutlinePanel.js';
-
-export { QaEditor } from './chrome/QaEditor.js';
+export { OutlinePanel } from './chrome/OutlinePanel.js';
 export type { QaEditorProps } from './chrome/QaEditor.js';
-
+export { QaEditor } from './chrome/QaEditor.js';
+export type {
+  RelationTypeConfig,
+  SemanticGroup,
+} from './chrome/relationSchema.js';
 export {
   DEFAULT_RELATION_TYPES,
   defaultRelationSchema,
   RelationSchema,
   SEMANTIC_GROUPS,
 } from './chrome/relationSchema.js';
-export type {
-  RelationTypeConfig,
-  SemanticGroup,
-} from './chrome/relationSchema.js';
-
+export type { SearchPanelProps } from './chrome/SearchPanel.js';
+export { SearchPanel } from './chrome/SearchPanel.js';
+export type { ShortcutHelpPanelProps } from './chrome/ShortcutHelpPanel.js';
+export { ShortcutHelpPanel } from './chrome/ShortcutHelpPanel.js';
 export {
   SCALE_NOTICE_HUGE,
   SCALE_NOTICE_LARGE,
   scaleNoticeFor,
 } from './chrome/scaleNotice.js';
-
-export { SearchPanel } from './chrome/SearchPanel.js';
-export type { SearchPanelProps } from './chrome/SearchPanel.js';
-
-export { ShortcutHelpPanel } from './chrome/ShortcutHelpPanel.js';
-export type { ShortcutHelpPanelProps } from './chrome/ShortcutHelpPanel.js';
-
 export { ThemeSwitcher } from './chrome/ThemeSwitcher.js';
-
+export type {
+  DemoLayout,
+  DemoSource,
+} from './demo/pipeline.js';
 export {
   buildEditable,
   buildEntities,
@@ -168,64 +149,48 @@ export {
   layoutDemo,
 } from './demo/pipeline.js';
 export type {
-  DemoLayout,
-  DemoSource,
-} from './demo/pipeline.js';
-
-export {
-  contextMenuItemsFor,
-  getNodeLabel,
-} from './edit/contextMenuItems.js';
-export type {
   DescMenuActions,
   EdgeMenuActions,
   EntityMenuActions,
 } from './edit/contextMenuItems.js';
-
-export { EditorController } from './edit/controller.js';
-export type { EditorControllerOptions } from './edit/controller.js';
-
 export {
-  isMindDocFile,
-  LocalDocHost,
-} from './edit/document.js';
+  contextMenuItemsFor,
+  getNodeLabel,
+} from './edit/contextMenuItems.js';
+export type { EditorControllerOptions } from './edit/controller.js';
+export { EditorController } from './edit/controller.js';
+export type { DocEntry } from './edit/docLibrary.js';
+
+export { DocLibrary, UNTAGGED } from './edit/docLibrary.js';
 export type {
   DocumentHost,
   MindDoc,
 } from './edit/document.js';
-
+export {
+  isMindDocFile,
+  LocalDocHost,
+} from './edit/document.js';
+export type { EditorKeyAction } from './edit/keys.js';
 export {
   EDITOR_KEY_BINDINGS,
   matchEditorKey,
 } from './edit/keys.js';
-export type { EditorKeyAction } from './edit/keys.js';
-
-export { OverlayEditor } from './edit/OverlayEditor.js';
 export type { OverlayEditorProps } from './edit/OverlayEditor.js';
-
+export { OverlayEditor } from './edit/OverlayEditor.js';
 export { collapsedAncestors } from './edit/reveal.js';
-
-export {
-  installBeforeUnload,
-  MM_FILE_TYPES,
-  saveMarkdown,
-} from './edit/save.js';
 export type {
   FsFileHandle,
   FsFileSystemWindow,
   FsWritable,
   SaveResult,
 } from './edit/save.js';
-
-export { useEditor } from './edit/useEditor.js';
-
-export { DemoPlugin } from './plugins/demoPlugin.js';
-
 export {
-  createSvgBackend,
-  sceneToSvg,
-  SvgBackend,
-} from './render/backend.js';
+  installBeforeUnload,
+  MM_FILE_TYPES,
+  saveMarkdown,
+} from './edit/save.js';
+export { useEditor } from './edit/useEditor.js';
+export { DemoPlugin } from './plugins/demoPlugin.js';
 export type {
   BackendKind,
   ImageDraw,
@@ -235,13 +200,17 @@ export type {
   ScenePrimitive,
   TextDraw,
 } from './render/backend.js';
-
+export {
+  createSvgBackend,
+  SvgBackend,
+  sceneToSvg,
+} from './render/backend.js';
 export {
   createCharMeasure,
   createDisplayMetricsFn,
   createNodeMeasure,
 } from './render/domMeasure.js';
-
+export type { EdgeLabelProps } from './render/EdgeLabel.js';
 export {
   cubicMidNormal,
   EDGE_LABEL_FONT,
@@ -250,8 +219,12 @@ export {
   pillWidthOf,
   textWidthOf,
 } from './render/EdgeLabel.js';
-export type { EdgeLabelProps } from './render/EdgeLabel.js';
-
+export type {
+  AestheticWeights,
+  EdgeCrossing,
+  RouteObstacle,
+  RouteResult,
+} from './render/edgeRouting.js';
 export {
   bezierFromAnchors,
   corridorObstacles,
@@ -269,18 +242,18 @@ export {
   segmentIntersectsRect,
 } from './render/edgeRouting.js';
 export type {
-  AestheticWeights,
-  EdgeCrossing,
-  RouteObstacle,
-  RouteResult,
-} from './render/edgeRouting.js';
-
-export { FreeEdgeLayer } from './render/FreeEdgeLayer.js';
-export type {
   EdgeRouteEntry,
   FreeEdgeLayerProps,
 } from './render/FreeEdgeLayer.js';
-
+export { FreeEdgeLayer } from './render/FreeEdgeLayer.js';
+export type {
+  DocEdge,
+  EdgeEndpoints,
+  EdgeManual,
+  EdgeSource,
+  EdgeStyle,
+  FreeEdge,
+} from './render/freeEdges.js';
 export {
   anchorOfNode,
   borderPoint,
@@ -294,42 +267,30 @@ export {
   splitEntityAnchor,
 } from './render/freeEdges.js';
 export type {
-  DocEdge,
-  EdgeEndpoints,
-  EdgeManual,
-  EdgeSource,
-  EdgeStyle,
-  FreeEdge,
-} from './render/freeEdges.js';
-
+  CardLevel,
+  LinkPathResult,
+  LodLevel,
+  NodeCardStyle,
+} from './render/geometry.js';
 export {
   buildLinkPath,
   computeBranchIndex,
-  linkEndpoints,
   LOD_AUTO_NODES,
+  linkEndpoints,
   lodFor,
   lodSkipText,
   nodeCardStyle,
   nodeHitTest,
   wavyPath,
 } from './render/geometry.js';
-export type {
-  CardLevel,
-  LinkPathResult,
-  LodLevel,
-  NodeCardStyle,
-} from './render/geometry.js';
-
-export { LinkG } from './render/LinkG.js';
 export type { LinkGProps } from './render/LinkG.js';
-
-export { MapView } from './render/MapView.js';
+export { LinkG } from './render/LinkG.js';
 export type {
   MapStats,
   MapViewApi,
   MapViewProps,
 } from './render/MapView.js';
-
+export { MapView } from './render/MapView.js';
 export {
   NODE_ANIM_MAX_NODES,
   NODE_ANIM_MS,
@@ -345,27 +306,30 @@ export {
   ZOOM_MIN,
   ZOOM_OVERSHOOT,
 } from './render/motion.js';
+export type { NodeGProps } from './render/NodeG.js';
 
+export { NodeG } from './render/NodeG.js';
+export type {
+  DropMode,
+  DropPlan,
+} from './render/nodeDrag.js';
 export {
   dragExcludedIds,
   dropModeFor,
   isDescendantOf,
   planDrop,
 } from './render/nodeDrag.js';
-export type {
-  DropMode,
-  DropPlan,
-} from './render/nodeDrag.js';
-
-export { NodeG } from './render/NodeG.js';
-export type { NodeGProps } from './render/NodeG.js';
-
+export type { SceneInput } from './render/sceneBuilder.js';
 export {
   buildSceneFromLayout,
   CANVAS_AUTO_NODES,
 } from './render/sceneBuilder.js';
-export type { SceneInput } from './render/sceneBuilder.js';
-
+export type {
+  AnimateOptions,
+  EasingFn,
+  FrameSchedulerOptions,
+  LerpFn,
+} from './render/scheduler.js';
 export {
   easeInOutQuad,
   easeOutCubic,
@@ -375,47 +339,34 @@ export {
   linear,
 } from './render/scheduler.js';
 export type {
-  AnimateOptions,
-  EasingFn,
-  FrameSchedulerOptions,
-  LerpFn,
-} from './render/scheduler.js';
-
+  AnimatedBox,
+  NodeFrame,
+} from './render/transition.js';
 export {
   lerpNodeFrame,
   toNodeFrame,
 } from './render/transition.js';
 export type {
-  AnimatedBox,
-  NodeFrame,
-} from './render/transition.js';
-
-export {
-  estimatePanVelocity,
-  ViewportController,
-} from './render/viewport.js';
-export type {
   PanSample,
   Transform,
   WorldPoint,
 } from './render/viewport.js';
-
+export {
+  estimatePanVelocity,
+  ViewportController,
+} from './render/viewport.js';
 export { PluginHost } from './runtime/pluginHost.js';
-
-export { createReactRegistries } from './runtime/registries.js';
 export type { KindBadgeRenderer } from './runtime/registries.js';
-
+export { createReactRegistries } from './runtime/registries.js';
+export type { SearchHit } from './search/search.js';
 export {
   nodeTitle,
   searchMind,
 } from './search/search.js';
-export type { SearchHit } from './search/search.js';
-
 export {
   ThemeProvider,
   useTheme,
 } from './theme/ThemeContext.js';
-
 export {
   CHROME,
   classicToken,
@@ -424,7 +375,6 @@ export {
   stickerToken,
   THEMES,
 } from './theme/tokens.js';
-
 export type {
   BranchColor,
   BranchLeaf,
@@ -433,5 +383,3 @@ export type {
   ThemeId,
   TokenSet,
 } from './theme/types.js';
-
-export type { EntityRef } from '@mindcanvas/kernel';
