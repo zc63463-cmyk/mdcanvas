@@ -15,7 +15,8 @@
 - **`CONTRIBUTING.md`** — 开发规范（新代码怎么写、为什么这么写）
 - `docs/roadmap/` — 内核重构路线图 K0-K5 + 下一阶段规划
 - `docs/adr/` — 架构决策记录（0004 接口冻结 / 0005 依赖守护 / 0006 渲染后端 / 0007 组件拆分）
-- **`docs/specs/2026-09-02-mm-md-protocol.md`** — **`.mm.md` 协议规格**（数据层权威定义）
+- **`docs/2026-09-02-next-steps.md`** — 后续开发指导（待办优先级 + 纪律速查 + 待拍板事项）
+- `docs/specs/2026-09-02-mm-md-protocol.md` — **`.mm.md` 协议规格**（数据层权威定义）
 - `docs/specs/` — forgejo-bridge 联动 spec（首个参考消费者规格，R1-R14）
 - `docs/research/` — OSS 调研与方案对比
 - `docs/mirrors/` — 三面镜子（消费者规格，接口设计的验收标尺）
