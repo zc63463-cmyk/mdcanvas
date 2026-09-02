@@ -361,8 +361,47 @@ export interface EdgeCrossing {
 }
 
 /**
+ * 折线的轴对齐包围盒（broad phase 用）。
+ * 空折线返回原点退化盒——后续逐段精算会因无段而立即结束，不影响正确性。
+ */
+function bboxOf(pts: readonly { x: number; y: number }[]): BBox {
+  if (pts.length === 0) return { minX: 0, minY: 0, maxX: 0, maxY: 0 };
+  let minX = Infinity;
+  let minY = Infinity;
+  let maxX = -Infinity;
+  let maxY = -Infinity;
+  for (const p of pts) {
+    if (p.x < minX) minX = p.x;
+    if (p.y < minY) minY = p.y;
+    if (p.x > maxX) maxX = p.x;
+    if (p.y > maxY) maxY = p.y;
+  }
+  return { minX, minY, maxX, maxY };
+}
+
+interface BBox {
+  minX: number;
+  minY: number;
+  maxX: number;
+  maxY: number;
+}
+
+/** 两包围盒是否重叠（含相切）。不重叠 → 两折线绝不可能相交 */
+function bboxOverlap(a: BBox, b: BBox): boolean {
+  return a.minX <= b.maxX && b.minX <= a.maxX && a.minY <= b.maxY && b.minY <= a.maxY;
+}
+
+/**
  * 计算所有边两两之间的交叉点。
  * 上下关系由数组顺序决定：索引大者绘制在后 → 位于上方。
+ *
+ * 复杂度：朴素实现是 O(E² × P²)（E=边数，P=每边折线点数），
+ * 实测 400 边即耗时 ~155ms（远超一帧 16ms 预算）。
+ *
+ * 优化：**broad phase 包围盒预筛** —— 先算各折线 AABB（O(E×P)，只算一次），
+ * 边对比较前先判 AABB 是否重叠，不重叠则整对跳过 O(P²) 的逐段精算。
+ * 空间上远离的边对（占绝大多数）因此降到 O(1)。
+ * **不改变结果**：AABB 不重叠是「不可能相交」的充分条件，只筛掉必然无交的对。
  *
  * @param polylines 各边的折线（世界坐标），按绘制顺序排列
  */
@@ -370,9 +409,14 @@ export function findCrossings(
   polylines: readonly (readonly { x: number; y: number }[])[],
 ): EdgeCrossing[] {
   const out: EdgeCrossing[] = [];
+  // broad phase：预计算包围盒（循环外一次算完，避免每条边重复 O(P) 扫描）
+  const boxes = polylines.map(bboxOf);
   for (let i = 0; i < polylines.length; i++) {
+    const a = polylines[i]!;
+    const ba = boxes[i]!;
     for (let j = i + 1; j < polylines.length; j++) {
-      const a = polylines[i]!;
+      // 包围盒不重叠 → 不可能相交，跳过内层 O(P²) 逐段测试
+      if (!bboxOverlap(ba, boxes[j]!)) continue;
       const b = polylines[j]!;
       for (let m = 0; m + 1 < a.length; m++) {
         for (let n = 0; n + 1 < b.length; n++) {
