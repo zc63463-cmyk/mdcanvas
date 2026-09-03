@@ -26,7 +26,12 @@ export interface DocEntry {
   name: string;
   /** 最近访问时间 */
   ts: number;
-  /** 分类标签（可多个；空数组 = 未分类） */
+  /**
+   * 所属目录路径，`/` 分隔层级（如 `工作/PomodoroXII`）。
+   * 空字符串 = 根目录（未归档）。旧数据缺此字段 → 读取时兜底为 ''（见 normalize）。
+   */
+  folder: string;
+  /** 附加标签（可选；目录为主、标签为辅） */
   tags: string[];
   /** 源码快照（仅最近若干条有） */
   source?: string;
@@ -40,6 +45,9 @@ function cmpTag(a: string, b: string): number {
 /** 未分类的固定标签（筛选 UI 用，不写进 tags） */
 export const UNTAGGED = '__untagged__';
 
+/** 目录层级分隔符 */
+const SEP = '/';
+
 function isEntry(x: unknown): x is DocEntry {
   if (typeof x !== 'object' || x === null) return false;
   const o = x as Record<string, unknown>;
@@ -52,13 +60,27 @@ function isEntry(x: unknown): x is DocEntry {
   );
 }
 
+/** 兼容旧数据：补齐缺失的 folder，并清洗路径格式 */
+function normalize(e: DocEntry): DocEntry {
+  return { ...e, folder: cleanFolder(typeof e.folder === 'string' ? e.folder : '') };
+}
+
+/** 清洗目录路径：去首尾斜杠、合并重复斜杠、丢弃空段 */
+function cleanFolder(raw: string): string {
+  return raw
+    .split(SEP)
+    .map((s) => s.trim())
+    .filter((s) => s.length > 0)
+    .join(SEP);
+}
+
 export class DocLibrary {
   private load(): DocEntry[] {
     try {
       const raw = localStorage.getItem(LIB_KEY);
       if (!raw) return [];
       const parsed: unknown = JSON.parse(raw);
-      return Array.isArray(parsed) ? parsed.filter(isEntry) : [];
+      return Array.isArray(parsed) ? parsed.filter(isEntry).map(normalize) : [];
     } catch {
       return []; // localStorage 禁用/损坏 → 退化为内存态，不阻断主流程
     }
@@ -91,18 +113,67 @@ export class DocLibrary {
    * 登记/更新一条（按 id 去重，更新时间戳）。
    * 超出 SOURCE_KEEP 的旧条目会被剥掉 source。
    */
-  upsert(doc: Pick<MindDoc, 'id' | 'name' | 'source'> & { tags?: string[] }): DocEntry {
+  upsert(
+    doc: Pick<MindDoc, 'id' | 'name' | 'source'> & { tags?: string[]; folder?: string },
+  ): DocEntry {
+    const prev = this.get(doc.id);
     const list = this.load().filter((e) => e.id !== doc.id);
     const entry: DocEntry = {
       id: doc.id,
       name: doc.name,
       ts: Date.now(),
-      tags: doc.tags ?? this.get(doc.id)?.tags ?? [],
+      folder: doc.folder !== undefined ? cleanFolder(doc.folder) : (prev?.folder ?? ''),
+      tags: doc.tags ?? prev?.tags ?? [],
       source: doc.source,
     };
     list.unshift(entry);
     this.persistSorted(list);
     return entry;
+  }
+
+  /** 移动文档到指定目录（路径会被清洗；'' 表示移到根目录） */
+  move(id: string, folder: string): void {
+    const list = this.load();
+    const hit = list.find((e) => e.id === id);
+    if (!hit) return;
+    hit.folder = cleanFolder(folder);
+    this.save(list);
+  }
+
+  /**
+   * 全部目录路径（含所有层级的父目录），按字典序。
+   * 例：有 `a/b/c` 一条 → 返回 `['a', 'a/b', 'a/b/c']`，便于 UI 逐级渲染。
+   */
+  folders(): string[] {
+    const set = new Set<string>();
+    for (const e of this.load()) {
+      const segs = e.folder.split(SEP).filter((s) => s.length > 0);
+      for (let i = 1; i <= segs.length; i++) set.add(segs.slice(0, i).join(SEP));
+    }
+    return [...set].sort(cmpTag);
+  }
+
+  /**
+   * 某目录下的**直接子项**：子目录名 + 直属文档。
+   * `folder` 传 '' 表示根目录。
+   */
+  childrenOf(folder: string): { dirs: string[]; docs: DocEntry[] } {
+    const prefix = folder === '' ? '' : `${folder}${SEP}`;
+    const dirs = new Set<string>();
+    const docs: DocEntry[] = [];
+    for (const e of this.list()) {
+      // 直属本文档：folder 恰好相等。
+      // ⚠️ 必须单独判等——否则 `folder='工作'` 的文档在查 '工作' 目录时
+      // 会因 startsWith('工作/') 为 false 被漏掉（子目录才带尾部分隔符）。
+      if (e.folder === folder) {
+        docs.push(e);
+        continue;
+      }
+      if (!e.folder.startsWith(prefix)) continue;
+      const rest = e.folder.slice(prefix.length);
+      if (rest.length > 0) dirs.add(rest.split(SEP)[0]!); // 下一级子目录名
+    }
+    return { dirs: [...dirs].sort(cmpTag), docs };
   }
 
   rename(id: string, name: string): void {

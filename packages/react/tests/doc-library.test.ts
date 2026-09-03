@@ -162,3 +162,80 @@ describe('DocLibrary · 存储约束', () => {
     expect(lib().list()).toEqual([]);
   });
 });
+
+describe('DocLibrary · 目录（树）', () => {
+  it('upsert 时指定 folder 即归入该目录', () => {
+    const d = lib();
+    d.upsert({ id: 'a', name: 'A.mm.md', source: '# A', folder: '工作/PomodoroXII' });
+    expect(d.get('a')?.folder).toBe('工作/PomodoroXII');
+  });
+
+  it('未指定 folder 时为根目录（空字符串）', () => {
+    const d = lib();
+    d.upsert({ id: 'a', name: 'A.mm.md', source: '# A' });
+    expect(d.get('a')?.folder).toBe('');
+  });
+
+  it('路径会被清洗：去首尾斜杠、合并重复、丢空段', () => {
+    const d = lib();
+    d.upsert({ id: 'a', name: 'A.mm.md', source: '# A', folder: '/工作//项目A/' });
+    expect(d.get('a')?.folder).toBe('工作/项目A');
+  });
+
+  it('重复 upsert 不会丢掉已有 folder', () => {
+    const d = lib();
+    d.upsert({ id: 'a', name: 'A.mm.md', source: '# v1', folder: '工作' });
+    d.upsert({ id: 'a', name: 'A.mm.md', source: '# v2' });
+    expect(d.get('a')?.folder).toBe('工作');
+    expect(d.get('a')?.source).toBe('# v2');
+  });
+
+  it('move 把文档移到另一个目录', () => {
+    const d = lib();
+    d.upsert({ id: 'a', name: 'A.mm.md', source: '# A', folder: '工作' });
+    d.move('a', '灵感/随手');
+    expect(d.get('a')?.folder).toBe('灵感/随手');
+  });
+
+  it('move 到空路径 = 移回根目录', () => {
+    const d = lib();
+    d.upsert({ id: 'a', name: 'A.mm.md', source: '# A', folder: '工作' });
+    d.move('a', '  ');
+    expect(d.get('a')?.folder).toBe('');
+  });
+
+  it('folders() 返回所有层级（含中间层）', () => {
+    const d = lib();
+    d.upsert({ id: 'a', name: 'A.mm.md', source: '# A', folder: '工作/PomodoroXII/架构' });
+    expect(d.folders()).toEqual(['工作', '工作/PomodoroXII', '工作/PomodoroXII/架构']);
+  });
+
+  it('childrenOf(根目录) 返回一级子目录 + 直属文档', () => {
+    const d = lib();
+    d.upsert({ id: 'a', name: 'A.mm.md', source: '# A', folder: '工作' });
+    d.upsert({ id: 'b', name: 'B.mm.md', source: '# B', folder: '灵感/随手' });
+    d.upsert({ id: 'c', name: 'C.mm.md', source: '# C' });
+    const root = d.childrenOf('');
+    expect(root.dirs).toEqual(['工作', '灵感']);
+    expect(root.docs.map((e) => e.id)).toEqual(['c']);
+  });
+
+  it('childrenOf(子目录) 只看直属，不递归', () => {
+    const d = lib();
+    d.upsert({ id: 'a', name: 'A.mm.md', source: '# A', folder: '工作/PomodoroXII' });
+    d.upsert({ id: 'b', name: 'B.mm.md', source: '# B', folder: '工作' });
+    const work = d.childrenOf('工作');
+    expect(work.dirs).toEqual(['PomodoroXII']);
+    expect(work.docs.map((e) => e.id)).toEqual(['b']);
+  });
+
+  it('旧数据缺 folder 字段时兜底为根目录（向后兼容）', () => {
+    localStorage.setItem(
+      KEY,
+      JSON.stringify([{ id: 'old', name: '旧.mm.md', ts: 1000, tags: [] }]),
+    );
+    const d = lib();
+    expect(d.get('old')?.folder).toBe('');
+    expect(d.childrenOf('').docs.map((e) => e.id)).toEqual(['old']);
+  });
+});

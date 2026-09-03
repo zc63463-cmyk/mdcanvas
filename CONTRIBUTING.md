@@ -140,7 +140,7 @@ node scripts/analyze-export-classification.mjs
 
 ## 六、测试
 
-- 生产 : 测试行数比约 **1 : 0.71**（基线：kernel 301 + react 459 + canvas 24 = **784**）。
+- 生产 : 测试行数比约 **1 : 0.71**（基线：kernel 301 + react 469 + canvas 24 = **794**）。
 - 改行为必须有测试；改结构（如拆分、导出面）**测试全绿不等于行为不变**，
   需额外冒烟（见规划文档「验证方式」一节）。
 - **新写的守卫必须做变异测试**：改源码复现缺陷，确认测试真的会红。
@@ -155,7 +155,7 @@ node scripts/analyze-export-classification.mjs
 
 ```bash
 pnpm gate:fast   # 提交前：typecheck + depcruise + lint + budget（~1 分钟）
-pnpm gate        # 推送前：+ 784 测试（2-3 分钟）
+pnpm gate        # 推送前：+ 794 测试（2-3 分钟）
 pnpm budget      # 单跑债务预算
 pnpm analyze     # 单跑结构实测（规模 / 导出面 / 复杂度热点）
 ```
