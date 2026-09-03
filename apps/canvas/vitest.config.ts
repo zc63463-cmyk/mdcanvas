@@ -18,6 +18,10 @@ export default mergeConfig(
     test: {
       include: ['tests/**/*.test.{ts,tsx}'],
       environment: 'jsdom',
+
+      // 单进程顺序执行，不建 worker 池。同 packages/react/vitest.config.ts：
+      // 并行 worker 跑 jsdom 时进程跑完不退出（Windows），单进程无此问题且更快。
+      fileParallelism: false,
     },
   }),
 );
