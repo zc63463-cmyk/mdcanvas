@@ -10,15 +10,12 @@ import { LayoutCache, REGISTERED_KINDS, refKey } from '@mindcanvas/kernel';
 import type {
   AssetHost,
   AssetItem,
-  DocEdge,
   DocumentHost,
   EdgeManual,
   EdgeRouteEntry,
-  EdgeStyle,
   FreeEdge,
   MapStats,
   MindDoc,
-  TreeEdgeAnn,
 } from '@mindcanvas/react';
 import {
   AssetPanel,
@@ -39,39 +36,31 @@ import {
   DemoAssetHost,
   DemoPlugin,
   DocLibrary,
-  EdgeEditor,
   EditorController,
   EntityGraphPanel,
   EntityPicker,
-  edgesOf,
   exportPng,
   exportSvg,
   FlipCard,
-  findDuplicateEdge,
   formatNote,
   getNodeLabel,
   installBeforeUnload,
   isEscapedEntityInput,
   isMindDocFile,
-  LinkCreator,
   LocalDocHost,
   LocalEntityStore,
   layoutDemo,
   MapView,
   matchEditorKey,
-  mergeStyleAt,
   OutlinePanel,
   PluginHost,
-  patchEdgeAt,
   QaEditor,
-  removeEdgeAt,
   SearchPanel,
   ShortcutHelpPanel,
   scaleNoticeFor,
   searchMind,
   ThemeProvider,
   ThemeSwitcher,
-  TreeEdgeEditor,
   unescapeEntityInput,
   useEditor,
   useTheme,
@@ -90,6 +79,8 @@ import {
 import gatewaySource from './demo/gateway.mm.md?raw';
 import { FileManager } from './FileManager.js';
 import { useDocumentActions } from './hooks/useDocumentActions.js';
+import { nodeById, useEdgeActions } from './hooks/useEdgeActions.js';
+import { EdgeDraftLayer } from './EdgeDraftLayer.js';
 import { useExportActions } from './hooks/useExportActions.js';
 import { PerfPanel } from './PerfPanel.js';
 import { SidePanels } from './SidePanels.js';
@@ -452,70 +443,16 @@ function StageContent({
   const [linkDraft, setLinkDraft] = useState<{ sourceId: string; x: number; y: number } | null>(
     null,
   );
-  const [edgeSel, setEdgeSel] = useState<{ key: string; x: number; y: number } | null>(null);
   // E6：树自然线关系内容编辑（note.via）+ 拖拽连接由 MapView 回调直驱
   const [treeEdgeEdit, setTreeEdgeEdit] = useState<{
     childId: string;
     x: number;
     y: number;
   } | null>(null);
-  const nodeChoices = useMemo(() => collectNodeChoices(controller.root), [controller.root]);
-  const anchorById = useMemo(() => {
-    const m = new Map<string, string>();
-    nodeChoices.forEach((c) => m.set(c.id, c.anchor));
-    return m;
-  }, [nodeChoices]);
-  const freeEdges: FreeEdge[] = useMemo(() => collectFreeEdges(controller.root), [controller.root]);
-  const selEdgeIndex = edgeSel ? Number(edgeSel.key.slice(1)) : -1;
-  const selEdge: (FreeEdge & { index: number }) | null = useMemo(() => {
-    if (!edgeSel) return null;
-    const e = freeEdges.find((x) => x.key === edgeSel.key);
-    return e ? { ...e, index: selEdgeIndex } : null;
-  }, [edgeSel, freeEdges, selEdgeIndex]);
-
-  // Opp 精确翻转：接收 FreeEdgeLayer 的实际路由结果（经 MapView 透传）。
-  //
-  // 只留「选中边当前的 d」而非整个 routes Map —— 这是**值比较**短路的关键：
-  // 存 Map 的话对象是引用、路由一重算就变，无法判断"内容是否真的变了"；
-  // 存 d（字符串）可以值比较，内容不变就不 setState，从源头掐断
-  // 「回调 → setState → 重渲染 → 回调」的自我触发（死循环）。
-  // 上游（MapView/FreeEdgeLayer）已保证依赖稳定，这里再兜一层，防将来改坏上游。
-  const [selEdgeD, setSelEdgeD] = useState<string | undefined>(undefined);
-  const selEdgeKeyRef = useRef<string | null>(null);
-  selEdgeKeyRef.current = selEdge?.key ?? null;
-  const handleEdgeRoutes = useCallback((routes: ReadonlyMap<string, EdgeRouteEntry>) => {
-    const key = selEdgeKeyRef.current;
-    const d = key ? routes.get(key)?.route.d : undefined;
-    setSelEdgeD((prev) => (prev === d ? prev : d));
-  }, []);
-  /** 选中边当前实际渲染的路径 d —— 供 EdgeEditor 的 Opp 推断 auto 模式下的鼓向 */
-  const selEdgeCurrentD = selEdge ? selEdgeD : undefined;
-
-  /** root note.edges 写入（文档级边标注；undo/自动保存经 updateNote 免费继承） */
-  const writeEdges = (edges: DocEdge[]): void => {
-    controller.updateNote(controller.root.id, edges.length > 0 ? { edges } : { edges: undefined });
-  };
-  /**
-   * Issue #3：写入边的「人工锁定」几何（拖端点 / bend 控制点结果）。
-   * manual = null → 清空锁定（恢复自动优化）。写入 undefined 键在序列化时会被忽略，
-   * 等价于删除该字段，无需额外清理逻辑。
-   */
-  const writeEdgeManual = (index: number, manual: EdgeManual | null): void => {
-    const cur = edgesOf(controller.root.note);
-    writeEdges(patchEdgeAt(cur, index, { manual: manual ?? undefined }));
-  };
-  /** 建边（E7 审查：同 from+to+rel 去重——已存在直接选中打开编辑器，防重叠双线） */
-  const connectEdge = (from: string, to: string, rel: string, sx: number, sy: number): void => {
-    const cur = edgesOf(controller.root.note);
-    const dup = findDuplicateEdge(cur, { from, to, rel });
-    if (dup >= 0) {
-      setEdgeSel({ key: `e${dup}`, x: sx, y: sy });
-      return;
-    }
-    const arr = appendEdge(cur, { from, to, rel, source: 'manual' });
-    writeEdges(arr);
-    setEdgeSel({ key: `e${arr.length - 1}`, x: sx, y: sy });
-  };
+  // 边（free edge）状态与操作的单一归属（T1 结构治理续，见 hooks/useEdgeActions）
+  const edgeActions = useEdgeActions(controller);
+  // 边编辑浮层用：TS 无法对 obj.prop 跨表达式收窄类型，取局部 const 让守卫生效
+  const selEdgeOpen = edgeActions.selEdge;
 
   // E4：语义边行（面板哑渲染；文本 = 节点文本 / 实体锚名 / 原始锚文本兜底）
   const edgeItems = useMemo(() => {
@@ -525,7 +462,7 @@ function StageContent({
       if (n.type === 'entity' && n.ref) return `@${n.ref.kind}:${n.ref.id}`;
       return n.text ?? '';
     };
-    return freeEdges.map((e) => ({
+    return edgeActions.freeEdges.map((e) => ({
       key: e.key,
       rel: e.rel,
       dir: e.dir,
@@ -536,7 +473,7 @@ function StageContent({
       ...(e.invalidAt !== undefined ? { invalidAt: e.invalidAt } : {}),
       ...(e.source !== undefined ? { source: e.source } : {}),
     }));
-  }, [freeEdges, controller.root]);
+  }, [edgeActions.freeEdges, controller.root]);
 
   // 批次 3：Ctrl+F 搜索面板 / Ctrl+D 大纲面板
   // S1：侧面板互斥收口——单态管理（search/outline/assets/relation），移动端不再浮层堆叠
@@ -769,17 +706,17 @@ function StageContent({
 
   // E3：边编辑/连线创建浮窗 Esc 关闭
   useEffect(() => {
-    if (!linkDraft && !edgeSel && !treeEdgeEdit) return;
+    if (!linkDraft && !edgeActions.edgeSel && !treeEdgeEdit) return;
     const onKey = (e: KeyboardEvent): void => {
       if (e.key === 'Escape') {
         setLinkDraft(null);
-        setEdgeSel(null);
+        edgeActions.setEdgeSel(null);
         setTreeEdgeEdit(null);
       }
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [linkDraft, edgeSel, treeEdgeEdit]);
+  }, [linkDraft, edgeActions.edgeSel, treeEdgeEdit]);
 
   if (!layout) return null;
 
@@ -887,7 +824,7 @@ function StageContent({
             // 退出关系态 → 收起所有关系编辑浮窗（避免浮窗悬空在浏览态）
             if (!next) {
               setLinkDraft(null);
-              setEdgeSel(null);
+              edgeActions.setEdgeSel(null);
               setTreeEdgeEdit(null);
             }
           }}
@@ -965,11 +902,11 @@ function StageContent({
             controller.selectedId !== ln.node.id
           ) {
             const fromId = controller.selectedId;
-            const from = anchorById.get(fromId) ?? anchorOfNode(controller.root, fromId) ?? '';
+            const from = edgeActions.anchorById.get(fromId) ?? anchorOfNode(controller.root, fromId) ?? '';
             const to =
-              anchorById.get(ln.node.id) ?? anchorOfNode(controller.root, ln.node.id) ?? '';
+              edgeActions.anchorById.get(ln.node.id) ?? anchorOfNode(controller.root, ln.node.id) ?? '';
             if (from && to) {
-              connectEdge(from, to, 'relates-to', mods.sx, mods.sy);
+              edgeActions.connectEdge(from, to, 'relates-to', mods.sx, mods.sy);
               controller.select(ln.node.id);
               return;
             }
@@ -1034,11 +971,11 @@ function StageContent({
           controller.select(null);
         }}
         onQaChange={(id, qa) => controller.updateNote(id, { qa })}
-        selectedEdgeKey={edgeSel?.key ?? null}
-        onEdgeClick={(edge, sx, sy) => setEdgeSel({ key: edge.key, x: sx, y: sy })}
+        selectedEdgeKey={edgeActions.edgeSel?.key ?? null}
+        onEdgeClick={(edge, sx, sy) => edgeActions.setEdgeSel({ key: edge.key, x: sx, y: sy })}
         // Issue #3：手动覆盖 —— 拖拽端点 / bend 后写入 manual，恢复自动优化传 null
-        onEdgeManualChange={(edge, manual) => writeEdgeManual(edge.index, manual)}
-        onEdgeRoutes={handleEdgeRoutes}
+        onEdgeManualChange={(edge, manual) => edgeActions.writeEdgeManual(edge.index, manual)}
+        onEdgeRoutes={edgeActions.handleEdgeRoutes}
         onTreeEdgeEdit={(childId, sx, sy) => setTreeEdgeEdit({ childId, x: sx, y: sy })}
         onEdgeConnect={(fromId, toId, sx, sy) => {
           // E6 拖拽连接：命中目标 → 以默认 rel 建边并立即开编辑器（图操作体验）；未命中 → 开创建器选目标
@@ -1046,10 +983,10 @@ function StageContent({
             setLinkDraft({ sourceId: fromId, x: sx, y: sy });
             return;
           }
-          const from = anchorById.get(fromId) ?? anchorOfNode(controller.root, fromId) ?? '';
-          const to = anchorById.get(toId) ?? anchorOfNode(controller.root, toId) ?? '';
+          const from = edgeActions.anchorById.get(fromId) ?? anchorOfNode(controller.root, fromId) ?? '';
+          const to = edgeActions.anchorById.get(toId) ?? anchorOfNode(controller.root, toId) ?? '';
           if (!from || !to) return;
-          connectEdge(from, to, 'relates-to', sx, sy);
+          edgeActions.connectEdge(from, to, 'relates-to', sx, sy);
         }}
         onNodeMove={(op) => {
           // 节点拖拽重排（M5-T5）：全部经 move-node TreeOp + OpHistory → undo/redo 正确
@@ -1460,103 +1397,15 @@ function StageContent({
         />
       )}
 
-      {/* E7：树自然线关系标注（note.edge 结构化对象；仅右键树边弹出） */}
-      {treeEdgeEdit && (
-        <TreeEdgeEditor
-          childId={treeEdgeEdit.childId}
-          ann={(() => {
-            const n = nodeById(controller.root, treeEdgeEdit.childId);
-            const e = n?.note?.edge;
-            return e && typeof e === 'object' ? (e as TreeEdgeAnn) : null;
-          })()}
-          viaLabel={(() => {
-            const n = nodeById(controller.root, treeEdgeEdit.childId);
-            return typeof n?.note?.via === 'string' ? (n.note.via as string) : '';
-          })()}
-          x={treeEdgeEdit.x}
-          y={treeEdgeEdit.y}
-          onChange={(ann) =>
-            controller.updateNote(treeEdgeEdit.childId, ann ? { edge: ann } : { edge: undefined })
-          }
-          onClose={() => setTreeEdgeEdit(null)}
-        />
-      )}
-
-      {/* E5：连线创建器（目标候选 + rel 模板 + dir + 样式；确认 → root note.edges 追加，经 update-node 可撤销） */}
-      {linkDraft && (
-        <LinkCreator
-          choices={nodeChoices}
-          x={linkDraft.x}
-          y={linkDraft.y}
-          onCreate={(edge: DocEdge) => {
-            const from =
-              anchorById.get(linkDraft.sourceId) ??
-              anchorOfNode(controller.root, linkDraft.sourceId) ??
-              '';
-            setLinkDraft(null);
-            if (!from) return;
-            connectEdge(from, edge.to, edge.rel, linkDraft.x, linkDraft.y);
-            // 创建器携带的 dir/label/note/style 需落到（可能已存在的）边上
-            const cur = edgesOf(controller.root.note);
-            const idx = findDuplicateEdge(cur, { from, to: edge.to, rel: edge.rel });
-            const extras: Partial<DocEdge> = {};
-            if (edge.dir) extras.dir = edge.dir;
-            if (edge.label) extras.label = edge.label;
-            if (edge.note) extras.note = edge.note;
-            if (edge.style) extras.style = edge.style;
-            if (Object.keys(extras).length > 0 && idx >= 0) {
-              writeEdges(patchEdgeAt(cur, idx, extras));
-            }
-          }}
-          onClose={() => setLinkDraft(null)}
-        />
-      )}
-
-      {/* E5：边编辑浮窗（rel/dir/label/note + 样式即时落 root.note.edges；删除可撤销） */}
-      {edgeSel && selEdge && (
-        <EdgeEditor
-          edge={{
-            key: selEdge.key,
-            index: selEdge.index,
-            rel: selEdge.rel,
-            dir: selEdge.dir,
-            from: selEdge.from,
-            to: selEdge.to,
-            ...(selEdge.label !== undefined ? { label: selEdge.label } : {}),
-            ...(selEdge.note !== undefined ? { note: selEdge.note } : {}),
-            ...(selEdge.style !== undefined ? { style: selEdge.style } : {}),
-            ...(selEdge.invalidAt !== undefined ? { invalidAt: selEdge.invalidAt } : {}),
-            ...(selEdge.routingSide !== undefined ? { routingSide: selEdge.routingSide } : {}),
-          }}
-          x={edgeSel.x}
-          y={edgeSel.y}
-          currentD={selEdgeCurrentD}
-          // Issue #3 / forceSide：routingSide 经 patch 写回（含 undefined = 恢复自动）
-          onChange={(patch: Partial<DocEdge>) => {
-            writeEdges(patchEdgeAt(edgesOf(controller.root.note), selEdge.index, patch));
-          }}
-          onStyle={(patch: EdgeStyle) => {
-            writeEdges(mergeStyleAt(edgesOf(controller.root.note), selEdge.index, patch));
-          }}
-          onInvalidate={() => {
-            writeEdges(
-              patchEdgeAt(edgesOf(controller.root.note), selEdge.index, {
-                invalidAt: new Date().toISOString(),
-              }),
-            );
-          }}
-          onRestore={() => {
-            writeEdges(
-              patchEdgeAt(edgesOf(controller.root.note), selEdge.index, { invalidAt: undefined }),
-            );
-          }}
-          onDelete={() => {
-            writeEdges(removeEdgeAt(edgesOf(controller.root.note), selEdge.index));
-            setEdgeSel(null);
-          }}
-          onClose={() => setEdgeSel(null)}
-        />
-      )}
+      {/* E7 树边标注 + E5 连线创建器 / 边编辑浮窗 —— 已抽到 EdgeDraftLayer */}
+      <EdgeDraftLayer
+        controller={controller}
+        edgeActions={edgeActions}
+        treeEdgeEdit={treeEdgeEdit}
+        linkDraft={linkDraft}
+        onCloseTreeEdge={() => setTreeEdgeEdit(null)}
+        onCloseLinkDraft={() => setLinkDraft(null)}
+      />
 
       {/* 批次 2：? 快捷键帮助面板 */}
       {helpOpen && <ShortcutHelpPanel onClose={() => setHelpOpen(false)} />}
@@ -1699,18 +1548,6 @@ function qaItemsOf(node: EditableNode): string[] {
 /** 右键菜单项（新建/编辑/层级/折叠/删除；根节点禁用新建同级/反缩进/删除） */
 
 /** 按 id 从树中取节点（undefined = 未选中/已删除） */
-function nodeById(root: EditableNode, id: string): EditableNode | undefined {
-  if (root.id === id) return root;
-  const walk = (n: EditableNode): EditableNode | undefined => {
-    for (const c of n.children) {
-      if (c.id === id) return c;
-      const r = walk(c);
-      if (r) return r;
-    }
-    return undefined;
-  };
-  return walk(root);
-}
 
 function btnStyle(enabled: boolean): CSSProperties {
   return {
