@@ -157,34 +157,76 @@ function parseRoot(src: string): MindNode {
 
 ---
 
-## 七、待拍板：修法选择
+## 九、修复结果：方案 B 已实施（commit `7e4acc8`）
 
-### 方案 A（推荐，最小改动）—— CI 里把 build 提到 typecheck 之前
+用户拍板选 **方案 B**。实施中发现朴素的 paths 行不通，改用 **TypeScript project references**。
 
-```yaml
-- name: 构建（先产出 dist，供下游 typecheck 解析）
-  run: pnpm build
+### 为什么不是「paths 直指对方 src」
 
-- name: 类型检查（3 包）
-  run: pnpm typecheck
+实测给 react 加 `paths: {'@mindcanvas/kernel': ['../kernel/src/index.ts']}` → **78 个新错误**：
+
+```
+../kernel/src/layout/mindmap.ts(409,37): TS2532: Object is possibly 'undefined'
+../kernel/src/layout/mindmap.ts(415,28): TS18048: 'curr' is possibly 'undefined'
 ```
 
-- 优点：与本地现有行为一致，改动一行顺序
-- 缺点：build 失败时 typecheck 的错误信息会被掩盖（可接受，build 失败本身就是要修的）
+**paths 会把对方源码纳入本项目的检查域** —— 用 react 的 `noUncheckedIndexedAccess: true`
+（继承自 base）去检查 kernel 源码（它特意设为 `false`）。
+project references 的价值正是：各项目**用自己的编译设置**检查，只共享声明文件。
 
-### 方案 B（更彻底）—— tsconfig 加 paths 指向 src
+### 实际改动
 
-让 typecheck 彻底不依赖 `dist`，本地和 CI 都不需要「先 build 再 typecheck」。
+| 文件 | 改动 |
+|---|---|
+| `packages/kernel/tsconfig.build.json` | `+ composite: true` |
+| `packages/react/tsconfig.build.json` | `+ composite: true` |
+| `packages/react/tsconfig.json` | `+ references` → kernel build 配置；`+ paths` 自映射到 src |
+| `apps/canvas/tsconfig.json` | `+ references` → kernel + react 的 build 配置 |
+| 三个包 `package.json` | `typecheck`: `tsc -p tsconfig.json` → **`tsc -b tsconfig.json`** |
+| `.gitignore` | `+ *.tsbuildinfo` |
+| `ci.yml` / `CONTRIBUTING.md` | 防回归注释 / 更新过时的「必须先 build」说明 |
 
-- 优点：根治该坑，本地新 clone 后可直接 `pnpm gate`
-- 缺点：要改 kernel / react / canvas 三个 tsconfig，需验证与 `tsconfig.build.json`
-  （发布构建，仍应输出 dist）不冲突
+两个约束：
 
-### 配套纪律（无论选哪个都要做）
+- references **必须指向 build 配置**，不能指向 `tsconfig.json` —— 被引用项目不允许
+  noEmit（`TS6310: Referenced project may not disable emit`）
+- react 的 tests 有包内自引用（`from '@mindcanvas/react'`），需要 react **自己的** dist，
+  而 typecheck 是 noEmit 根项目不会构建自己 → 加 `paths` 自映射到 src。
+  安全前提是 `src` 内部不使用包名自引用（已 grep 确认），故发布产物不受影响
 
-1. **禁用 `npx vitest`**，统一 `./node_modules/.bin/vitest`，后台跑 + 落盘日志 + 显式 timeout
-2. `--no-verify` 推送前**必须**手动跑完三个包的 typecheck（今天就是漏了这一步）
-3. 推送后看一眼 CI —— 建议 `gh run watch`，或至少 `gh run list --limit 3`
+### 顺带修掉的两件事
+
+1. **今早的 10 个类型错误**（TS2835 + TS2345）已在上一节修复
+2. **budget 门禁从未真正执行**（CI 里一直 skipped），掩盖了 `asCast 33 > 上限 31`
+   —— 两处 `x as Record<string, unknown>`（serializer.ts / docLibrary.ts）改为
+   **类型谓词 `isRecord()`** 消除，零断言
+
+> 附带发现：注释里的示例代码 `val as Record<string, unknown>` 也会被 budget 正则计入，
+> 改了注释措辞才真正达标（33 → 32 → 31）。
+
+### 🎁 意外收获：旧 dist 是长期未清理的陈旧产物
+
+重建后发现旧 dist 比新构建**多 39 个文件**（kernel 9 / react 30），
+对应源码早已删除的模块（`parse.ts`、`MubuNote.tsx` 等）；
+且 `dist/protocol/serializer.js` 内容不同 —— **旧 dist 不含今早的 verifyRoundTrip 修复**。
+tsc 不清理输出目录，dist 只会越积越旧。发布前应先删 dist 再 build。
+
+### 验收
+
+- **移走 `packages/*/dist` 后三包 typecheck 全部 exit=0**，dist 由 `tsc -b` 自动重建
+- 本地六项门禁全绿：typecheck(3 包) / test(301+469+24) / build / depcruise / lint / budget
+- **CI 第 12 次运行：六项全 success** —— 建库以来第一次变绿
+
+| 步骤 | 此前 | 现在 |
+|---|---|---|
+| 6 · 类型检查（3 包） | failure | ✅ success |
+| 7 · 测试（794 个） | skipped（从未跑过） | ✅ success |
+| 8 · 构建 | skipped（从未跑过） | ✅ success |
+| 9 · 架构依赖守护 | skipped（从未跑过） | ✅ success |
+| 10 · 代码检查 | skipped（从未跑过） | ✅ success |
+| 11 · 债务预算 | skipped（从未跑过） | ✅ success |
+
+`ci.yml` 未改 —— 方案 B 让 typecheck 自带依赖构建，原步骤顺序即可工作。
 
 ---
 
@@ -193,8 +235,9 @@ function parseRoot(src: string): MindNode {
 | 项 | 说明 |
 |---|---|
 | 8 月 157 commits 未进远端 | 只存在于 bundle，历史不连续无法拼接 |
-| 两个遗留文件未入库 | `split-stage.mjs`、`MindmapStage.pre-split.bak`，**未进任何备份**，删了不可恢复 |
+| 两个遗留文件未入库 | `split-stage.mjs`、`MindmapStage.pre-split.bak`，**未进任何备份**，删了不可恢复（仍在 `git status` 里） |
 | **F 自用周从未开始** | 无 friction-log；它是下一轮功能规划的唯一事实源 |
 | **E5 网络视图永久挂起** | 触发条件 = friction-log ≥2 条跨文档关系类摩擦 → 因 F 周未开而永远不触发 |
 | ⚠️ E5 编号撞车 | roadmap 的 E5 = 网络视图（挂起）；增补批的 E5 = 存储重构（已完成 `b851fb9`） |
 | 仓库名 `mdcanvas` vs 项目名 `mindcanvas` | 若是有意缩写则忽略 |
+| 本机 vitest 跑完不退出 | Windows 环境问题（见 §五）。CI 在 Linux 上不受影响，但本机门禁仍会被它卡住 |
