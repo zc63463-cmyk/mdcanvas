@@ -33,6 +33,11 @@ export interface DescBlockProps {
   /** 视口缩放 k（内容随地图缩放，与 SVG 对齐；缺省 1） */
   scale?: number;
   /**
+   * 节点层级（决定描述区字号 / 行高）：≥2 视为叶子，用小一号。
+   * 缺省 0 —— 保持旧调用点（只渲染、不参与 measure 的场景）行为不变。
+   */
+  depth?: number;
+  /**
    * 浮出模式（v1.3.0 编辑性能深度优化）：节点盒**没有**为描述预留高度时（新建描述场景 ——
    * measure 不含 editing 状态，否则进入/退出编辑会触发全树重排），描述区绝对定位浮出在节点
    * 下方并覆盖相邻内容。视觉上仍是"向下生长"，但不参与布局 → 进入/退出编辑零重排。
@@ -46,16 +51,41 @@ export interface DescBlockProps {
   onCancel?: () => void;
 }
 
-/** 描述区行高（世界 px，k=1） */
+/** 描述区行高（世界 px，k=1）—— 不随层级差分（理由见 descFontSize 注释） */
 export const DESC_LINE_H = 15;
+/**
+ * 描述区字号（世界 px，k=1）—— 随层级差分，与节点本体的 size / sizeLeaf 同向。
+ *
+ * 此前统一硬编码 10，导致根节点与叶子节点的描述字号一模一样、缺少视觉层级
+ * （friction-log #2）。注释整体比正文小一档，避免喧宾夺主。
+ *
+ * ⚠️ **只差分字号，不差分行高**：布局 measure（createDescMeasure）只拿得到
+ * EditableNode —— 它没有 depth 字段，measure 无法按层级算高度。
+ * 若行高随 depth 变而 measure 不变，节点盒预留高度就会与描述区实际高度错位。
+ * 故行高恒为 DESC_LINE_H，层级差异只体现在字号（叶子字小、行距略松，无错位风险）。
+ */
+export const DESC_FONT_SIZE = 10;
+export const DESC_FONT_SIZE_LEAF = 8.5;
+
+/** 按层级取描述区字号：根/分支 10，叶子 8.5 */
+export function descFontSize(depth: number): number {
+  return depth >= 2 ? DESC_FONT_SIZE_LEAF : DESC_FONT_SIZE;
+}
 /** 描述区上下内边距 */
 export const DESC_PAD = 5;
 /** 左侧引用竖线宽度 */
 export const DESC_BAR_W = 2;
 /** 竖线后的文字缩进 */
 export const DESC_INDENT = 8;
-/** 展开态最多显示行数（超出内置滚动） */
-export const DESC_MAX_LINES = 6;
+/**
+ * 展开态最多显示行数（超出内置滚动，不丢内容）。
+ *
+ * 2026-09-03 friction-log #1（用户反馈「注释内容会被裁剪」）：原值 6 太紧，
+ * 稍长的描述就要靠滚动才能看全，观感上等同于被裁掉。放宽到 12 —— 覆盖绝大多数
+ * 描述长度；仍超出的走内置滚动（overflowY: auto），内容不丢失。
+ * 继续加大会让展开态节点过高、挤压相邻布局，故取 12 而非不限。
+ */
+export const DESC_MAX_LINES = 12;
 /**
  * 编辑态预留行数（交互时序关键常量）：进入编辑时**立即**分配这块高度，再让用户键入。
  *
@@ -71,17 +101,20 @@ export const DESC_EDIT_MIN_LINES = 1; // 编辑态预留一行（同 collapsed �
 
 /**
  * 描述区高度估算（布局 measure 与 overlay 共用，必须一致）。
- * @param editing 是否编辑态 —— 为真时直接返回预留高度，不依赖 text 内容（见 DESC_EDIT_MIN_LINES 注释。
-
+ *
+ * @param editing 是否编辑态 —— 为真时直接返回预留高度，不依赖 text 内容（见 DESC_EDIT_MIN_LINES 注释）。
  *
  * 重要：编辑态必须**先于内容**确定高度，否则会出现"键入后才变大、打字时看不见"的体验问题。
+ *
+ * ⚠️ 不要在这里引入 depth 差分：布局 measure（createDescMeasure）拿不到 depth
+ * （EditableNode 无该字段），本函数按层级算高会与 measure 预留的高度错位。
  */
 export function estimateDescHeight(expanded: boolean, text: string, editing = false): number {
   // 编辑态：立即预留固定编辑空间（先变大再键入）
   if (editing) return DESC_EDIT_MIN_LINES * DESC_LINE_H + DESC_PAD * 2;
   if (!expanded) return DESC_LINE_H + DESC_PAD * 2;
   // 性能：用字符计数替代 split('\n') —— 避免为超长描述（上千行）创建临时数组。
-  // 展开态行数封顶 DESC_MAX_LINES，数到上限即可提前退出。
+  // 展开态行数封顶 DESC_MAX_LINES，数到上限即可提前退出（超出部分内置滚动，不丢内容）。
   const lines = countLines(text, DESC_MAX_LINES);
   return lines * DESC_LINE_H + DESC_PAD * 2;
 }
@@ -109,6 +142,7 @@ export function DescBlock({
   width,
   height,
   scale = 1,
+  depth = 0,
   floating = false,
   onToggle,
   onCommit,
@@ -139,7 +173,9 @@ export function DescBlock({
   const pad = DESC_PAD * s;
   const barW = DESC_BAR_W * s;
   const indent = DESC_INDENT * s;
-  const fontSize = 10 * s;
+  // 字号随层级差分（friction-log #2）：根/分支 10、叶子 8.5。
+  // 行高恒为 DESC_LINE_H —— 与 estimateDescHeight 的预留高度严格同口径，避免错位。
+  const fontSize = descFontSize(depth) * s;
   const lineH = DESC_LINE_H * s;
   const barColor = token.color.linkStroke ?? CHROME.panelBorder;
 
@@ -226,7 +262,9 @@ export function DescBlock({
               color: CHROME.text,
               fontFamily: CHROME.fontFamily,
               fontSize,
-              lineHeight: 1.5,
+              // 固定像素行高：与 estimateDescHeight 的预留高度严格一致，
+              // 不随字号变（否则叶子会留白、与 measure 错位）
+              lineHeight: `${lineH}px`,
               resize: 'none',
               padding: 0,
               margin: 0,
@@ -242,7 +280,8 @@ export function DescBlock({
           data-desc-text
           style={{
             fontSize,
-            lineHeight: 1.5,
+            // 固定像素行高（同上）：与布局预留高度严格一致
+            lineHeight: `${lineH}px`,
             color: CHROME.textMuted,
             whiteSpace: expanded ? 'pre-wrap' : 'nowrap',
             wordBreak: expanded ? 'break-word' : undefined,

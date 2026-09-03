@@ -21,6 +21,8 @@ import type { ViewportController } from './viewport.js';
 interface LayoutNodeLike {
   node: { id: string; note?: { desc?: unknown } };
   box: { x: number; y: number; w: number; h: number };
+  /** 层级（描述区字号 / 行高按它差分） */
+  depth: number;
 }
 
 /**
@@ -60,6 +62,13 @@ export function DescOverlays({
     // 编辑态即使文本为空也要渲染（新建描述的占位）
     if (desc === '' && !isEditing) continue;
     const expanded = descExpandedIds?.has(ln.node.id) ?? false;
+    // editing **不传**：布局 measure（createDescMeasure）刻意不含 editing ——
+    // 纳入会让 measureKey 变化 → LayoutCache.reset() → 全树重排（10K 卡死）。
+    // 编辑态沿用内容高度，由 DescBlock 的 floating 机制处理"无预留时浮出"。
+    // depth 同理不参与高度：EditableNode 没有 depth 字段，measure 拿不到，
+    // 若 overlay 按 depth 算行高就会与 measure 预留的高度错位。
+    // → 高度只由 expanded + desc 决定（与 measure 严格同口径）；
+    //   depth 只影响描述区**字号**（传给 DescBlock，不参与布局高度）。
     const dh = estimateDescHeight(expanded, desc);
     // 有 desc 的节点：布局已预留描述区高度（createDescMeasure），描述区画在节点盒内的下半部。
     // 无 desc 的新建编辑：节点盒**没有**预留（measure 不含 editing，否则会全树重排）→
@@ -79,6 +88,7 @@ export function DescOverlays({
         width={ln.box.w * k}
         height={dh * k}
         scale={k}
+        depth={ln.depth}
         onToggle={() => onToggle?.(ln.node.id)}
         onCommit={(t) => onCommit?.(ln.node.id, t)}
         onCancel={() => onCancel?.()}

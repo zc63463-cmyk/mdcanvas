@@ -12,6 +12,7 @@ import { fireEvent, render } from '@testing-library/react';
 import { glassToken } from '../src/theme/tokens.js';
 import {
   DescBlock,
+  descFontSize,
   estimateDescHeight,
   DESC_LINE_H,
   DESC_PAD,
@@ -144,5 +145,36 @@ describe('estimateDescHeight：描述区高度估算', () => {
 
   it('空文本展开态至少一行高', () => {
     expect(estimateDescHeight(true, '')).toBe(DESC_LINE_H + DESC_PAD * 2);
+  });
+});
+
+/**
+ * friction-log 守卫（2026-09-03 用户反馈，用 mindcanvas 自建文件记下的两条）：
+ * 这些断言锁的是**具体效果**而非常量本身 —— 把 DESC_MAX_LINES 调回 6、
+ * 或把字号改成不分差分，下面都会红。
+ */
+describe('friction-log 守卫：注释显示（2026-09-03）', () => {
+  it('#1 十行描述展开态必须高于 6 行（不被裁成小窗口）', () => {
+    const ten = Array.from({ length: 10 }, (_, i) => `行${i}`).join('\n');
+    expect(estimateDescHeight(true, ten)).toBeGreaterThan(6 * DESC_LINE_H + DESC_PAD * 2);
+  });
+
+  it('#1 DESC_MAX_LINES 不低于 12（低于此值长描述又要靠滚动凑）', () => {
+    expect(DESC_MAX_LINES).toBeGreaterThanOrEqual(12);
+  });
+
+  it('#2 描述区字号随层级差分：根/分支 > 叶子', () => {
+    expect(descFontSize(0)).toBeGreaterThan(descFontSize(2));
+  });
+
+  it('#2 叶子字号仍有可读性下限（不小于 8px）', () => {
+    expect(descFontSize(2)).toBeGreaterThanOrEqual(8);
+  });
+
+  it('#2 行高不随层级差分 —— 与 measure 预留高度严格同口径，防错位', () => {
+    // measure（createDescMeasure）拿不到 depth（EditableNode 无该字段），
+    // 行高若差分就会与节点盒预留高度错位。
+    const branch = estimateDescHeight(true, 'a\nb\nc', false);
+    expect(branch).toBe(3 * DESC_LINE_H + DESC_PAD * 2);
   });
 });
