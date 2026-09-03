@@ -139,7 +139,10 @@ export function NodeG({
             strokeWidth={1.2}
             strokeDasharray="4 3"
           />
-          {assetH >= 22 && (
+          {/* 文字也受 noText 约束：编辑态由浮层 <input> 独占文字层，
+              否则这段 SVG 文字会和输入框内容叠在一起（与主题文字同样的双层问题）。
+              虚线框保留 —— 它是诊断标识，不是文字，被输入框半透明底色盖住也无妨。 */}
+          {assetH >= 22 && !noText && (
             <text
               x={b.w / 2}
               y={assetH / 2}

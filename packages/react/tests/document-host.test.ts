@@ -97,6 +97,23 @@ describe('单一事实源：最近列表并入 DocLibrary', () => {
     expect(localStorage.getItem('mindcanvas.docs.v1')).toBeNull();
   });
 
+  it('旧版列表迁移后仍保持原有访问顺序（较新的在前）', () => {
+    localStorage.clear();
+    const now = Date.now();
+    // 旧 remember 用 unshift，index 0 = 最近访问
+    localStorage.setItem(
+      'mindcanvas.docs.v1',
+      JSON.stringify([
+        { id: 'newer.mm.md', name: '较新', source: '# newer', saved: true, ts: now - 1_000 },
+        { id: 'older.mm.md', name: '较旧', source: '# older', saved: true, ts: now - 90_000 },
+      ]),
+    );
+
+    const host = new LocalDocHost();
+    const list = host.recent();
+    expect(list.map((d) => d.id)).toEqual(['newer.mm.md', 'older.mm.md']);
+  });
+
   it('recent 只吐有源码快照的条目（无快照的恢复出来是空壳）', () => {
     localStorage.clear();
     const host = new LocalDocHost();

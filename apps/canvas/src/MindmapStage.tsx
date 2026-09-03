@@ -16,7 +16,6 @@ import type {
   EdgeRouteEntry,
   EdgeStyle,
   FreeEdge,
-  FsFileSystemWindow,
   MapStats,
   MindDoc,
   TreeEdgeAnn,

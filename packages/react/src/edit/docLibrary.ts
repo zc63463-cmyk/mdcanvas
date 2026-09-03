@@ -125,15 +125,25 @@ export class DocLibrary {
      * LocalDocHost（document.ts）反过来要用 DocLibrary 作为单一事实源，
      * 若这边 import MindDoc 就形成循环依赖（depcruise 会拦）。
      * 三个字段都是 string，结构化类型天然兼容 MindDoc。
+     *
+     * `ts` 通常省略（= 现在）。迁移旧数据时**必须传**：否则每条都盖上迁移时刻，
+     * 而旧列表是「最新在前」存的，最后写入的反而是最旧的、拿到最大 ts → 顺序整体反转。
      */
-    doc: { id: string; name: string; source: string; tags?: string[]; folder?: string },
+    doc: {
+      id: string;
+      name: string;
+      source: string;
+      tags?: string[];
+      folder?: string;
+      ts?: number;
+    },
   ): DocEntry {
     const prev = this.get(doc.id);
     const list = this.load().filter((e) => e.id !== doc.id);
     const entry: DocEntry = {
       id: doc.id,
       name: doc.name,
-      ts: Date.now(),
+      ts: doc.ts ?? Date.now(),
       folder: doc.folder !== undefined ? cleanFolder(doc.folder) : (prev?.folder ?? ''),
       tags: doc.tags ?? prev?.tags ?? [],
       source: doc.source,

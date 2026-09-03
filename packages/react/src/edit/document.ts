@@ -147,8 +147,17 @@ export class LocalDocHost implements DocumentHost {
         const id = Reflect.get(holder, 'id');
         const name = Reflect.get(holder, 'name');
         const source = Reflect.get(holder, 'source');
+        const ts = Reflect.get(holder, 'ts');
         if (typeof id !== 'string' || typeof source !== 'string') return [];
-        return [{ id, name: typeof name === 'string' ? name : id, source }];
+        return [
+          {
+            id,
+            name: typeof name === 'string' ? name : id,
+            source,
+            // 透传原始访问时间：否则所有条目都盖上迁移时刻，顺序会被打乱
+            ts: typeof ts === 'number' ? ts : undefined,
+          },
+        ];
       });
       for (const d of usable) {
         this.library.upsert(d);
