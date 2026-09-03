@@ -1,5 +1,7 @@
 node_modules/
 dist/
+# TypeScript build mode 的增量信息（tsc -b 产物，勿入库）
+*.tsbuildinfo
 coverage/
 *.log
 .DS_Store

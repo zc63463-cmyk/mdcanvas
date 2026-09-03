@@ -50,6 +50,10 @@ jobs:
         run: pnpm install --frozen-lockfile
 
       # ── 门禁 1/4：类型 ──────────────────────────────
+      # 各包用 project references 声明依赖，`pnpm typecheck`（tsc -b）会按需
+      # 先构建依赖包的类型产物，**不依赖后面的「构建」步骤**。
+      # ⚠️ 2026-09-03 之前 typecheck 直接解析 dist/（被 gitignore，仓库里没有），
+      #    导致本步骤必然 TS2307、11 次 CI 全红且后续步骤全部 skipped。勿回退。
       - name: 类型检查（3 包）
         run: pnpm typecheck
 

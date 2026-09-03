@@ -10,12 +10,26 @@
  * 所以必须用测试锁住「只换顺序不算有损」。
  */
 import { describe, expect, it } from 'vitest';
-import { parseMm } from '../src/protocol/parser';
-import { serializeMm, verifyRoundTrip } from '../src/protocol/serializer';
+import type { MindNode } from '../src/protocol/types.js';
+import { parseMm } from '../src/protocol/parser.js';
+import { serializeMm, verifyRoundTrip } from '../src/protocol/serializer.js';
 
 /** 构造：笔记块字段按给定顺序排列 */
 function docWithNote(lines: string[]): string {
   return ['# 根', '', '<!--', ...lines, '-->', '- 子节点'].join('\n');
+}
+
+/**
+ * 解析并取得根节点。
+ *
+ * `parseMm().root` 类型是 `MindNode | null`（空文档时无根），
+ * 而本项目冻结了非空断言预算（bang 只减不增），故用一次显式判空 + 抛错收窄，
+ * 让后续用例拿到非空类型，而不是到处补 `!`。
+ */
+function parseRoot(src: string): MindNode {
+  const { root } = parseMm(src);
+  if (!root) throw new Error(`解析未产出根节点：${src}`);
+  return root;
 }
 
 describe('verifyRoundTrip · 键顺序无关', () => {
@@ -24,7 +38,7 @@ describe('verifyRoundTrip · 键顺序无关', () => {
       'desc: 一段描述，含中文与符号（+ / ，）',
       'status: 进行中',
     ]);
-    const root = parseMm(src).root;
+    const root = parseRoot(src);
     expect(verifyRoundTrip(root)).toBe(true);
   });
 
@@ -33,17 +47,13 @@ describe('verifyRoundTrip · 键顺序无关', () => {
       'status: 进行中',
       'desc: 一段描述，含中文与符号（+ / ，）',
     ]);
-    const root = parseMm(src).root;
+    const root = parseRoot(src);
     expect(verifyRoundTrip(root)).toBe(true);
   });
 
   it('两种顺序解析出的内容等价，只是键序不同', () => {
-    const a = parseMm(
-      docWithNote(['desc: 描述文本', 'status: 进行中']),
-    ).root;
-    const b = parseMm(
-      docWithNote(['status: 进行中', 'desc: 描述文本']),
-    ).root;
+    const a = parseRoot(docWithNote(['desc: 描述文本', 'status: 进行中']));
+    const b = parseRoot(docWithNote(['status: 进行中', 'desc: 描述文本']));
     const noteA = a.children[0]?.note;
     const noteB = b.children[0]?.note;
     expect(JSON.stringify(noteA)).not.toBe(JSON.stringify(noteB));
@@ -55,8 +65,8 @@ describe('verifyRoundTrip · 键顺序无关', () => {
   it('内容真的变了仍要判定为有损（不能放宽成永远通过）', () => {
     // 只序列化、不重新解析：直接比较不同内容的两棵树不足以证伪，
     // 故这里验证 serialize→parse 对同一棵树稳定，而不同内容确实产生不同输出
-    const a = parseMm(docWithNote(['desc: 甲'])).root;
-    const b = parseMm(docWithNote(['desc: 乙'])).root;
+    const a = parseRoot(docWithNote(['desc: 甲']));
+    const b = parseRoot(docWithNote(['desc: 乙']));
     expect(serializeMm(a)).not.toBe(serializeMm(b));
     expect(verifyRoundTrip(a)).toBe(true);
     expect(verifyRoundTrip(b)).toBe(true);

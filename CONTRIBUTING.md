@@ -178,9 +178,11 @@ lint 允许存量 warning，budget 不允许债务增长。
 | 坑 | 正解 |
 |---|---|
 | 仓库根 `npx tsc` 装到废弃假包 `tsc@2.0.4` | 用 `packages/*/node_modules/.bin/tsc`（根 `node_modules/.bin` 没有 typescript） |
-| 改了 `packages/*` 的**类型**后 app 侧报 TS2305 | **vite alias 只救运行时不救 tsc**，必须 `npm run build` 更新 `dist/*.d.ts` |
+| 改了 `packages/*` 的**类型**后 app 侧报 TS2305 | **不必**手动 build：各包用 project references 声明依赖，`pnpm typecheck`（`tsc -b`）会按需先构建依赖包的类型产物 |
+| 需要更新**发布产物** `dist/` | 仍要 `pnpm build`。`dist/` 被 gitignore，只服务发布与运行时，类型检查已不再依赖它 |
 | 跑 TS 脚本报 `tsx/dist/cli.mjs` 不存在 | 根 `tsx` 破损；用 `cd apps/canvas && npx vite-node scripts/xxx.mts` |
 | 诊断脚本测到"改动没生效" | 一律 import **源码相对路径**，不要用包名（否则测到陈旧 dist） |
+| `tsc -b` 产生 `*.tsbuildinfo` | 已 gitignore，勿入库；它是 build mode 的增量信息 |
 | dev server 变 502 | 端口残留，重启（`vite.config.ts` 改完尤其容易） |
 
 ---

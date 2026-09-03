@@ -48,15 +48,19 @@ export const UNTAGGED = '__untagged__';
 /** 目录层级分隔符 */
 const SEP = '/';
 
+/** 类型谓词：`unknown` → 普通对象（非 null、非数组）。替代 as 断言，零债务 */
+function isRecord(x: unknown): x is Record<string, unknown> {
+  return typeof x === 'object' && x !== null && !Array.isArray(x);
+}
+
 function isEntry(x: unknown): x is DocEntry {
-  if (typeof x !== 'object' || x === null) return false;
-  const o = x as Record<string, unknown>;
+  if (!isRecord(x)) return false;
   return (
-    typeof o.id === 'string' &&
-    typeof o.name === 'string' &&
-    typeof o.ts === 'number' &&
-    Array.isArray(o.tags) &&
-    o.tags.every((t) => typeof t === 'string')
+    typeof x.id === 'string' &&
+    typeof x.name === 'string' &&
+    typeof x.ts === 'number' &&
+    Array.isArray(x.tags) &&
+    x.tags.every((t) => typeof t === 'string')
   );
 }
 

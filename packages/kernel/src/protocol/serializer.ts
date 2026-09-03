@@ -166,11 +166,20 @@ export function verifyRoundTrip(root: MindNode): boolean {
  * 直接 `JSON.stringify` 比较对键顺序敏感，会把这种「内容完全一致、仅顺序不同」的情况
  * 误判为往返有损——而本函数是**保存前安全闸**，误报会拦住本该通过的保存。
  */
+/**
+ * 类型谓词：`unknown` → 普通对象（非 null、非数组）。
+ *
+ * 用它替代类型断言：断言会增加 asCast 债务，而债务预算门禁是「只减不增」的。
+ * 谓词同样能收窄类型，且零债务。
+ */
+function isRecord(v: unknown): v is Record<string, unknown> {
+  return typeof v === 'object' && v !== null && !Array.isArray(v);
+}
+
 function stableStringify(v: unknown): string {
   return JSON.stringify(v, (_key, val) => {
-    if (val !== null && typeof val === 'object' && !Array.isArray(val)) {
-      const o = val as Record<string, unknown>;
-      return Object.fromEntries(Object.keys(o).sort().map((k) => [k, o[k]]));
+    if (isRecord(val)) {
+      return Object.fromEntries(Object.keys(val).sort().map((k) => [k, val[k]]));
     }
     return val;
   });
