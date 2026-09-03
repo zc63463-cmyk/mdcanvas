@@ -81,6 +81,8 @@ import { FileManager } from './FileManager.js';
 import { useDocumentActions } from './hooks/useDocumentActions.js';
 import { nodeById, useEdgeActions } from './hooks/useEdgeActions.js';
 import { EdgeDraftLayer } from './EdgeDraftLayer.js';
+import { RecentDocMenu } from './RecentDocMenu.js';
+import { useEntityPick } from './hooks/useEntityPick.js';
 import { useExportActions } from './hooks/useExportActions.js';
 import { PerfPanel } from './PerfPanel.js';
 import { SidePanels } from './SidePanels.js';
@@ -419,6 +421,18 @@ function StageContent({
     }
     return [...merged.values()];
   }, [entities, entityHost]);
+  // 实体引用的选取动作（选中即登记：写回 + 补表 + 记库 + 关 picker + 选中节点）
+  const pickEntity = useEntityPick({
+    controller,
+    setEntities,
+    entityHost,
+    docName: doc.name,
+    onDone: (nodeId) => {
+      setPicker(null);
+      controller.select(nodeId);
+    },
+  });
+
   const pickKinds = useMemo(() => REGISTERED_KINDS.filter((k) => k !== 'img' && k !== 'draw'), []);
 
   // 展开态节点 id（快速注释"生长"：单一展开；点击有 qa 节点展开，再点/×/其他节点收起）
@@ -1106,59 +1120,13 @@ function StageContent({
           }}
         />
       </div>
-      {/* 最近文档下拉（B1：localStorage 列表，点击切换；未保存守卫生效） */}
+      {/* 最近文档下拉（B1）—— 已抽到 RecentDocMenu */}
       {docMenuOpen && (
-        <div
-          data-recent-menu
-          style={{
-            position: 'absolute',
-            left: 12,
-            top: 44,
-            zIndex: 3,
-            minWidth: 200,
-            background: CHROME.panelBg,
-            border: `1px solid ${CHROME.panelBorder}`,
-            borderRadius: CHROME.radius,
-            boxShadow: CHROME.shadow,
-            backdropFilter: 'blur(12px)',
-            padding: 6,
-          }}
-        >
-          {docHost.recent().length === 0 ? (
-            <div
-              style={{
-                color: CHROME.textMuted,
-                fontSize: CHROME.fontSizeSmall,
-                padding: '4px 6px',
-              }}
-            >
-              暂无最近文档
-            </div>
-          ) : (
-            docHost.recent().map((d) => (
-              <div
-                key={d.id}
-                data-recent-doc
-                onClick={() => {
-                  setDocMenuOpen(false);
-                  void applyDoc(d);
-                }}
-                style={{
-                  padding: '4px 6px',
-                  borderRadius: 6,
-                  cursor: 'pointer',
-                  fontSize: CHROME.fontSizeSmall,
-                  color: CHROME.text,
-                  overflow: 'hidden',
-                  textOverflow: 'ellipsis',
-                  whiteSpace: 'nowrap',
-                }}
-              >
-                {d.name}
-              </div>
-            ))
-          )}
-        </div>
+        <RecentDocMenu
+          recent={docHost.recent()}
+          onPick={(d) => void applyDoc(d)}
+          onClose={() => setDocMenuOpen(false)}
+        />
       )}
       {/* FS Access 不支持的浏览器：打开兜底（隐藏 file input） */}
       <input
@@ -1483,29 +1451,7 @@ function StageContent({
           initialQuery={picker.query}
           initialKind={picker.current?.kind}
           currentId={picker.current?.id ?? null}
-          onPick={(ref) => {
-            if (ref === null) {
-              controller.setEntityRef(picker.nodeId, null);
-            } else {
-              controller.setEntityRef(picker.nodeId, ref);
-              const key = `${ref.kind}:${ref.id}`;
-              setEntities((prev) =>
-                prev.has(key)
-                  ? prev
-                  : new Map(prev).set(key, {
-                      kind: ref.kind,
-                      id: ref.id,
-                      title: ref.id,
-                      status: 'ready',
-                      ref: null,
-                    }),
-              );
-              // N1：选中即登记（候选跨文档复用）
-              entityHost.remember([{ kind: ref.kind, id: ref.id, title: ref.id }], doc.name);
-            }
-            setPicker(null);
-            controller.select(picker.nodeId);
-          }}
+          onPick={(ref) => pickEntity(picker.nodeId, ref)}
           onClose={() => setPicker(null)}
         />
       )}
