@@ -153,7 +153,27 @@ export function verifyRoundTrip(root: MindNode): boolean {
   const first = { root };
   const text = serializeMm(root);
   const second = parseMm(text);
-  return JSON.stringify(strip(second.root)) === JSON.stringify(strip(first.root));
+  return stableStringify(strip(second.root)) === stableStringify(strip(first.root));
+}
+
+/**
+ * 稳定序列化：对象键按字典序输出。
+ *
+ * 为什么需要：`strip()` 产出的 `note` 字段来自 YAML 解析，键顺序取决于**原文书写顺序**；
+ * 而 `serializeMm` 按 `KNOWN_NOTE_ORDER` 重排后再写入，重新解析得到的键顺序就可能不同
+ * （例：原文 `desc → status`，往返后变成 `status → desc`）。
+ *
+ * 直接 `JSON.stringify` 比较对键顺序敏感，会把这种「内容完全一致、仅顺序不同」的情况
+ * 误判为往返有损——而本函数是**保存前安全闸**，误报会拦住本该通过的保存。
+ */
+function stableStringify(v: unknown): string {
+  return JSON.stringify(v, (_key, val) => {
+    if (val !== null && typeof val === 'object' && !Array.isArray(val)) {
+      const o = val as Record<string, unknown>;
+      return Object.fromEntries(Object.keys(o).sort().map((k) => [k, o[k]]));
+    }
+    return val;
+  });
 }
 
 function strip(n: MindNode | null): unknown {

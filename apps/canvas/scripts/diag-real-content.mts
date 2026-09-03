@@ -60,7 +60,40 @@ if (strays.length > 0) {
     const key = s.slice(0, 14);
     console.log(`   "${key}…" → ${s1.includes(key) ? '✅ 保留' : '❌ 序列化后丢失'}`);
   }
+  // 打印序列化后的首个笔记块，看特殊字符是否被正确引用
+  const noteBlock = s1.match(/<!--[\s\S]*?-->/)?.[0] ?? '(无笔记块)';
+  console.log(`\n   序列化后的笔记块:\n${noteBlock.split('\n').map((l) => `     ${l}`).join('\n')}`);
 }
 
 const pass = lossless && s1 === s2 && refsSrc === refsOut;
+
+// ⑦ 往返有损时，定位到底丢了什么（按「节点文本」集合对比）
+if (!lossless) {
+  // 带上 note 一起比（verifyRoundTrip 比 text+type+note+children，不只是文本）
+  const sigs = (root: typeof first.root): string[] => {
+    const out: string[] = [];
+    const walk = (n: typeof first.root, path: string): void => {
+      if (!n) return;
+      out.push(`${path} | ${n.text} | note=${JSON.stringify(n.note ?? null)}`);
+      (n.children ?? []).forEach((c, i) => walk(c, `${path}.${i}`));
+    };
+    walk(root, '0');
+    return out;
+  };
+  const before = sigs(first.root);
+  const after = sigs(parseMm(s1).root);
+  console.log(`\n⑦ 有损定位：`);
+  console.log(`   节点数 ${before.length} → ${after.length}`);
+  let shown = 0;
+  for (let i = 0; i < Math.max(before.length, after.length) && shown < 6; i++) {
+    const b = before[i];
+    const a = after[i];
+    if (b !== a) {
+      console.log(`   ── 第 ${i} 个节点不一致`);
+      console.log(`      前: ${(b ?? '(无)').slice(0, 240)}`);
+      console.log(`      后: ${(a ?? '(无)').slice(0, 240)}`);
+      shown++;
+    }
+  }
+}
 console.log(`\n${pass ? '✅ 全部通过' : '❌ 存在问题，见上'}`);
