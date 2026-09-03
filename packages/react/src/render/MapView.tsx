@@ -852,7 +852,12 @@ export function MapView({
                       depth={ln.depth}
                       root={ln.depth === 0}
                       chipX={entityKind !== null ? chipXOf(m, char) : null}
-                      noText={lodSkipText(lod, ln.depth)}
+                      // 编辑态不画 SVG 文字：内联编辑器（NodeTextOverlay）是浮在节点盒上的
+                      // <input>，两层文字会同时可见并互相穿插——
+                      // 暗色主题下编辑器底色只有 7% 不透明度（entityFill:
+                      // rgba(255,255,255,.07)），底下的 SVG 文字会直接透出来。
+                      // 编辑时让 <input> 独占文字层，节点盒本体仍照常绘制（提供底色）。
+                      noText={lodSkipText(lod, ln.depth) || ln.node.id === editingId}
                       selected={selectedId === ln.node.id}
                       hasChildren={ln.node.children.length > 0}
                       collapsed={collapsedIds?.has(ln.node.id) ?? false}
