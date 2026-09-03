@@ -25,12 +25,10 @@ import {
   buildEditable,
   buildEntities,
   CHROME,
-  ContextMenu,
   collapsedAncestors,
   collectEntityRelations,
   collectFreeEdges,
   collectNodeChoices,
-  contextMenuItemsFor,
   createCharMeasure,
   createReactRegistries,
   DemoAssetHost,
@@ -77,10 +75,11 @@ import {
   useState,
 } from 'react';
 import gatewaySource from './demo/gateway.mm.md?raw';
-import { FileManager } from './FileManager.js';
 import { useDocumentActions } from './hooks/useDocumentActions.js';
 import { nodeById, useEdgeActions } from './hooks/useEdgeActions.js';
 import { EdgeDraftLayer } from './EdgeDraftLayer.js';
+import { FileManagerModal } from './FileManagerModal.js';
+import { NodeContextMenu } from './NodeContextMenu.js';
 import { RecentDocMenu } from './RecentDocMenu.js';
 import { useEntityPick } from './hooks/useEntityPick.js';
 import { useExportActions } from './hooks/useExportActions.js';
@@ -1332,35 +1331,16 @@ function StageContent({
         />
       </div>
 
-      {/* 批次 2：节点右键菜单（命中节点弹出；空白右键已在上层关闭） */}
+      {/* 批次 2：节点右键菜单 —— 已抽到 NodeContextMenu */}
       {ctxMenu !== null && (
-        <ContextMenu
-          x={ctxMenu.x}
-          y={ctxMenu.y}
-          items={contextMenuItemsFor(
-            controller,
-            ctxMenu.nodeId,
-            {
-              // N2：实体节点专属动作（改引用 → 开 picker；在关系图中显示 → 开面板）
-              onEditRef: (id) => {
-                const n = nodeById(controller.root, id);
-                setPicker({
-                  nodeId: id,
-                  query: n?.text ?? '',
-                  current: n?.ref ? { kind: n.ref.kind, id: n.ref.id } : null,
-                });
-              },
-              onShowInGraph: () => setPanel('relation'),
-            },
-            relationMode
-              ? {
-                  // E3：连线到…（以该节点为源新建自由边）；E8：仅关系模式提供该入口
-                  onStartLink: (id) => setLinkDraft({ sourceId: id, x: ctxMenu.x, y: ctxMenu.y }),
-                }
-              : undefined,
-            // v1.3.0 幕布描述入口：右键「编辑描述」= 与 Shift+Enter 同一动作
-            { onStart: (id) => setDescEditingId(id) },
-          )}
+        <NodeContextMenu
+          ctxMenu={ctxMenu}
+          controller={controller}
+          relationMode={relationMode}
+          setPicker={setPicker}
+          setPanel={setPanel}
+          setLinkDraft={setLinkDraft}
+          setDescEditingId={setDescEditingId}
           onClose={() => setCtxMenu(null)}
         />
       )}
@@ -1378,51 +1358,15 @@ function StageContent({
       {/* 批次 2：? 快捷键帮助面板 */}
       {helpOpen && <ShortcutHelpPanel onClose={() => setHelpOpen(false)} />}
 
-      {/* 文件管理器：历史文件 / 新建 / 分类管理 */}
+      {/* 文件管理器（含遮罩与打开策略）—— 已抽到 FileManagerModal */}
       {fileManagerOpen && (
-        <div
-          style={{
-            position: 'absolute',
-            inset: 0,
-            zIndex: 60,
-            display: 'grid',
-            placeItems: 'center',
-            background: 'rgba(0,0,0,.45)',
-          }}
-          onClick={() => setFileManagerOpen(false)}
-        >
-          <div onClick={(e) => e.stopPropagation()}>
-            <FileManager
-              library={library}
-              onOpen={async (entry) => {
-                // 只剩元数据（靠前的旧条目，source 已被配额剥掉）→ 重新选文件。
-                // 注意：这条路径同样可能丢弃未保存修改，所以走 handleOpen
-                // （内部经 applyDoc 守卫），而不是直接换 doc。
-                if (entry.source === undefined) {
-                  setFileManagerOpen(false);
-                  void handleOpen();
-                  return;
-                }
-                // 有源码快照 → 经 applyDoc 切换（有未保存修改时弹确认）。
-                // 此前这里直接 setDoc，绕过了守卫 → 静默丢弃未保存修改。
-                const switched = await applyDoc({
-                  id: entry.id,
-                  name: entry.name,
-                  source: entry.source,
-                  saved: true,
-                  ts: entry.ts,
-                });
-                // 用户取消则保持浮层打开，避免"界面关了但文档没换"
-                if (switched) setFileManagerOpen(false);
-              }}
-              onCreate={() => {
-                setFileManagerOpen(false);
-                handleNew();
-              }}
-              onClose={() => setFileManagerOpen(false)}
-            />
-          </div>
-        </div>
+        <FileManagerModal
+          library={library}
+          applyDoc={applyDoc}
+          handleOpen={handleOpen}
+          handleNew={handleNew}
+          onClose={() => setFileManagerOpen(false)}
+        />
       )}
 
       {/* 批次 3：Ctrl+F 富文本搜索面板（选中 + 定位） */}
