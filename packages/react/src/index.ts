@@ -161,7 +161,7 @@ export type { EditorControllerOptions } from './edit/controller.js';
 export { EditorController } from './edit/controller.js';
 export type { DocEntry } from './edit/docLibrary.js';
 
-export { DocLibrary, UNTAGGED } from './edit/docLibrary.js';
+export { DocLibrary, SOURCE_KEEP, UNTAGGED } from './edit/docLibrary.js';
 export type {
   DocumentHost,
   MindDoc,

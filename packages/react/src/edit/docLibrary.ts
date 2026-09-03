@@ -13,11 +13,13 @@
  *
  * 不是什么：不做文件内容同步、不做云端。纯本地元数据索引。
  */
-import type { MindDoc } from './document.js';
 
 const LIB_KEY = 'mindcanvas.library.v1';
-/** 保留源码快照的条目数（其余只存元数据） */
-const SOURCE_KEEP = 8;
+/**
+ * 保留源码快照的条目数（其余只存元数据）。
+ * 导出：UI 需要把这个上限**显式告诉用户**（否则条目上突然出现 ↻ 会不知所措）。
+ */
+export const SOURCE_KEEP = 8;
 
 /** 文档库条目 */
 export interface DocEntry {
@@ -118,7 +120,13 @@ export class DocLibrary {
    * 超出 SOURCE_KEEP 的旧条目会被剥掉 source。
    */
   upsert(
-    doc: Pick<MindDoc, 'id' | 'name' | 'source'> & { tags?: string[]; folder?: string },
+    /**
+     * 字段内联而非 `Pick<MindDoc, ...>` —— 避免 docLibrary 依赖 document.ts：
+     * LocalDocHost（document.ts）反过来要用 DocLibrary 作为单一事实源，
+     * 若这边 import MindDoc 就形成循环依赖（depcruise 会拦）。
+     * 三个字段都是 string，结构化类型天然兼容 MindDoc。
+     */
+    doc: { id: string; name: string; source: string; tags?: string[]; folder?: string },
   ): DocEntry {
     const prev = this.get(doc.id);
     const list = this.load().filter((e) => e.id !== doc.id);

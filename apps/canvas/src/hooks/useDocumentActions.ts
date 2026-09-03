@@ -9,7 +9,7 @@
  */
 import { useCallback } from 'react';
 import type { Dispatch, RefObject, SetStateAction } from 'react';
-import type { DocumentHost, EditorController, FsFileSystemWindow, MindDoc } from '@mindcanvas/react';
+import type { DocumentHost, EditorController, MindDoc } from '@mindcanvas/react';
 
 export interface DocumentActionsOptions {
   controller: EditorController;
@@ -22,8 +22,13 @@ export interface DocumentActionsOptions {
 }
 
 export interface DocumentActions {
-  /** 切换文档；有未保存修改时弹确认，用户取消则不动 */
-  applyDoc: (next: MindDoc) => Promise<void>;
+  /**
+   * 切换文档；有未保存修改时弹确认，用户取消则不动。
+   *
+   * @returns 是否真的切换了。调用方据此决定是否收起自己的浮层/启动页 ——
+   *          否则用户在确认框点「取消」后界面已关闭、文档却没换，观感像卡住。
+   */
+  applyDoc: (next: MindDoc) => Promise<boolean>;
   handleOpen: () => Promise<void>;
   handleNew: () => void;
   handleSave: () => Promise<void>;
@@ -39,10 +44,13 @@ export function useDocumentActions({
   autoSaveTimer,
 }: DocumentActionsOptions): DocumentActions {
   const applyDoc = useCallback(
-    async (next: MindDoc): Promise<void> => {
-      if (controller.dirty && !window.confirm('当前文档有未保存的修改，确定放弃并切换？')) return;
+    async (next: MindDoc): Promise<boolean> => {
+      if (controller.dirty && !window.confirm('当前文档有未保存的修改，确定放弃并切换？')) {
+        return false;
+      }
       setDoc(next);
       docHost.remember(next);
+      return true;
     },
     [controller, setDoc, docHost],
   );
@@ -54,8 +62,7 @@ export function useDocumentActions({
       return;
     }
     // FS 取消 → 不动；浏览器不支持 → 隐藏 file input 兜底读取
-    const w = window as unknown as FsFileSystemWindow;
-    if (typeof w.showOpenFilePicker !== 'function') fileInputRef.current?.click();
+    if (typeof window.showOpenFilePicker !== 'function') fileInputRef.current?.click();
   }, [docHost, applyDoc, fileInputRef]);
 
   const handleNew = useCallback((): void => {

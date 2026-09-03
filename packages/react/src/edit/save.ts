@@ -26,6 +26,26 @@ export interface FsFileSystemWindow {
   }): Promise<FsFileHandle[]>;
 }
 
+/**
+ * 把 FS Access API 直接挂到全局 Window 上。
+ *
+ * 此前调用方一律写 `window as unknown as FsFileSystemWindow` —— 双重断言既
+ * 绕过类型检查（写错方法名也不报错），又会在债务预算里记 2 个 asCast。
+ * 声明到全局后，`window.showOpenFilePicker` 直接可查、可补全，零断言。
+ */
+declare global {
+  interface Window {
+    showSaveFilePicker?: (options: {
+      suggestedName?: string;
+      types?: Array<{ description: string; accept: Record<string, string[]> }>;
+    }) => Promise<FsFileHandle>;
+    showOpenFilePicker?: (options?: {
+      multiple?: boolean;
+      types?: Array<{ description: string; accept: Record<string, string[]> }>;
+    }) => Promise<FsFileHandle[]>;
+  }
+}
+
 /** .mm 文件类型描述（打开/保存共用） */
 export const MM_FILE_TYPES = [
   { description: 'mindcanvas 画布', accept: { 'text/markdown': ['.mm.md', '.md'] } },
@@ -38,10 +58,9 @@ export const MM_FILE_TYPES = [
  * - 用户在 FS 对话框取消 → 返回 'cancelled'（不视为错误）
  */
 export async function saveMarkdown(text: string, defaultName: string): Promise<SaveResult> {
-  const w = window as unknown as FsFileSystemWindow;
-  if (typeof w.showSaveFilePicker === 'function') {
+  if (typeof window.showSaveFilePicker === 'function') {
     try {
-      const handle = await w.showSaveFilePicker({
+      const handle = await window.showSaveFilePicker({
         suggestedName: defaultName,
         types: MM_FILE_TYPES,
       });

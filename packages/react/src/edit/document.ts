@@ -6,11 +6,11 @@
  *   save 走 saveMarkdown 下载兜底
  * 资产持久化说明：资产 id 仍为「导图相对路径」；物理落盘依赖宿主写能力（FS 目录句柄 / Forgejo），本期保持宿主契约不变。
  */
+import { DocLibrary } from './docLibrary.js';
 import {
   MM_FILE_TYPES,
   saveMarkdown,
   type FsFileHandle,
-  type FsFileSystemWindow,
   type SaveResult,
 } from './save.js';
 
@@ -44,21 +44,38 @@ export interface DocumentHost {
   remember(doc: MindDoc): void;
 }
 
-const RECENT_KEY = 'mindcanvas.docs.v1';
+/** 最近列表的显示上限 */
 const RECENT_MAX = 8;
+/**
+ * 旧版最近列表的独立存储 key（2026-09-03 起已并入 DocLibrary）。
+ *
+ * 此前「元数据索引」（mindcanvas.library.v1）与「最近列表」（本 key）是两堆
+ * 独立的 localStorage：schema 各写各的、互不通知，同一份文档两处都有记录，
+ * 重命名/删除只影响其一 → 两份状态漂移。
+ * 现在统一以 DocLibrary 为单一事实源，本 key 仅用于**一次性迁移**。
+ */
+const LEGACY_RECENT_KEY = 'mindcanvas.docs.v1';
 
 /** 是否为导图文档文件（GH-T1：拖入/粘贴分流用） */
 export function isMindDocFile(name: string): boolean {
   return /\.(mm\.md|md)$/i.test(name);
 }
 
-/** 本地文档宿主：FS Access + localStorage 最近列表 */
+/** 本地文档宿主：FS Access + DocLibrary（单一事实源） */
 export class LocalDocHost implements DocumentHost {
+  /** 元数据索引与最近列表共用的唯一持久化入口（注入便于测试；缺省自建） */
+  private readonly library: DocLibrary;
+
+  constructor(library?: DocLibrary) {
+    this.library = library ?? new DocLibrary();
+    this.migrateLegacyRecent();
+  }
+
   async open(): Promise<MindDoc | null> {
-    const w = window as unknown as FsFileSystemWindow;
-    if (typeof w.showOpenFilePicker !== 'function') return null;
+    // window.showOpenFilePicker 已声明到全局（见 save.ts 的 declare global），无需断言
+    if (typeof window.showOpenFilePicker !== 'function') return null;
     try {
-      const [handle] = await w.showOpenFilePicker({ multiple: false, types: MM_FILE_TYPES });
+      const [handle] = await window.showOpenFilePicker({ multiple: false, types: MM_FILE_TYPES });
       if (!handle) return null;
       const file = (await handle.getFile?.()) ?? new File([], handle.name ?? 'untitled.mm.md');
       const source = await file.text();
@@ -88,21 +105,59 @@ export class LocalDocHost implements DocumentHost {
   }
 
   recent(): MindDoc[] {
-    try {
-      const raw = localStorage.getItem(RECENT_KEY);
-      return raw ? (JSON.parse(raw) as MindDoc[]) : [];
-    } catch {
-      return [];
-    }
+    // 派生自 DocLibrary（单一事实源），不再读独立的 localStorage。
+    // 只取**有源码快照**的条目：source 被配额剥掉的旧条目恢复了也打不开，
+    // 只能重新选文件，放进最近列表会点出一个空壳。
+    return this.library
+      .list()
+      .flatMap((e) =>
+        typeof e.source === 'string'
+          ? [{ id: e.id, name: e.name, source: e.source, saved: true, ts: e.ts }]
+          : [],
+      )
+      .slice(0, RECENT_MAX);
   }
 
   remember(doc: MindDoc): void {
+    // 写单一事实源。handle 不可序列化，DocLibrary 不存（保存时需重新选文件，
+    // 这与 recent() 恢复出的文档行为一致）。
+    this.library.upsert({ id: doc.id, name: doc.name, source: doc.source });
+  }
+
+  /**
+   * 一次性迁移：把旧版独立的最近列表并入 DocLibrary。
+   *
+   * 安全口径 —— **确认全部导入成功才清理旧 key**：
+   * 若中途写失败就把旧 key 删了，用户会同时丢掉两份数据的唯一副本。
+   * 迁移失败什么都不做（异常已吞），下次启动会再试一次。
+   */
+  private migrateLegacyRecent(): void {
     try {
-      const list = this.recent().filter((d) => d.id !== doc.id);
-      list.unshift({ ...doc, handle: undefined, ts: Date.now() });
-      localStorage.setItem(RECENT_KEY, JSON.stringify(list.slice(0, RECENT_MAX)));
+      const raw = localStorage.getItem(LEGACY_RECENT_KEY);
+      if (raw === null) return;
+      // JSON 解析结果是不可信数据：逐字段提取校验，而不是一句 as 断言糊过去
+      // （断言既不安全，又会在债务预算里 +1 asCast）
+      const parsed: unknown = JSON.parse(raw);
+      if (!Array.isArray(parsed)) {
+        localStorage.removeItem(LEGACY_RECENT_KEY);
+        return;
+      }
+      const usable = parsed.flatMap((d) => {
+        const holder = Object(d); // null/undefined → {}，Reflect.get 不会抛
+        const id = Reflect.get(holder, 'id');
+        const name = Reflect.get(holder, 'name');
+        const source = Reflect.get(holder, 'source');
+        if (typeof id !== 'string' || typeof source !== 'string') return [];
+        return [{ id, name: typeof name === 'string' ? name : id, source }];
+      });
+      for (const d of usable) {
+        this.library.upsert(d);
+      }
+      // 校验：每条都已在库里，才允许删掉旧副本
+      const allImported = usable.every((d) => this.library.get(d.id) !== undefined);
+      if (allImported) localStorage.removeItem(LEGACY_RECENT_KEY);
     } catch {
-      // localStorage 满/禁用 → 静默（不影响主流程）
+      // 迁移失败不阻断主流程；旧 key 保留，下次启动重试
     }
   }
 }

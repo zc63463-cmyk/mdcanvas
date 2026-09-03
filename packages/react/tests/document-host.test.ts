@@ -62,6 +62,53 @@ describe('文档宿主（B1：多文档 + 本地持久化）', () => {
   });
 });
 
+/**
+ * 单一事实源守卫（2026-09-03）：
+ * 此前「元数据索引」与「最近列表」是两堆独立 localStorage，互不通知 → 状态漂移。
+ * 现在统一以 DocLibrary 为唯一持久化入口，旧 key 只用于一次性迁移。
+ */
+describe('单一事实源：最近列表并入 DocLibrary', () => {
+  it('remember 写进 DocLibrary，不再产生独立的 mindcanvas.docs.v1', () => {
+    localStorage.clear();
+    const host = new LocalDocHost();
+    host.remember(docOf({ id: 'x.mm.md', name: 'x.mm.md' }));
+
+    expect(localStorage.getItem('mindcanvas.docs.v1')).toBeNull();
+    const lib = JSON.parse(localStorage.getItem('mindcanvas.library.v1') ?? '[]') as Array<{
+      id: string;
+    }>;
+    expect(lib.some((e) => e.id === 'x.mm.md')).toBe(true);
+  });
+
+  it('旧版独立最近列表在构造时迁移进来，并清理旧 key', () => {
+    localStorage.clear();
+    localStorage.setItem(
+      'mindcanvas.docs.v1',
+      JSON.stringify([
+        { id: 'old1.mm.md', name: '旧文档1', source: '# 旧1', saved: true, ts: 100 },
+        { id: 'old2.mm.md', name: '旧文档2', source: '# 旧2', saved: true, ts: 200 },
+      ]),
+    );
+
+    const host = new LocalDocHost(); // 构造即迁移
+    const ids = host.recent().map((d) => d.id);
+    expect(ids).toContain('old1.mm.md');
+    expect(ids).toContain('old2.mm.md');
+    expect(localStorage.getItem('mindcanvas.docs.v1')).toBeNull();
+  });
+
+  it('recent 只吐有源码快照的条目（无快照的恢复出来是空壳）', () => {
+    localStorage.clear();
+    const host = new LocalDocHost();
+    for (let i = 0; i < 12; i++) {
+      host.remember(docOf({ id: `n${i}.mm.md`, name: `n${i}.mm.md` }));
+    }
+    const list = host.recent();
+    for (const d of list) expect(typeof d.source).toBe('string');
+    expect(list.length).toBe(8);
+  });
+});
+
 describe('文档文件判定（GH-T1：拖入/粘贴分流）', () => {
   it('isMindDocFile：.mm.md/.md 放行，图片/其他拒绝', () => {
     expect(isMindDocFile('gateway.mm.md')).toBe(true);

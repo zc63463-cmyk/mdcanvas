@@ -203,6 +203,12 @@ function StageInner() {
       <StartupScreen
         recent={docHost.recent()}
         onOpenRecent={(d) => {
+          // 这里**不需要** applyDoc 的未保存守卫，理由（2026-09-03 复核）：
+          // 启动页只在冷启动出现一次（初值 = 有最近文档），此时用户尚未编辑任何内容，
+          // controller 也还没建立（本组件不持有它）—— 不存在"可丢失的未保存修改"。
+          // 关闭后 showStartup=false，编辑过程中不会再回到这里。
+          // 反过来，applyDoc 定义在 StageContent 里（本分支早退，根本渲染不到它），
+          // 想用也拿不到；强行上提反而要把 controller 拖进启动页，得不偿失。
           setDoc(d);
           docHost.remember(d); // 刷新 ts，下次启动仍是它排第一
           setShowStartup(false);
@@ -1572,22 +1578,26 @@ function StageContent({
           <div onClick={(e) => e.stopPropagation()}>
             <FileManager
               library={library}
-              onOpen={(entry) => {
-                if (entry.source !== undefined) {
-                  // 有源码快照 → 直接恢复（但文件句柄已失效，保存时需重新选）
-                  setDoc({
-                    id: entry.id,
-                    name: entry.name,
-                    source: entry.source,
-                    saved: true,
-                    ts: entry.ts,
-                  });
-                  setFileManagerOpen(false);
-                } else {
-                  // 只剩元数据（靠前的旧条目）→ 走重新选文件
+              onOpen={async (entry) => {
+                // 只剩元数据（靠前的旧条目，source 已被配额剥掉）→ 重新选文件。
+                // 注意：这条路径同样可能丢弃未保存修改，所以走 handleOpen
+                // （内部经 applyDoc 守卫），而不是直接换 doc。
+                if (entry.source === undefined) {
                   setFileManagerOpen(false);
                   void handleOpen();
+                  return;
                 }
+                // 有源码快照 → 经 applyDoc 切换（有未保存修改时弹确认）。
+                // 此前这里直接 setDoc，绕过了守卫 → 静默丢弃未保存修改。
+                const switched = await applyDoc({
+                  id: entry.id,
+                  name: entry.name,
+                  source: entry.source,
+                  saved: true,
+                  ts: entry.ts,
+                });
+                // 用户取消则保持浮层打开，避免"界面关了但文档没换"
+                if (switched) setFileManagerOpen(false);
               }}
               onCreate={() => {
                 setFileManagerOpen(false);

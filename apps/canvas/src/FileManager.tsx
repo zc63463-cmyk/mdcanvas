@@ -9,7 +9,7 @@
  *
  * 不是什么：不移动/删除磁盘文件——「移除」只删库内索引条目。
  */
-import { CHROME, DocLibrary, type DocEntry } from '@mindcanvas/react';
+import { CHROME, DocLibrary, SOURCE_KEEP, type DocEntry } from '@mindcanvas/react';
 import { useState, type CSSProperties } from 'react';
 
 export interface FileManagerProps {
@@ -84,7 +84,11 @@ export function FileManager({ library, onOpen, onCreate, onClose }: FileManagerP
     });
   };
 
-  const total = library.list().length;
+  // 只 load 一次：total 与 staleCount 都从这里派生（list() 每次都读 localStorage）
+  const entries = library.list();
+  const total = entries.length;
+  /** 只剩索引（source 被配额剥掉）的条目数 —— 打开时需重新选文件 */
+  const staleCount = entries.filter((e) => e.source === undefined).length;
 
   /** 递归渲染一层：先子目录，再直属文档 */
   const renderLevel = (path: string, depth: number) => {
@@ -265,6 +269,14 @@ export function FileManager({ library, onOpen, onCreate, onClose }: FileManagerP
       >
         <span style={{ fontWeight: 600, flex: 1 }}>思维导图目录</span>
         <span style={{ color: CHROME.textMuted, fontSize: CHROME.fontSizeSmall }}>{total} 个</span>
+        {staleCount > 0 && (
+          <span
+            style={{ color: CHROME.textMuted, fontSize: CHROME.fontSizeSmall }}
+            title={`库里只有最近 ${SOURCE_KEEP} 个文档保留内容快照，更久未打开的只留索引`}
+          >
+            {staleCount} 个需重选
+          </span>
+        )}
         <button type="button" style={btnBase} onClick={onCreate}>
           新建
         </button>
@@ -292,6 +304,12 @@ export function FileManager({ library, onOpen, onCreate, onClose }: FileManagerP
         }}
       >
         点击文档名切换导图 · 「移到…」填目录路径（如 工作/项目A）即可归组
+        {staleCount > 0 && (
+          <div style={{ marginTop: 4 }}>
+            带 ↻ 的只剩索引：库里只保留最近 {SOURCE_KEEP} 个文档的内容快照，
+            更久未打开的打开时需重新选择文件（磁盘文件本身不受影响）。
+          </div>
+        )}
       </div>
     </div>
   );
