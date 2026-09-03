@@ -11,7 +11,7 @@
  */
 import type { ReactElement } from 'react';
 import type { LayoutResult } from '@mindcanvas/kernel';
-import { DescBlock, estimateDescHeight } from '../chrome/DescBlock.js';
+import { DescBlock, DESC_EXPAND_MAX_LINES, DESC_EXPAND_MIN_W, estimateDescHeight } from '../chrome/DescBlock.js';
 import { estimateCommentAreaHeight, GrowthCommentPanel } from '../chrome/GrowthCommentPanel.js';
 import { OverlayEditor } from '../edit/OverlayEditor.js';
 import type { TokenSet } from '../theme/types.js';
@@ -39,6 +39,7 @@ export function DescOverlays({
   token,
   descEditingId,
   descExpandedIds,
+  expandDescId,
   onToggle,
   onCommit,
   onCancel,
@@ -49,6 +50,12 @@ export function DescOverlays({
   token: TokenSet;
   descEditingId: string | null;
   descExpandedIds?: ReadonlySet<string>;
+  /**
+   * 节点级「放大展开」：点击节点后，该节点的描述区**浮出**在节点下方。
+   * 与 descExpandedIds（节点盒内展开到 12 行）不同，浮出不占布局，
+   * 因此不受节点盒尺寸限制 —— 行数上限更宽、宽度更大，注释可完整换行阅读。
+   */
+  expandDescId?: string | null;
   onToggle?: (id: string) => void;
   onCommit?: (id: string, text: string) => void;
   onCancel?: () => void;
@@ -69,6 +76,34 @@ export function DescOverlays({
     // 若 overlay 按 depth 算行高就会与 measure 预留的高度错位。
     // → 高度只由 expanded + desc 决定（与 measure 严格同口径）；
     //   depth 只影响描述区**字号**（传给 DescBlock，不参与布局高度）。
+    // ---------- 节点级「放大展开」：浮出不占布局 ----------
+    // 与下面「节点盒内」分支互斥：展开态只渲染浮出卡片，避免两块描述区重叠
+    // （节点盒内那块是 measure 预留的，展开时它的空间空着，由浮出卡片接续）。
+    if (expandDescId === ln.node.id) {
+      const eh = estimateDescHeight(true, desc, false, DESC_EXPAND_MAX_LINES);
+      out.push(
+        <DescBlock
+          key={`expand-${ln.node.id}`}
+          text={desc}
+          editing={isEditing}
+          expanded
+          floating
+          token={token}
+          x={ln.box.x * k + x}
+          // 浮在节点盒下方（不是 bodyH —— 那会盖住节点盒内预留的描述区位置）
+          y={(ln.box.y + ln.box.h) * k + y}
+          width={Math.max(ln.box.w * k, DESC_EXPAND_MIN_W * k)}
+          height={eh * k}
+          scale={k}
+          depth={ln.depth}
+          onToggle={() => onToggle?.(ln.node.id)}
+          onCommit={(t) => onCommit?.(ln.node.id, t)}
+          onCancel={() => onCancel?.()}
+        />,
+      );
+      continue;
+    }
+
     const dh = estimateDescHeight(expanded, desc);
     // 有 desc 的节点：布局已预留描述区高度（createDescMeasure），描述区画在节点盒内的下半部。
     // 无 desc 的新建编辑：节点盒**没有**预留（measure 不含 editing，否则会全树重排）→

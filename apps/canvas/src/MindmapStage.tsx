@@ -446,6 +446,8 @@ function StageContent({
   // v1.3.0 幕布描述（note.desc）：正在编辑描述的节点 id + 已展开全文的节点集合
   const [descEditingId, setDescEditingId] = useState<string | null>(null);
   const [descExpandedIds, setDescExpandedIds] = useState<Set<string>>(new Set());
+  /** 节点级「放大展开」：点击已选中的节点切换；描述区浮出不占布局 */
+  const [expandDescId, setExpandDescId] = useState<string | null>(null);
 
   // E8：关系模式（模式隔离）——浏览态只呈现关系，关系态才暴露连线入口
   // （连接手柄 / Shift+点两节点 / 树边右键编辑 / 边点击编辑 / 右键「连线到…」）
@@ -731,6 +733,16 @@ function StageContent({
     return () => window.removeEventListener('keydown', onKey);
   }, [linkDraft, edgeActions.edgeSel, treeEdgeEdit]);
 
+  // 节点「放大展开」Esc 关闭（浮出卡片会盖住画布，给它一个键盘退出口）
+  useEffect(() => {
+    if (!expandDescId) return;
+    const onKey = (e: KeyboardEvent): void => {
+      if (e.key === 'Escape') setExpandDescId(null);
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [expandDescId]);
+
   if (!layout) return null;
 
   const selectedTitle =
@@ -924,15 +936,25 @@ function StageContent({
               return;
             }
           }
-          // 点击：选中；有 qa 的节点展开（再点同一节点 → 收起）
+          // 点击已选中的节点 → 切换「放大展开」：描述区浮出在节点下方，
+          // 不占布局、不受节点盒尺寸限制，注释可完整换行阅读。
+          // （此前这里是"取消选中"——但取消选中改用点画布空白处，
+          //   把"再点一次"这个天然的第二动作让给更常用的放大展开。）
           if (controller.selectedId === ln.node.id) {
-            controller.select(null);
-            setExpandedQaId(null);
+            setExpandDescId((prev) => (prev === ln.node.id ? null : ln.node.id));
             return;
           }
+          // 切到别的节点：收起上一个的放大展开
+          setExpandDescId(null);
           controller.select(ln.node.id);
           const qa = ln.node.note?.qa;
           setExpandedQaId(Array.isArray(qa) && (qa as string[]).length > 0 ? ln.node.id : null);
+        }}
+        onBlankClick={() => {
+          // 点画布空白：取消选中 + 收起放大展开（这是取消选中的唯一入口）
+          controller.select(null);
+          setExpandedQaId(null);
+          setExpandDescId(null);
         }}
         onNodeContext={(node, sx, sy) => {
           // 右键：命中节点 → 选中并弹菜单；空白 → 关菜单
@@ -1042,19 +1064,26 @@ function StageContent({
         // v1.3.0 幕布描述（note.desc）
         descEditingId={descEditingId}
         descExpandedIds={descExpandedIds}
+        expandDescId={expandDescId}
         onDescEditRequest={(id) => {
           // 主题文本编辑态按 Shift+Enter → 切到描述编辑（幕布「切换主题与描述」）
           controller.cancelEdit();
           setDescEditingId(id);
         }}
-        onDescToggle={(id) =>
+        onDescToggle={(id) => {
+          // 放大展开态下，渲染的是浮出分支（不看 descExpandedIds），
+          // 所以点它 = 收起放大，而不是去切 descExpandedIds（那会点了没反应）。
+          if (id === expandDescId) {
+            setExpandDescId(null);
+            return;
+          }
           setDescExpandedIds((prev) => {
             const next = new Set(prev);
             if (next.has(id)) next.delete(id);
             else next.add(id);
             return next;
-          })
-        }
+          });
+        }}
         onDescCommit={(id, text) => {
           // 空串 = 删除描述（note.desc 键置 undefined）
           controller.updateNote(id, text === '' ? { desc: undefined } : { desc: text });

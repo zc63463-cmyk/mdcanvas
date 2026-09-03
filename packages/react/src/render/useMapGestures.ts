@@ -108,6 +108,8 @@ export interface UseMapGesturesParams {
   /** 合法落点 → 执行移动 op；非法（成环/自拖/根目标）→ 不回调 */
   onNodeMove?: (op: NonNullable<ReturnType<typeof planDrop>['op']>) => void;
   onNodeClick?: (ln: VisibleNode, info: { shift: boolean; sx: number; sy: number }) => void;
+  /** 点击空白处（未命中任何节点）：用于取消选中 / 收起放大展开 */
+  onBlankClick?: () => void;
 }
 
 export function useMapGestures({
@@ -119,6 +121,7 @@ export function useMapGestures({
   dragExcluded,
   onNodeMove,
   onNodeClick,
+  onBlankClick,
 }: UseMapGesturesParams) {
   /** R2：多指 pinch 跟踪（≥2 指 → 缩放模式，抑制 pan / 节点拖拽） */
   const pinch = useRef(new PinchTracker());
@@ -246,6 +249,7 @@ export function useMapGestures({
     const w = worldPointOf(e, e.currentTarget, viewport);
     const ln = hitNodeAt(visibleNodes, w);
     if (ln) onNodeClick?.(ln, { shift: e.shiftKey, sx: e.clientX, sy: e.clientY });
+    else onBlankClick?.();
   };
 
   const onPointerCancel = (e: ReactPointerEvent<HTMLElement>): void => {

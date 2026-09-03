@@ -87,6 +87,17 @@ export const DESC_INDENT = 8;
  */
 export const DESC_MAX_LINES = 12;
 /**
+ * 「节点放大展开」态的行数上限与最小宽度（2026-09-03 新增交互）。
+ *
+ * 背景：节点盒内的描述区受制于节点大小（高度算进节点盒），放宽到 12 行仍不够看。
+ * 点击节点进入放大展开态后，描述区**浮出**、不占布局，于是可以：
+ *   - 行数上限放宽到 40（超出仍内置滚动，内容不丢）
+ *   - 宽度不再等于节点宽，至少 260 —— 换行后更易读
+ * 浮出的代价是会盖住下方内容，故需要卡片底色 + 阴影 + 高层级（复用 floating 样式）。
+ */
+export const DESC_EXPAND_MAX_LINES = 40;
+export const DESC_EXPAND_MIN_W = 260;
+/**
  * 编辑态预留行数（交互时序关键常量）：进入编辑时**立即**分配这块高度，再让用户键入。
  *
  * 背景（用户反馈）：原实现按 text 内容反推高度 → 编辑态 text 仍为空 → 只给 1 行，
@@ -108,14 +119,22 @@ export const DESC_EDIT_MIN_LINES = 1; // 编辑态预留一行（同 collapsed �
  *
  * ⚠️ 不要在这里引入 depth 差分：布局 measure（createDescMeasure）拿不到 depth
  * （EditableNode 无该字段），本函数按层级算高会与 measure 预留的高度错位。
+ *
+ * @param maxLines 行数上限，缺省 DESC_MAX_LINES。
+ *   放大展开态传 DESC_EXPAND_MAX_LINES —— 它浮出不占布局，可以给更多行。
  */
-export function estimateDescHeight(expanded: boolean, text: string, editing = false): number {
+export function estimateDescHeight(
+  expanded: boolean,
+  text: string,
+  editing = false,
+  maxLines = DESC_MAX_LINES,
+): number {
   // 编辑态：立即预留固定编辑空间（先变大再键入）
   if (editing) return DESC_EDIT_MIN_LINES * DESC_LINE_H + DESC_PAD * 2;
   if (!expanded) return DESC_LINE_H + DESC_PAD * 2;
   // 性能：用字符计数替代 split('\n') —— 避免为超长描述（上千行）创建临时数组。
-  // 展开态行数封顶 DESC_MAX_LINES，数到上限即可提前退出（超出部分内置滚动，不丢内容）。
-  const lines = countLines(text, DESC_MAX_LINES);
+  // 行数封顶 maxLines，数到上限即可提前退出（超出部分内置滚动，不丢内容）。
+  const lines = countLines(text, maxLines);
   return lines * DESC_LINE_H + DESC_PAD * 2;
 }
 

@@ -79,6 +79,8 @@ export interface MapViewProps {
   onStats?: (s: MapStats) => void;
   /** 节点点击（hit-test：点击非拖拽时命中可见节点；mods.shift 供「Shift+点击两节点连线」） */
   onNodeClick?: (node: LayoutNode, mods?: { shift: boolean; sx: number; sy: number }) => void;
+  /** 点击画布空白（未命中节点）：取消选中 / 收起放大展开 */
+  onBlankClick?: () => void;
   /** 节点右键（hit-test；空白处命中 null；带屏幕坐标） */
   onNodeContext?: (node: LayoutNode | null, sx: number, sy: number) => void;
   /** 选中节点 id（高亮；null = 无） */
@@ -139,6 +141,11 @@ export interface MapViewProps {
   descEditingId?: string | null;
   /** 已展开全文描述的节点 id 集合（默认收缩为一行；点击展开） */
   descExpandedIds?: ReadonlySet<string>;
+  /**
+   * 节点级「放大展开」：该节点的描述区浮出在节点下方显示（不占布局，
+   * 不受节点盒尺寸限制）。与 descExpandedIds 是两种展开，互斥渲染。
+   */
+  expandDescId?: string | null;
   /** 点击描述区：切换展开/收缩 */
   onDescToggle?: (id: string) => void;
   /** 提交描述文本（空串 = 删除描述） */
@@ -185,6 +192,7 @@ export function MapView({
   forceBackend,
   onStats,
   onNodeClick,
+  onBlankClick,
   selectedId,
   editingId,
   onEditCommit,
@@ -207,6 +215,7 @@ export function MapView({
   onEdgeConnect,
   relationMode = false,
   descEditingId = null,
+  expandDescId = null,
   descExpandedIds,
   onDescToggle,
   onDescCommit,
@@ -249,7 +258,9 @@ export function MapView({
   const onStatsRef = useRef(onStats);
   onStatsRef.current = onStats;
   const onNodeClickRef = useRef(onNodeClick);
+  const onBlankClickRef = useRef(onBlankClick);
   onNodeClickRef.current = onNodeClick;
+  onBlankClickRef.current = onBlankClick;
   const onNodeContextRef = useRef(onNodeContext);
   onNodeContextRef.current = onNodeContext;
   const onEditCommitRef = useRef(onEditCommit);
@@ -621,6 +632,7 @@ export function MapView({
       dragExcluded,
       onNodeMove: (op) => onNodeMoveRef.current?.(op),
       onNodeClick: (ln, info) => onNodeClickRef.current?.(ln, info),
+      onBlankClick: () => onBlankClickRef.current?.(),
     });
   const wheelRef = useRef<HTMLDivElement | null>(null);
   useEffect(() => {
@@ -1121,6 +1133,7 @@ export function MapView({
           token={token}
           descEditingId={descEditingId}
           descExpandedIds={descExpandedIds}
+          expandDescId={expandDescId}
           onToggle={(id) => onDescToggleRef.current?.(id)}
           onCommit={(id, t) => onDescCommitRef.current?.(id, t)}
           onCancel={() => onDescCancelRef.current?.()}
