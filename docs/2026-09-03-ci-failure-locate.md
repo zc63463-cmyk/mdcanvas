@@ -230,14 +230,60 @@ tsc 不清理输出目录，dist 只会越积越旧。发布前应先删 dist �
 
 ---
 
-## 八、尚未处理的相关项
+## 九、续：本机 vitest「跑完不退出」已修（commit `b42b34d`）
+
+这是 §五 那个环境问题的后续。它正是整条因果链的源头，值得单独记录。
+
+### 定位过程
+
+1. 症状边界清晰：kernel（纯 node）从不挂，react / canvas（jsdom）必挂
+   → 怀疑 jsdom 的 `pretendToBeVisual`（默认开，会挂 requestAnimationFrame 循环）
+2. 实验：设 `environmentOptions.jsdom.pretendToBeVisual = false`
+   → 进程**确实退出了**（exit=1，是测试失败码而非超时），
+   但 **18 个测试失败 + 10 个 error** → rAF 循环确是句柄来源之一，**但不能关**
+3. 参考搜索提到 `--force-exit`，实际本版本（vitest 4.1.11）**没有该选项**（勿信二手资料）
+4. 改试 `--no-file-parallelism`（单进程顺序执行，与 `--maxWorkers=1` 不是一回事）
+   → **exit=0，469 全绿，正常退出**
+
+### 根因
+
+Windows 下并行 worker 跑 jsdom 测试，worker 结束但句柄未释放，主线程一直等它退出。
+单进程无 worker 池，绕开该问题。
+
+### 解法与意外收益
+
+三个包的 `vitest.config.ts` 加 `fileParallelism: false`。**不靠调 timeout 兜底**。
+
+| 指标 | 并行 worker | 单进程 |
+|---|---|---|
+| react transform | 170s | **14s** |
+| react import | 187s | **23s** |
+| 进程退出 | 挂死（exit 124） | **exit=0** |
+
+并行时每个 worker 各自 transform，单进程复用模块图 —— 既解决挂死，又快一个数量级。
+
+验证：三包串行跑全部 exit=0，301 + 469 + 24 全绿；CI run 14 同样 success。
+
+### ⚠️ 另一个独立问题：pnpm 在本沙箱跑测试会卡
+
+与上面**不是同一件事**，此前一直被混为一谈：
+
+| 命令 | 结果 |
+|---|---|
+| `./packages/*/node_modules/.bin/vitest run`（直接） | exit=0 |
+| `pnpm -r test` / `--workspace-concurrency=1` / `--filter <pkg>` | 全绿但挂死，exit=124 |
+
+原因：沙箱安全策略阻止 `pnpm` 调用 `wmic.exe`（Windows 上用于管理子进程），
+pnpm 等不到子进程退出信号。属**环境限制，非项目问题**，故不改项目脚本去迁就它。
+本沙箱内跑测试一律用直接命令；CI（Linux）不受影响。
+
+## 十、尚未处理的相关项
 
 | 项 | 说明 |
 |---|---|
 | 8 月 157 commits 未进远端 | 只存在于 bundle，历史不连续无法拼接 |
-| 两个遗留文件未入库 | `split-stage.mjs`、`MindmapStage.pre-split.bak`，**未进任何备份**，删了不可恢复（仍在 `git status` 里） |
+| ~~两个遗留文件未入库~~ | ✅ 已归档（`677dbf5`）：`split-stage.mjs`、`MindmapStage.pre-split.bak` 纳入版本控制，远端有备份，工作树恢复干净。未删除（避免破坏性操作），需要时可 `git show` 取回 |
 | **F 自用周从未开始** | 无 friction-log；它是下一轮功能规划的唯一事实源 |
 | **E5 网络视图永久挂起** | 触发条件 = friction-log ≥2 条跨文档关系类摩擦 → 因 F 周未开而永远不触发 |
 | ⚠️ E5 编号撞车 | roadmap 的 E5 = 网络视图（挂起）；增补批的 E5 = 存储重构（已完成 `b851fb9`） |
 | 仓库名 `mdcanvas` vs 项目名 `mindcanvas` | 若是有意缩写则忽略 |
-| 本机 vitest 跑完不退出 | Windows 环境问题（见 §五）。CI 在 Linux 上不受影响，但本机门禁仍会被它卡住 |
