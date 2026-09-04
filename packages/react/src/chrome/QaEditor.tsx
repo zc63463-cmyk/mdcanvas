@@ -13,9 +13,23 @@ export interface QaEditorProps {
   /** 写回（整组替换；空数组 = 清空） */
   onChange: (qa: string[]) => void;
   token: TokenSet;
+  /**
+   * 区域标题，缺省「快速注释」。
+   * v1.4.0 起本编辑器也承担「节点注释 · 序列区域」的编辑 —— 两者形态相同
+   * （都是可增删改的字符串列表），故复用而非另写一个。
+   */
+  title?: string;
+  /** 新增输入框的占位文案 */
+  placeholder?: string;
 }
 
-export function QaEditor({ items, onChange, token }: QaEditorProps) {
+export function QaEditor({
+  items,
+  onChange,
+  token,
+  title = '快速注释',
+  placeholder = '新增注释…（回车提交）',
+}: QaEditorProps) {
   const [value, setValue] = useState('');
   const add = (): void => {
     const text = value.trim();
@@ -33,7 +47,7 @@ export function QaEditor({ items, onChange, token }: QaEditorProps) {
             fontWeight: 600,
           }}
         >
-          快速注释
+          {title}
         </span>
         <span
           style={{
@@ -84,7 +98,7 @@ export function QaEditor({ items, onChange, token }: QaEditorProps) {
       ))}
       <input
         value={value}
-        placeholder="新增注释…（回车提交）"
+        placeholder={placeholder}
         onChange={(e) => setValue(e.target.value)}
         onKeyDown={(e) => {
           e.stopPropagation(); // 关键：输入框内不触发画布全局快捷键（Tab/Enter 等）

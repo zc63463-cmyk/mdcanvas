@@ -7,6 +7,7 @@
  * 组件/几何分离：几何与命中检测在 geometry.ts（纯函数），本组件只做组装。
  */
 
+import { hasNote, noteOf } from '@mindcanvas/kernel';
 import type { CharMeasure, EditableNode, Entity } from '@mindcanvas/kernel';
 import {
   type Box,
@@ -28,6 +29,7 @@ import {
   useSyncExternalStore,
 } from 'react';
 import { DescBlock, estimateDescHeight } from '../chrome/DescBlock.js';
+import { NotePopover } from '../chrome/NotePopover.js';
 import { estimateCommentAreaHeight, GrowthCommentPanel } from '../chrome/GrowthCommentPanel.js';
 import { OverlayEditor } from '../edit/OverlayEditor.js';
 import { useTheme } from '../theme/ThemeContext.js';
@@ -81,6 +83,18 @@ export interface MapViewProps {
   onNodeClick?: (node: LayoutNode, mods?: { shift: boolean; sx: number; sy: number }) => void;
   /** 点击画布空白（未命中节点）：取消选中 / 收起放大展开 */
   onBlankClick?: () => void;
+
+  // ---- 节点注释浮窗（v1.4.0）----
+  /** 当前悬停的节点 id（由本组件内部命中检测维护） */
+  onNoteHover?: (id: string | null) => void;
+  /** 固定显示的注释节点 id（null = 无） */
+  pinnedNoteId?: string | null;
+  /** 注释写回：序列区域 */
+  onNoteChangeSeq?: (id: string, seq: string[]) => void;
+  /** 注释写回：纯文本区域 */
+  onNoteChangeText?: (id: string, text: string) => void;
+  /** 关闭浮窗（点 ✕ 或点空白） */
+  onNoteClose?: () => void;
   /** 节点右键（hit-test；空白处命中 null；带屏幕坐标） */
   onNodeContext?: (node: LayoutNode | null, sx: number, sy: number) => void;
   /** 选中节点 id（高亮；null = 无） */
@@ -184,6 +198,11 @@ export function MapView({
   onStats,
   onNodeClick,
   onBlankClick,
+  onNoteHover,
+  pinnedNoteId = null,
+  onNoteChangeSeq,
+  onNoteChangeText,
+  onNoteClose,
   selectedId,
   editingId,
   onEditCommit,
@@ -247,6 +266,28 @@ export function MapView({
   onStatsRef.current = onStats;
   const onNodeClickRef = useRef(onNodeClick);
   const onBlankClickRef = useRef(onBlankClick);
+  const onNoteHoverRef = useRef(onNoteHover);
+  onNoteHoverRef.current = onNoteHover;
+  const onNoteCloseRef = useRef(onNoteClose);
+  onNoteCloseRef.current = onNoteClose;
+  /** 悬停中的节点 + 指针屏幕坐标（供注释浮窗定位；指针移动时更新坐标） */
+  const [hover, setHover] = useState<{ id: string; x: number; y: number } | null>(null);
+  /**
+   * 当前该显示注释浮窗的目标：固定的优先于悬停的。
+   * 固定态用节点盒下方位置（稳定），悬停态跟随指针（轻快）。
+   */
+  const noteTarget = useMemo(() => {
+    const id = pinnedNoteId ?? hover?.id ?? null;
+    if (id === null) return null;
+    const ln = layout.nodes.find((n) => n.node.id === id);
+    if (!ln || !hasNote(ln.node)) return null;
+    const pinned = pinnedNoteId === id;
+    const pos = pinned
+      ? { x: ln.box.x * viewport.transform.k + viewport.transform.x,
+          y: (ln.box.y + ln.box.h) * viewport.transform.k + viewport.transform.y }
+      : { x: (hover?.x ?? 0), y: (hover?.y ?? 0) };
+    return { id, data: noteOf(ln.node), pinned, ...pos };
+  }, [pinnedNoteId, hover, layout, viewport.transform, ]);
   onNodeClickRef.current = onNodeClick;
   onBlankClickRef.current = onBlankClick;
   const onNodeContextRef = useRef(onNodeContext);
@@ -619,6 +660,11 @@ export function MapView({
       onNodeMove: (op) => onNodeMoveRef.current?.(op),
       onNodeClick: (ln, info) => onNodeClickRef.current?.(ln, info),
       onBlankClick: () => onBlankClickRef.current?.(),
+      onNodeHover: (id, at) => {
+        setHover((prev) =>
+          prev?.id === id ? prev : id === null ? null : { id, x: at.x, y: at.y });
+        onNoteHoverRef.current?.(id);
+      },
     });
   const wheelRef = useRef<HTMLDivElement | null>(null);
   useEffect(() => {
@@ -1122,6 +1168,21 @@ export function MapView({
           onCommit={(id, t) => onDescCommitRef.current?.(id, t)}
           onCancel={() => onDescCancelRef.current?.()}
         />
+
+        {/* v1.4.0 节点注释浮窗：悬停预览 / 点击固定；不占布局，不撑变形节点 */}
+        {noteTarget && (
+          <NotePopover
+            seq={noteTarget.data.seq}
+            text={noteTarget.data.text}
+            x={noteTarget.x}
+            y={noteTarget.y}
+            pinned={noteTarget.pinned}
+            token={token}
+            onChangeSeq={(seq) => onNoteChangeSeq?.(noteTarget.id, seq)}
+            onChangeText={(text) => onNoteChangeText?.(noteTarget.id, text)}
+            onClose={() => onNoteCloseRef.current?.()}
+          />
+        )}
       </div>
     </div>
   );

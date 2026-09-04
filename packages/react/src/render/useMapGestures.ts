@@ -108,6 +108,8 @@ export interface UseMapGesturesParams {
   /** 合法落点 → 执行移动 op；非法（成环/自拖/根目标）→ 不回调 */
   onNodeMove?: (op: NonNullable<ReturnType<typeof planDrop>['op']>) => void;
   onNodeClick?: (ln: VisibleNode, info: { shift: boolean; sx: number; sy: number }) => void;
+  /** 指针悬停到节点（未按下时）；移出节点时传 null —— 供上层显示注释浮窗 */
+  onNodeHover?: (id: string | null, at: { x: number; y: number }) => void;
   /** 点击空白处（未命中任何节点）：用于取消选中 / 收起放大展开 */
   onBlankClick?: () => void;
 }
@@ -122,6 +124,7 @@ export function useMapGestures({
   onNodeMove,
   onNodeClick,
   onBlankClick,
+  onNodeHover,
 }: UseMapGesturesParams) {
   /** R2：多指 pinch 跟踪（≥2 指 → 缩放模式，抑制 pan / 节点拖拽） */
   const pinch = useRef(new PinchTracker());
@@ -205,7 +208,14 @@ export function useMapGestures({
     }
     // 画布平移路径（含 M5-T4 速度采样）
     const d = dragRef.current;
-    if (!d || d.id !== e.pointerId) return;
+    // 未按下时（纯移动）也要做命中检测 —— 供上层显示节点注释浮窗（悬停预览）
+    if (!d) {
+      const w = worldPointOf(e, e.currentTarget, viewport);
+      const hit = hitNodeAt(visibleNodes, w);
+      onNodeHover?.(hit ? hit.node.id : null, { x: e.clientX, y: e.clientY });
+      return;
+    }
+    if (d.id !== e.pointerId) return;
     const dx = e.clientX - d.x;
     const dy = e.clientY - d.y;
     if (!d.moved && Math.hypot(dx, dy) > 3) d.moved = true;

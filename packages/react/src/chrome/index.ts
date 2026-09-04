@@ -24,3 +24,4 @@ export * from './entityStore.js';
 export * from './ErrorBoundary.js';
 export * from './EdgeEditor.js';
 export * from './relationSchema.js';
+export * from './NotePopover.js';

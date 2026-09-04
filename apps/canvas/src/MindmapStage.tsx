@@ -5,6 +5,7 @@
  * - 玻璃 chrome 恒定（K3 决策 3）；性能面板消费 MapView stats
  */
 
+import { hasNote } from '@mindcanvas/kernel';
 import type { EditableNode, Entity } from '@mindcanvas/kernel';
 import { LayoutCache, REGISTERED_KINDS, refKey } from '@mindcanvas/kernel';
 import type {
@@ -445,6 +446,8 @@ function StageContent({
 
   // v1.3.0 幕布描述（note.desc）：正在编辑描述的节点 id + 已展开全文的节点集合
   const [descEditingId, setDescEditingId] = useState<string | null>(null);
+  /** 固定显示的节点注释（v1.4.0）：悬停只是预览，点击才固定并可编辑 */
+  const [pinnedNoteId, setPinnedNoteId] = useState<string | null>(null);
 
   // E8：关系模式（模式隔离）——浏览态只呈现关系，关系态才暴露连线入口
   // （连接手柄 / Shift+点两节点 / 树边右键编辑 / 边点击编辑 / 右键「连线到…」）
@@ -934,11 +937,14 @@ function StageContent({
           controller.select(ln.node.id);
           const qa = ln.node.note?.qa;
           setExpandedQaId(Array.isArray(qa) && (qa as string[]).length > 0 ? ln.node.id : null);
+          // 有注释的节点：点击即固定浮窗（悬停只是预览）
+          setPinnedNoteId(hasNote(ln.node) ? ln.node.id : null);
         }}
         onBlankClick={() => {
           // 点画布空白：取消选中 + 收起放大展开（这是取消选中的唯一入口）
           controller.select(null);
           setExpandedQaId(null);
+          setPinnedNoteId(null);
         }}
         onNodeContext={(node, sx, sy) => {
           // 右键：命中节点 → 选中并弹菜单；空白 → 关菜单
@@ -949,6 +955,14 @@ function StageContent({
           controller.select(node.node.id);
           setCtxMenu({ nodeId: node.node.id, x: sx, y: sy });
         }}
+        pinnedNoteId={pinnedNoteId}
+        onNoteChangeSeq={(id, seq) =>
+          controller.updateNote(id, seq.length > 0 ? { note: seq } : { note: undefined })
+        }
+        onNoteChangeText={(id, text) =>
+          controller.updateNote(id, text === '' ? { note_text: undefined } : { note_text: text })
+        }
+        onNoteClose={() => setPinnedNoteId(null)}
         selectedId={controller.selectedId}
         editingId={controller.editingId}
         onEditCommit={(id, text) => {

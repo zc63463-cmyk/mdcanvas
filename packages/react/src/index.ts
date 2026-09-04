@@ -117,7 +117,9 @@ export type { OutlinePanelProps } from './chrome/OutlinePanel.js';
 export { OutlinePanel } from './chrome/OutlinePanel.js';
 export type { QaEditorProps } from './chrome/QaEditor.js';
 export { QaEditor } from './chrome/QaEditor.js';
-export type {
+
+export type { NotePopoverProps } from './chrome/NotePopover.js';
+export { NotePopover } from './chrome/NotePopover.js';export type {
   RelationTypeConfig,
   SemanticGroup,
 } from './chrome/relationSchema.js';
