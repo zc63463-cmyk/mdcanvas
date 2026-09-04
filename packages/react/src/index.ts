@@ -29,7 +29,7 @@ export {
   DESC_EDIT_MIN_LINES,
   DESC_INDENT,
   DESC_LINE_H,
-  DESC_MAX_LINES,
+  DESC_SOFT_MAX_LINES,
   DESC_PAD,
   DescBlock,
   estimateDescHeight,

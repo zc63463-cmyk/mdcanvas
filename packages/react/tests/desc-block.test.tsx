@@ -2,10 +2,10 @@
 /**
  * DescBlock 幕布描述块单测（v1.3.0）：
  * - 渲染：引用竖线 + 缩进 + 弱化文字
- * - 自动收缩：默认一行（nowrap + ellipsis）/ 展开（pre-wrap 多行）
+ * - 内容完整换行显示（pre-wrap），超过软上限由内部滚动 —— 无展开/收缩态
  * - 编辑态：textarea 聚焦、Shift+Enter 提交、Esc 取消、blur 提交
  * - 空文本不渲染（无描述时不占位）
- * - 高度估算：收缩固定一行，展开按行数（封顶 DESC_MAX_LINES）
+ * - 高度估算：按行数增长，封顶 DESC_SOFT_MAX_LINES
  */
 import { describe, expect, it, vi } from 'vitest';
 import { fireEvent, render } from '@testing-library/react';
@@ -16,8 +16,7 @@ import {
   estimateDescHeight,
   DESC_LINE_H,
   DESC_PAD,
-  DESC_MAX_LINES,
-  DESC_EXPAND_MAX_LINES,
+  DESC_SOFT_MAX_LINES,
 } from '../src/chrome/DescBlock.js';
 
 const token = glassToken;
@@ -30,7 +29,7 @@ function renderDesc(props: Partial<React.ComponentProps<typeof DescBlock>> = {})
       x={0}
       y={0}
       width={200}
-      height={estimateDescHeight(false, 'x')}
+      height={estimateDescHeight('x')}
       {...props}
     />,
   );
@@ -48,22 +47,23 @@ describe('DescBlock：幕布描述块', () => {
     expect(container.querySelector('[data-desc-input]')).not.toBeNull();
   });
 
-  it('渲染描述文本 + data 标记（收缩态）', () => {
+  it('渲染描述文本 + data 标记（默认完整显示）', () => {
     const { container } = renderDesc();
     const root = container.querySelector('[data-desc-block]');
     expect(root).not.toBeNull();
-    expect(root!.getAttribute('data-desc-expanded')).toBe('false');
+    expect(root!.getAttribute('data-desc-expanded')).toBe('true');
     expect(container.querySelector('[data-desc-text]')!.textContent).toBe('这是对主题的补充说明');
   });
 
-  it('收缩态：nowrap + ellipsis（只显示一行）', () => {
+  it('内容换行可见：pre-wrap + break-word（不截断成一行）', () => {
     const { container } = renderDesc({ text: '第一行\n第二行' });
-    const textEl = container.querySelector('[data-desc-text]')!;
-    expect((textEl as HTMLElement).style.whiteSpace).toBe('nowrap');
-    expect((textEl as HTMLElement).style.textOverflow).toBe('ellipsis');
+    const textEl = container.querySelector('[data-desc-text]') as HTMLElement;
+    expect(textEl.style.whiteSpace).toBe('pre-wrap');
+    expect(textEl.style.wordBreak).toBe('break-word');
+    expect(textEl.style.overflowY).toBe('auto');
   });
 
-  it('展开态：pre-wrap 显示多行', () => {
+  it('pre-wrap 显示多行', () => {
     const { container } = renderDesc({ text: '第一行\n第二行', expanded: true });
     const textEl = container.querySelector('[data-desc-text]')!;
     expect((textEl as HTMLElement).style.whiteSpace).toBe('pre-wrap');
@@ -122,46 +122,42 @@ describe('DescBlock：幕布描述块', () => {
 });
 
 describe('estimateDescHeight：描述区高度估算', () => {
-  it('收缩态固定一行高度（与内容行数无关）', () => {
-    const one = estimateDescHeight(false, '一行');
-    const many = estimateDescHeight(false, 'a\nb\nc\nd\ne\nf\ng');
-    expect(one).toBe(many);
-    expect(one).toBe(DESC_LINE_H + DESC_PAD * 2);
+  it('空文本高度为 0（不占位）', () => {
+    expect(estimateDescHeight('')).toBe(0);
   });
 
-  it('展开态按行数增长', () => {
-    const one = estimateDescHeight(true, '一行');
-    const three = estimateDescHeight(true, 'a\nb\nc');
+  it('按行数增长', () => {
+    const one = estimateDescHeight('一行');
+    const three = estimateDescHeight('a\nb\nc');
     expect(three).toBeGreaterThan(one);
     expect(three).toBe(3 * DESC_LINE_H + DESC_PAD * 2);
   });
 
-  it('展开态行数封顶 DESC_MAX_LINES（防超长描述撑爆布局）', () => {
+  it('行数封顶 DESC_SOFT_MAX_LINES（超长描述不撑爆节点，改由内部滚动）', () => {
     const long = estimateDescHeight(
-      true,
       Array.from({ length: 50 }, (_, i) => `行${i}`).join('\n'),
     );
-    expect(long).toBe(DESC_MAX_LINES * DESC_LINE_H + DESC_PAD * 2);
+    expect(long).toBe(DESC_SOFT_MAX_LINES * DESC_LINE_H + DESC_PAD * 2);
   });
 
-  it('空文本展开态至少一行高', () => {
-    expect(estimateDescHeight(true, '')).toBe(DESC_LINE_H + DESC_PAD * 2);
+  it('编辑态预留固定高度（先变大再键入）', () => {
+    expect(estimateDescHeight('', true)).toBeGreaterThan(0);
   });
 });
 
 /**
  * friction-log 守卫（2026-09-03 用户反馈，用 mindcanvas 自建文件记下的两条）：
- * 这些断言锁的是**具体效果**而非常量本身 —— 把 DESC_MAX_LINES 调回 6、
+ * 这些断言锁的是**具体效果**而非常量本身 —— 把 DESC_SOFT_MAX_LINES 调回 6、
  * 或把字号改成不分差分，下面都会红。
  */
 describe('friction-log 守卫：注释显示（2026-09-03）', () => {
   it('#1 十行描述展开态必须高于 6 行（不被裁成小窗口）', () => {
     const ten = Array.from({ length: 10 }, (_, i) => `行${i}`).join('\n');
-    expect(estimateDescHeight(true, ten)).toBeGreaterThan(6 * DESC_LINE_H + DESC_PAD * 2);
+    expect(estimateDescHeight(ten)).toBeGreaterThan(6 * DESC_LINE_H + DESC_PAD * 2);
   });
 
-  it('#1 DESC_MAX_LINES 不低于 12（低于此值长描述又要靠滚动凑）', () => {
-    expect(DESC_MAX_LINES).toBeGreaterThanOrEqual(12);
+  it('#1 DESC_SOFT_MAX_LINES 不低于 12（低于此值长描述又要靠滚动凑）', () => {
+    expect(DESC_SOFT_MAX_LINES).toBeGreaterThanOrEqual(12);
   });
 
   it('#2 描述区字号随层级差分：根/分支 > 叶子', () => {
@@ -172,22 +168,10 @@ describe('friction-log 守卫：注释显示（2026-09-03）', () => {
     expect(descFontSize(2)).toBeGreaterThanOrEqual(8);
   });
 
-  it('节点放大展开是「软上限」：换行可见、超出走局部滚动，不撑爆节点', () => {
-    const long = Array.from({ length: 60 }, (_, i) => `行${i}`).join('\n');
-    const expandedH = estimateDescHeight(true, long, false, DESC_EXPAND_MAX_LINES);
-    const normalH = estimateDescHeight(true, long, false, DESC_MAX_LINES);
-
-    // 比普通展开看得更多，但就此封顶 —— 不是按内容无限撑高
-    expect(expandedH).toBeGreaterThan(normalH);
-    expect(expandedH).toBe(DESC_EXPAND_MAX_LINES * DESC_LINE_H + DESC_PAD * 2);
-    // 软上限必须有节制（一个节点不该吃掉大半个画布）
-    expect(DESC_EXPAND_MAX_LINES).toBeLessThanOrEqual(20);
-  });
-
   it('#2 行高不随层级差分 —— 与 measure 预留高度严格同口径，防错位', () => {
     // measure（createDescMeasure）拿不到 depth（EditableNode 无该字段），
-    // 行高若差分就会与节点盒预留高度错位。
-    const branch = estimateDescHeight(true, 'a\nb\nc', false);
+    // 行高若差分就会与节点盒预留高度错位。描述区现在始终按完整内容渲染。
+    const branch = estimateDescHeight('a\nb\nc');
     expect(branch).toBe(3 * DESC_LINE_H + DESC_PAD * 2);
   });
 });

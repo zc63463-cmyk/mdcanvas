@@ -21,7 +21,10 @@ export interface DescBlockProps {
   text: string;
   /** 是否处于编辑态（textarea 覆盖） */
   editing?: boolean;
-  /** 是否展开全文（false = 收缩为一行 + 省略号） */
+  /**
+   * 是否按完整内容渲染（true = 换行完整显示）。描述区现在**始终**显示，
+   * 这个开关仅用于区分"渲染区"与"编辑区（textarea 单行）"，不再表示展开状态。
+   */
   expanded?: boolean;
   token: TokenSet;
   /** 屏幕坐标（描述区左上角，由上层按节点 + 本体高换算） */
@@ -89,18 +92,20 @@ export const DESC_INDENT = 8;
  * 描述长度；仍超出的走内置滚动（overflowY: auto），内容不丢失。
  * 继续加大会让展开态节点过高、挤压相邻布局，故取 12 而非不限。
  */
-export const DESC_MAX_LINES = 12;
 /**
- * 「节点放大展开」态的行数软上限（2026-09-03）。
+ * 描述区行数**软上限**（2026-09-04 简化）。
  *
- * 这是**折中方案**：既不把节点撑到内容那么高（一个 30 行的注释会把画布撑爆、
- * 挤压得面目全非），也不像收缩态那样只给一行 ——
- * 给一个适中的可视高度（16 行），**保留换行**，超出部分走**局部滚动条**。
+ * 设计（用户拍板）：幕布注释回归**节点盒内部**，内容完整换行显示，
+ * 篇幅超过这个上限后由描述区**内部滚动** —— 不再有展开/收起状态，
+ * 也不再有"点击节点放大展开"的附属块。
  *
- * 于是：节点高度可控、内容完整可读（滚动即可），且不影响相邻节点太多。
- * 曾设过 40，实测观感太夸张，收到 16。
+ * 好处：节点高度可预测（不会因一篇长注释吃掉半个画布），
+ * 内容也永远完整可见（滚动即可），且不需要维护任何展开状态集合。
+ *
+ * 历史：这里曾经有 DESC_MAX_LINES(12) + DESC_EXPAND_MAX_LINES(16/40) 两套上限
+ * 配合展开态使用，正是状态组合复杂导致了一系列几何问题。现在只剩一个。
  */
-export const DESC_EXPAND_MAX_LINES = 16;
+export const DESC_SOFT_MAX_LINES = 16;
 /**
  * 编辑态预留行数（交互时序关键常量）：进入编辑时**立即**分配这块高度，再让用户键入。
  *
@@ -117,28 +122,21 @@ export const DESC_EDIT_MIN_LINES = 1; // 编辑态预留一行（同 collapsed �
 /**
  * 描述区高度估算（布局 measure 与 overlay 共用，必须一致）。
  *
- * @param editing 是否编辑态 —— 为真时直接返回预留高度，不依赖 text 内容（见 DESC_EDIT_MIN_LINES 注释）。
+ * 描述区**始终显示**（无展开态），高度 = min(内容行数, 软上限) 行。
+ * 超过软上限的部分不撑高节点，由描述区内部滚动。
  *
- * 重要：编辑态必须**先于内容**确定高度，否则会出现"键入后才变大、打字时看不见"的体验问题。
+ * @param editing 编辑态时直接返回预留高度 —— 编辑态的占位必须在内容输入**之前**
+ *   就存在，否则会出现"键入后才变大、打字时看不见"（见 DESC_EDIT_MIN_LINES 注释）。
  *
- * ⚠️ 不要在这里引入 depth 差分：布局 measure（createDescMeasure）拿不到 depth
- * （EditableNode 无该字段），本函数按层级算高会与 measure 预留的高度错位。
- *
- * @param maxLines 行数上限，缺省 DESC_MAX_LINES。
- *   放大展开态传 DESC_EXPAND_MAX_LINES —— 它浮出不占布局，可以给更多行。
+ * ⚠️ 不要引入 depth 差分：布局 measure（createDescMeasure）拿不到 depth
+ * （EditableNode 无该字段），按层级算高会与 measure 预留的高度错位。
  */
-export function estimateDescHeight(
-  expanded: boolean,
-  text: string,
-  editing = false,
-  maxLines = DESC_MAX_LINES,
-): number {
+export function estimateDescHeight(text: string, editing = false): number {
   // 编辑态：立即预留固定编辑空间（先变大再键入）
   if (editing) return DESC_EDIT_MIN_LINES * DESC_LINE_H + DESC_PAD * 2;
-  if (!expanded) return DESC_LINE_H + DESC_PAD * 2;
-  // 性能：用字符计数替代 split('\n') —— 避免为超长描述（上千行）创建临时数组。
-  // 行数封顶 maxLines，数到上限即可提前退出（超出部分内置滚动，不丢内容）。
-  const lines = countLines(text, maxLines);
+  if (text === '') return 0;
+  // 性能：字符计数替代 split('\n')，数到上限即提前退出（避免为超长描述建临时数组）
+  const lines = countLines(text, DESC_SOFT_MAX_LINES);
   return lines * DESC_LINE_H + DESC_PAD * 2;
 }
 
@@ -158,7 +156,7 @@ function countLines(text: string, cap: number): number {
 export function DescBlock({
   text,
   editing = false,
-  expanded = false,
+  expanded = true,
   token,
   x,
   y,

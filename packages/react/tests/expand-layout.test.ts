@@ -11,7 +11,7 @@ import {
   estimateDescHeight,
   DESC_LINE_H,
   DESC_PAD,
-  DESC_MAX_LINES,
+  DESC_SOFT_MAX_LINES,
 } from '../src/chrome/DescBlock.js';
 
 function baseMeasure() {
@@ -98,35 +98,33 @@ describe('createDescMeasure：幕布描述加高（v1.3.0）', () => {
     }) as never;
 
   it('有 desc 的节点 → 高度 += 描述区高（收缩一行）', () => {
-    const measure = createDescMeasure(base, undefined);
+    const measure = createDescMeasure(base);
     const m = measure(nodeWith('n1', '这是一段描述'));
-    const collapsedH = estimateDescHeight(false, 'x');
+    const collapsedH = estimateDescHeight('x');
     expect(m).toEqual({ w: 120, h: 36 + collapsedH });
   });
 
   it('无 desc 的节点 → 原样（零影响，向后兼容）', () => {
-    const measure = createDescMeasure(base, undefined);
+    const measure = createDescMeasure(base);
     expect(measure(nodeWith('n1'))).toEqual({ w: 120, h: 36 });
     expect(measure(nodeWith('n1', ''))).toEqual({ w: 120, h: 36 });
   });
 
-  it('展开态节点 → 高度按行数增加（比收缩态更高）', () => {
-    const expandedIds = new Set(['n1']);
-    const measure = createDescMeasure(base, expandedIds);
-    const multi = '第一行\n第二行\n第三行';
-    const mExp = measure(nodeWith('n1', multi));
-    const mCol = measure(nodeWith('n2', multi));
-    expect(mExp.h).toBeGreaterThan(mCol.h);
-    expect(mExp.h).toBe(36 + estimateDescHeight(true, multi));
+  it('描述越长 → 节点越高（高度按行数增加，无展开态）', () => {
+    const measure = createDescMeasure(base);
+    const one = measure(nodeWith('n1', '一行'));
+    const three = measure(nodeWith('n2', '第一行\n第二行\n第三行'));
+    expect(three.h).toBeGreaterThan(one.h);
+    expect(three.h).toBe(36 + estimateDescHeight('第一行\n第二行\n第三行'));
   });
 
   it('与 createExpandMeasure（qa）可叠加：描述 + 快速注释同时生效', () => {
     const desc = '描述文本';
     const withQa = createExpandMeasure(base, 'n1', GROW_EXPAND_W, estimateCommentAreaHeight());
-    const measure = createDescMeasure(withQa, undefined);
+    const measure = createDescMeasure(withQa);
     const m = measure(nodeWith('n1', desc));
     expect(m.w).toBe(GROW_EXPAND_W);
-    expect(m.h).toBe(36 + estimateCommentAreaHeight() + estimateDescHeight(false, desc));
+    expect(m.h).toBe(36 + estimateCommentAreaHeight() + estimateDescHeight(desc));
   });
 
   it('性能：measure 只依赖 desc 内容 —— editing 状态不改变任何节点高度（避免进入/退出编辑全树重排）', () => {
@@ -159,14 +157,13 @@ describe('createDescMeasure：幕布描述加高（v1.3.0）', () => {
   });
 
   it('性能：estimateDescHeight 用字符计数替代 split（超长描述不建临时数组，行数封顶后提前退出）', () => {
-    // 1000 行描述：展开态应封顶 DESC_MAX_LINES，且不该因 split 产生大数组开销
+    // 1000 行描述：应封顶 DESC_SOFT_MAX_LINES，且不该因 split 产生大数组开销
     const long = Array.from({ length: 1000 }, (_, i) => `行${i}`).join('\n');
-    const h = estimateDescHeight(true, long);
-    expect(h).toBe(DESC_MAX_LINES * DESC_LINE_H + DESC_PAD * 2);
-    // 收缩态恒为一行（与内容长度无关）
-    expect(estimateDescHeight(false, long)).toBe(DESC_LINE_H + DESC_PAD * 2);
-    // 空文本至少一行
-    expect(estimateDescHeight(true, '')).toBe(DESC_LINE_H + DESC_PAD * 2);
+    expect(estimateDescHeight(long)).toBe(DESC_SOFT_MAX_LINES * DESC_LINE_H + DESC_PAD * 2);
+    // 短描述按实际行数（不封顶）
+    expect(estimateDescHeight('a\nb\nc')).toBe(3 * DESC_LINE_H + DESC_PAD * 2);
+    // 空文本不占位
+    expect(estimateDescHeight('')).toBe(0);
   });
 
   it('空 desc 提交回退：desc 置 undefined 后 measure 回到原高', () => {
@@ -189,46 +186,27 @@ describe('createDescMeasure：幕布描述加高（v1.3.0）', () => {
     expect(a2.layout.nodes[0]!.box.h).toBeLessThanOrEqual(36);
   });
 
-  it('layoutDemo 传 descExpandedIds → 有描述节点实际变高（端到端）', () => {
+  it('有描述节点 → 布局实际变高（端到端；描述常驻参与布局）', () => {
     const a = makeTextNode('分支 A', [makeTextNode('C')]);
-    // 给 A 挂描述（两行）
     a.note = { desc: '这是 A 的描述\n第二行' };
     const root = makeTextNode('根', [a, makeTextNode('分支 B')]);
     const editable = astToEditable(root)!;
     const aId = editable.children![0]!.id;
     // 固定字符度量（不依赖 DOM canvas）
-    const char = (
-      () => (_s: string) =>
-        8
-    )() as never;
-    const collapsed = layoutDemo(editable, new Map(), char, new Set(), null, undefined, undefined);
-    const expanded = layoutDemo(
-      editable,
-      new Map(),
-      char,
-      new Set(),
-      null,
-      undefined,
-      undefined,
-      new Set([aId]),
-    );
-    const ca = collapsed.layout.nodes.find((n) => n.node.id === aId)!;
-    const ea = expanded.layout.nodes.find((n) => n.node.id === aId)!;
-    // 展开全文后 A 更高
-    expect(ea.box.h).toBeGreaterThan(ca.box.h);
-    // 收缩态也比无描述时高（描述常驻参与布局）
-    const noDesc = layoutDemo(
-      astToEditable(
-        makeTextNode('根', [makeTextNode('分支 A', [makeTextNode('C')]), makeTextNode('分支 B')]),
-      )!,
-      new Map(),
-      char,
-      new Set(),
-      null,
-      undefined,
-      undefined,
-    );
+    const char = (() => (_s: string) => 8)() as never;
+
+    const withDesc = layoutDemo(editable, new Map(), char, new Set(), null, undefined);
+    const wa = withDesc.layout.nodes.find((n) => n.node.id === aId)!;
+
+    const noDescTree = makeTextNode('根', [
+      makeTextNode('分支 A', [makeTextNode('C')]),
+      makeTextNode('分支 B'),
+    ]);
+    const noDesc = layoutDemo(astToEditable(noDescTree)!, new Map(), char, new Set(), null, undefined);
     const nd = noDesc.layout.nodes.find((n) => n.node.text === '分支 A')!;
-    expect(ca.box.h).toBeGreaterThan(nd.box.h);
+
+    expect(wa.box.h).toBeGreaterThan(nd.box.h);
+    // 高度正好等于 本体 + 描述区（两行）
+    expect(wa.box.h).toBe(nd.box.h + estimateDescHeight('这是 A 的描述\n第二行'));
   });
 });

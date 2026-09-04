@@ -11,12 +11,7 @@
  */
 import type { ReactElement } from 'react';
 import type { LayoutResult } from '@mindcanvas/kernel';
-import {
-  DescBlock,
-  DESC_EXPAND_MAX_LINES,
-  DESC_MAX_LINES,
-  estimateDescHeight,
-} from '../chrome/DescBlock.js';
+import { DescBlock, estimateDescHeight } from '../chrome/DescBlock.js';
 import { estimateCommentAreaHeight, GrowthCommentPanel } from '../chrome/GrowthCommentPanel.js';
 import { OverlayEditor } from '../edit/OverlayEditor.js';
 import type { TokenSet } from '../theme/types.js';
@@ -32,8 +27,11 @@ interface LayoutNodeLike {
 
 /**
  * 幕布描述 overlay 集合（v1.3.0）：遍历**视口内**布局节点，凡 note.desc 非空（或正在编辑）
- * 都在其本体下方渲染引用块。与 ExpandCommentOverlay 同构（屏幕坐标 + scale），
- * 但区别是——描述是**常驻可见**的（默认收缩一行），不依赖 expandedId 点击展开。
+ * 都在其本体下方渲染引用块。
+ *
+ * 描述**常驻可见**，内容完整换行显示，超过软上限由描述区内部滚动 ——
+ * 没有展开/收缩状态（2026-09-04 简化：此前有 descExpandedIds + expandedNodeIds
+ * 两套状态，组合复杂并导致过几何重叠问题）。
  *
  * 性能（v1.3.0 编辑深度优化）：只遍历 visibleNodes（视口裁剪结果），
  * 原实现遍历全量 layout.nodes —— 10K 节点图会为不可见节点创建上万个 div。
@@ -43,9 +41,6 @@ export function DescOverlays({
   viewport,
   token,
   descEditingId,
-  descExpandedIds,
-  expandedNodeIds,
-  onToggle,
   onCommit,
   onCancel,
 }: {
@@ -54,14 +49,6 @@ export function DescOverlays({
   viewport: ViewportController;
   token: TokenSet;
   descEditingId: string | null;
-  descExpandedIds?: ReadonlySet<string>;
-  /**
-   * 节点级「放大展开」：这些节点的描述区行数上限更高（DESC_EXPAND_MAX_LINES）。
-   * 与 descExpandedIds 一样画在节点盒内、**占布局** → 节点盒加高、挤压相邻节点。
-   * 高度口径必须与 createDescMeasure 一致，否则节点盒与描述区错位。
-   */
-  expandedNodeIds?: ReadonlySet<string>;
-  onToggle?: (id: string) => void;
   onCommit?: (id: string, text: string) => void;
   onCancel?: () => void;
 }) {
@@ -73,20 +60,9 @@ export function DescOverlays({
     const isEditing = descEditingId === ln.node.id;
     // 编辑态即使文本为空也要渲染（新建描述的占位）
     if (desc === '' && !isEditing) continue;
-    const expanded = descExpandedIds?.has(ln.node.id) ?? false;
-    // editing **不传**：布局 measure（createDescMeasure）刻意不含 editing ——
-    // 纳入会让 measureKey 变化 → LayoutCache.reset() → 全树重排（10K 卡死）。
-    // 编辑态沿用内容高度，由 DescBlock 的 floating 机制处理"无预留时浮出"。
-    // depth 同理不参与高度：EditableNode 没有 depth 字段，measure 拿不到，
-    // 若 overlay 按 depth 算行高就会与 measure 预留的高度错位。
-    // → 高度只由 expanded + desc 决定（与 measure 严格同口径）；
-    //   depth 只影响描述区**字号**（传给 DescBlock，不参与布局高度）。
-    // 节点级「放大展开」：与"点击描述区展开"一样画在节点盒内（占布局 → 挤压相邻节点），
-    // 只是行数上限更高。高度必须与 createDescMeasure 的口径完全一致，否则错位。
-    const isNodeExpanded = expandedNodeIds?.has(ln.node.id) ?? false;
-    const cap = isNodeExpanded ? DESC_EXPAND_MAX_LINES : DESC_MAX_LINES;
-    const dh = estimateDescHeight(expanded || isNodeExpanded, desc, false, cap);
-    // 有 desc 的节点：布局已预留描述区高度（createDescMeasure），描述区画在节点盒内的下半部。
+    // 高度口径必须与 createDescMeasure 严格一致（都只由 desc 内容决定）：
+    // 有 desc 的节点 measure 已预留描述区高度，描述区画在节点盒内的下半部。
+    const dh = estimateDescHeight(desc);
     // 无 desc 的新建编辑：节点盒**没有**预留（measure 不含 editing，否则会全树重排）→
     //   描述区浮出在节点盒下方（绝对定位覆盖，不占布局 → 进入/退出编辑零重排）。
     const hasSlot = desc !== '';
@@ -96,13 +72,6 @@ export function DescOverlays({
         key={ln.node.id}
         text={desc}
         editing={isEditing}
-        expanded={expanded}
-        // 浮出**视觉**（卡片底色 + 圆角 + 阴影 + 高层级）用于两种场景：
-        //   ① !hasSlot：无预留高度的新建编辑 —— 真浮出，不占布局，会遮挡邻居
-        //   ② isNodeExpanded：节点放大展开 —— **有**预留高度（measure 已加高，
-        //      会挤压相邻节点），只是沿用浮出卡片的外观，让它看起来是"浮"起来的。
-        // 即 floating 是**视觉开关**，不等于"不占布局"。
-        floating={!hasSlot || isNodeExpanded}
         token={token}
         x={ln.box.x * k + x}
         y={(ln.box.y + bodyH) * k + y}
@@ -110,7 +79,6 @@ export function DescOverlays({
         height={dh * k}
         scale={k}
         depth={ln.depth}
-        onToggle={() => onToggle?.(ln.node.id)}
         onCommit={(t) => onCommit?.(ln.node.id, t)}
         onCancel={() => onCancel?.()}
       />,
@@ -131,7 +99,6 @@ export function ExpandCommentOverlay({
   layout,
   viewport,
   token,
-  expandedNodeIds,
   onChange,
   onClose,
 }: {
@@ -139,8 +106,6 @@ export function ExpandCommentOverlay({
   layout: LayoutResult;
   viewport: ViewportController;
   token: TokenSet;
-  /** 放大展开的节点集合（决定描述区高度，注释区要给它让位） */
-  expandedNodeIds?: ReadonlySet<string>;
   onChange: (qa: string[]) => void;
   onClose: () => void;
 }) {
@@ -150,20 +115,9 @@ export function ExpandCommentOverlay({
   const items = Array.isArray(qa) ? (qa as string[]) : [];
   if (items.length === 0) return null;
   const { k, x, y } = viewport.transform;
-  // 布局盒 = 本体高 + 描述区高 + 注释区高（createDescMeasure 已把描述区算进 box.h）。
-  // ⚠️ 注释区必须从**描述区之上**开始：若这里只扣 commentAreaH，注释区就会落在
-  // 描述块身上（两者都从盒底往上锚）→ 视觉重叠。修正前 ea969d4 引入了这个回归。
-  const descText = typeof ln.node.note?.desc === 'string' ? (ln.node.note.desc as string) : '';
-  const descH =
-    descText === ''
-      ? 0
-      : estimateDescHeight(
-          expandedNodeIds?.has(ln.node.id) ?? false,
-          descText,
-          false,
-          expandedNodeIds?.has(ln.node.id) ? DESC_EXPAND_MAX_LINES : DESC_MAX_LINES,
-        );
-  const bodyH = Math.max(0, ln.box.h - commentAreaH - descH);
+  // 布局盒 = 本体高 + 注释区高；注释区从本体之下开始。
+  // （描述区现在画在节点盒内，不参与附属区分配，故这里无需扣减。）
+  const bodyH = Math.max(0, ln.box.h - commentAreaH);
   const sx = ln.box.x * k + x;
   const sy = (ln.box.y + bodyH) * k + y;
   const sw = ln.box.w * k;

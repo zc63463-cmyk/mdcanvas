@@ -18,7 +18,7 @@ import {
   estimateDescHeight,
   DESC_LINE_H,
   DESC_PAD,
-  DESC_MAX_LINES,
+  DESC_SOFT_MAX_LINES,
 } from '../src/chrome/DescBlock.js';
 
 /** 固定字符度量（不依赖 DOM canvas） */
@@ -58,8 +58,8 @@ describe('编辑路径性能：measure 不含 editing 状态', () => {
     const noDesc = { id: 'n2', type: 'text', text: 'B', children: [] } as never;
     // createDescMeasure 只有 (base, descExpandedIds) 两个参数 —— 无 editing 入参
     expect(createDescMeasure.length).toBeLessThanOrEqual(3);
-    const m1 = createDescMeasure(base, undefined);
-    const m2 = createDescMeasure(base, new Set(['n1']));
+    const m1 = createDescMeasure(base);
+    const m2 = createDescMeasure(base);
     // 有 desc：加高
     expect(m1(withDesc).h).toBeGreaterThan(36);
     // 无 desc：原样（editing 由 overlay 浮出处理，不占布局）
@@ -112,7 +112,6 @@ describe('编辑路径性能：measure 不含 editing 状态', () => {
       null,
       undefined,
       undefined,
-      new Set([e2.id]),
     ).layout.nodes.find((n) => n.node.text === 'A')!.box.h;
     expect(h2expanded).toBeGreaterThan(h1);
   });
@@ -122,16 +121,16 @@ describe('estimateDescHeight 性能：O(cap) 行数统计', () => {
   it('超长描述（5000 行）耗时可控且不建临时数组', () => {
     const long = Array.from({ length: 5000 }, (_, i) => `行${i}`).join('\n');
     const t0 = performance.now();
-    const h = estimateDescHeight(true, long);
+    const h = estimateDescHeight(long);
     const dt = performance.now() - t0;
     // 封顶生效
-    expect(h).toBe(DESC_MAX_LINES * DESC_LINE_H + DESC_PAD * 2);
+    expect(h).toBe(DESC_SOFT_MAX_LINES * DESC_LINE_H + DESC_PAD * 2);
     // 性能护栏：5000 行统计应在 5ms 内（计数 + 提前退出；split 版本会分配 5000 元素数组）
     expect(dt).toBeLessThan(5);
   });
 
-  it('收缩态恒一行（与内容长度无关，零扫描）', () => {
+  it('封顶后高度不再随内容增长（超长描述由内部滚动消化）', () => {
     const long = 'x\n'.repeat(2000);
-    expect(estimateDescHeight(false, long)).toBe(DESC_LINE_H + DESC_PAD * 2);
+    expect(estimateDescHeight(long)).toBe(DESC_SOFT_MAX_LINES * DESC_LINE_H + DESC_PAD * 2);
   });
 });
