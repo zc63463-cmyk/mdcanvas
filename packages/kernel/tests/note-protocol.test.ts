@@ -10,10 +10,12 @@
 import { describe, expect, it } from 'vitest';
 import { hasNote, noteOf } from '../src/protocol/note.js';
 import { parseMm } from '../src/protocol/parser.js';
+import type { MindNode } from '../src/protocol/types.js';
 import { serializeMm } from '../src/protocol/serializer.js';
 
-function rootOf(text: string) {
-  return parseMm(text).root;
+// 测试夹具都有根节点，root 必然非空 —— 这里的 `!` 是合理的断言语义
+function rootOf(text: string): MindNode {
+  return parseMm(text).root!;
 }
 
 describe('node 注释：解析', () => {
@@ -71,15 +73,15 @@ describe('node 注释：往返无损', () => {
   for (const [name, src] of cases) {
     it(`${name}：parse → serialize → parse 数据不变`, () => {
       const p1 = parseMm(src);
-      const p2 = parseMm(serializeMm(p1.root));
+      const p2 = parseMm(serializeMm(p1.root!));
       expect(JSON.stringify(noteOf(p2.root))).toBe(JSON.stringify(noteOf(p1.root)));
     });
   }
 
   it('序列化幂等（serialize 两次结果一致）', () => {
     const src = '<!--\nnote:\n  - 条目一\nnote_text: 正文\n-->\n# 根';
-    const s1 = serializeMm(parseMm(src).root);
-    const s2 = serializeMm(parseMm(s1).root);
+    const s1 = serializeMm(parseMm(src).root!);
+    const s2 = serializeMm(parseMm(s1).root!);
     expect(s2).toBe(s1);
   });
 });

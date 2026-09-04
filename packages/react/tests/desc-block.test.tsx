@@ -55,18 +55,17 @@ describe('DescBlock：幕布描述块', () => {
     expect(container.querySelector('[data-desc-text]')!.textContent).toBe('这是对主题的补充说明');
   });
 
-  it('内容换行可见：pre-wrap + break-word（不截断成一行）', () => {
+  it('不自动折行：pre（幕布语义 —— 一般横向撑长，除非主动换行）', () => {
     const { container } = renderDesc({ text: '第一行\n第二行' });
     const textEl = container.querySelector('[data-desc-text]') as HTMLElement;
-    expect(textEl.style.whiteSpace).toBe('pre-wrap');
-    expect(textEl.style.wordBreak).toBe('break-word');
-    expect(textEl.style.overflowY).toBe('auto');
+    // pre = 保留显式 \n，但不在节点宽度处自动折行（自动折行会让短描述也占几行）
+    expect(textEl.style.whiteSpace).toBe('pre');
   });
 
-  it('pre-wrap 显示多行', () => {
+  it('pre 保留显式换行的多行', () => {
     const { container } = renderDesc({ text: '第一行\n第二行', expanded: true });
     const textEl = container.querySelector('[data-desc-text]')!;
-    expect((textEl as HTMLElement).style.whiteSpace).toBe('pre-wrap');
+    expect((textEl as HTMLElement).style.whiteSpace).toBe('pre');
   });
 
   it('点击描述区 → onToggle 触发（切换展开/收缩）', () => {

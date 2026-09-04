@@ -12,6 +12,7 @@
  * 迁移：旧文件的 `qa`（快速注释）在**读取时**作为 `note` 的回退；
  * 写入一律写 `note` —— 旧文件可读，新文件不再产生 `qa`。
  */
+import type { EditableNode } from '../tree/treeOps.js';
 import type { MindNode, Note } from './types.js';
 
 /** 节点注释的两个区域（同一浮窗内共存，可只填其一） */
@@ -47,4 +48,40 @@ export function noteOf(node: MindNode | undefined | null): NodeNoteData {
 export function hasNote(node: MindNode | undefined | null): boolean {
   const { seq, text } = noteOf(node);
   return seq.length > 0 || text !== '';
+}
+
+/**
+ * 节点在树中的**索引路径**。
+ *
+ * ⚠️ 为什么浮动 UI 要用路径而不是 id 记住目标：`buildEditable` 每次解析都会
+ * 经 `astToEditable` **重新生成节点 id**。于是「编辑注释 → 写回 → 文档重新解析」
+ * 这一步之后，之前记下的 id 就已经不存在了 —— 表现为"弹窗一编辑就消失"。
+ * 路径（从根往下每层第几个孩子）不受重新解析影响，可稳定复现同一个节点。
+ */
+export type NodePath = number[];
+
+/** 求节点的索引路径；找不到返回 null（根节点路径为 `[]`） */
+export function pathOfNode(root: EditableNode, id: string): NodePath | null {
+  const walk = (n: EditableNode, path: NodePath): NodePath | null => {
+    if (n.id === id) return path;
+    for (let i = 0; i < n.children.length; i++) {
+      const child = n.children[i];
+      if (!child) continue;
+      const hit = walk(child, [...path, i]);
+      if (hit) return hit;
+    }
+    return null;
+  };
+  return walk(root, []);
+}
+
+/** 按索引路径取节点；路径失效（树结构变了）返回 null */
+export function nodeAtPath(root: EditableNode, path: NodePath): EditableNode | null {
+  let n: EditableNode = root;
+  for (const idx of path) {
+    const next = n.children[idx];
+    if (!next) return null;
+    n = next;
+  }
+  return n;
 }

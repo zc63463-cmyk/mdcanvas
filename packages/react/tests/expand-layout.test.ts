@@ -20,6 +20,9 @@ function baseMeasure() {
   return () => ({ w: 120, h: 36 });
 }
 
+/** 固定宽度度量（desc 撑宽测试用；不依赖 DOM canvas） */
+const FAKE_CHAR = (() => (_s: string) => 8) as never;
+
 describe('createExpandMeasure：展开节点加宽注入', () => {
   it('展开节点 → 宽=定值、高=本体+注释区高', () => {
     const base = baseMeasure();
@@ -98,20 +101,20 @@ describe('createDescMeasure：幕布描述加高（v1.3.0）', () => {
     }) as never;
 
   it('有 desc 的节点 → 高度 += 描述区高（收缩一行）', () => {
-    const measure = createDescMeasure(base);
+    const measure = createDescMeasure(base, FAKE_CHAR);
     const m = measure(nodeWith('n1', '这是一段描述'));
     const collapsedH = estimateDescHeight('x');
     expect(m).toEqual({ w: 120, h: 36 + collapsedH });
   });
 
   it('无 desc 的节点 → 原样（零影响，向后兼容）', () => {
-    const measure = createDescMeasure(base);
+    const measure = createDescMeasure(base, FAKE_CHAR);
     expect(measure(nodeWith('n1'))).toEqual({ w: 120, h: 36 });
     expect(measure(nodeWith('n1', ''))).toEqual({ w: 120, h: 36 });
   });
 
   it('描述越长 → 节点越高（高度按行数增加，无展开态）', () => {
-    const measure = createDescMeasure(base);
+    const measure = createDescMeasure(base, FAKE_CHAR);
     const one = measure(nodeWith('n1', '一行'));
     const three = measure(nodeWith('n2', '第一行\n第二行\n第三行'));
     expect(three.h).toBeGreaterThan(one.h);
@@ -121,7 +124,7 @@ describe('createDescMeasure：幕布描述加高（v1.3.0）', () => {
   it('与 createExpandMeasure（qa）可叠加：描述 + 快速注释同时生效', () => {
     const desc = '描述文本';
     const withQa = createExpandMeasure(base, 'n1', GROW_EXPAND_W, estimateCommentAreaHeight());
-    const measure = createDescMeasure(withQa);
+    const measure = createDescMeasure(withQa, FAKE_CHAR);
     const m = measure(nodeWith('n1', desc));
     expect(m.w).toBe(GROW_EXPAND_W);
     expect(m.h).toBe(36 + estimateCommentAreaHeight() + estimateDescHeight(desc));

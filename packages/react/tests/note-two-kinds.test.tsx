@@ -53,8 +53,18 @@ function renderMap(props: Record<string, unknown> = {}, fixture = build()) {
   return { ...view, layout: fixture.layout };
 }
 
+/** 按文本取节点对象（数据层断言用） */
 function nodeByText(layout: { nodes: Array<{ node: MindNode }> }, text: string): MindNode {
   return layout.nodes.find((n) => n.node.text === text)!.node;
+}
+
+/**
+ * 按文本取节点 id（浮窗固定用）。
+ * MindNode 类型上没声明 id，但运行时挂在 node 对象上 —— 这里显式取一次。
+ */
+function idOf(layout: { nodes: Array<{ node: unknown }> }, text: string): string {
+  const hit = layout.nodes.find((n) => (n.node as MindNode).text === text)!;
+  return (hit.node as { id: string }).id;
 }
 
 describe('两种注释：数据层可区分', () => {
@@ -96,15 +106,15 @@ describe('两种注释：渲染层都能看到', () => {
     const ids = Array.from(container.querySelectorAll('[data-note-badge]')).map((b) =>
       b.getAttribute('data-note-badge'),
     );
-    expect(ids).not.toContain(nodeByText(fixture.layout, '啥都没有').id);
-    expect(ids).not.toContain(nodeByText(fixture.layout, '有描述').id);
+    expect(ids).not.toContain(idOf(fixture.layout, '啥都没有'));
+    expect(ids).not.toContain(idOf(fixture.layout, '有描述'));
   });
 });
 
 describe('注释浮窗：固定态可新建（内容为空也要能打开）', () => {
   it('pinnedNoteId 指向无注释的节点 → 仍显示浮窗（用户正要新建）', () => {
     const fixture = build();
-    const plainId = nodeByText(fixture.layout, '啥都没有').id;
+    const plainId = idOf(fixture.layout, '啥都没有');
     const { container } = renderMap({ pinnedNoteId: plainId }, fixture);
     const pop = container.querySelector('[data-note-popover]');
     expect(pop).not.toBeNull();

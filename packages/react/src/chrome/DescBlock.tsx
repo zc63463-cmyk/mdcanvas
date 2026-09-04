@@ -140,6 +140,23 @@ export function estimateDescHeight(text: string, editing = false): number {
   return lines * DESC_LINE_H + DESC_PAD * 2;
 }
 
+/**
+ * 描述区需要的宽度（最长一行 + 内边距 + 引用竖线与缩进）。
+ *
+ * 幕布语义：描述是**轻量单行文本**，**不自动折行** —— 长了就把节点盒横向撑开，
+ * 只有用户显式输入 `\n` 才换到第二行（这就是「一般撑长，除非主动换行」）。
+ * 故宽度取**最长的一行**，而不是按节点宽度折行后的高度。
+ */
+export function estimateDescWidth(text: string, char: (s: string) => number): number {
+  if (text === '') return 0;
+  let max = 0;
+  for (const line of text.split('\n')) {
+    const w = char(line);
+    if (w > max) max = w;
+  }
+  return max + DESC_PAD * 2 + DESC_BAR_W + DESC_INDENT;
+}
+
 /** 数换行符个数（=行数-1），最多数到 cap 行即提前退出（性能：不扫描全文、不建数组） */
 function countLines(text: string, cap: number): number {
   if (text === '') return 1;
@@ -300,13 +317,15 @@ export function DescBlock({
         <div
           data-desc-text
           style={{
+            // 轻量文本：字号比节点正文小（随层级差分，见 descFontSize）
             fontSize,
-            // 固定像素行高（同上）：与布局预留高度严格一致
+            // 固定像素行高：与布局预留高度严格一致
             lineHeight: `${lineH}px`,
             color: CHROME.textMuted,
-            whiteSpace: expanded ? 'pre-wrap' : 'nowrap',
-            wordBreak: expanded ? 'break-word' : undefined,
-            overflow: 'hidden',
+            // pre = 保留显式换行、但**不自动折行** —— 长了横向撑开节点盒，
+            // 与幕布一致（自动折行会让短描述也占好几行，把树撑得稀疏）。
+            whiteSpace: 'pre',
+            overflow: 'auto',
             textOverflow: 'ellipsis',
             maxHeight: '100%',
             // 展开态超出行数上限时内置滚动（内容不丢，节点高度可控）

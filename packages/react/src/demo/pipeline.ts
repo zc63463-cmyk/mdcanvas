@@ -21,7 +21,7 @@ import type {
 } from '@mindcanvas/kernel';
 import { createNodeMeasure } from '../render/domMeasure.js';
 import { estimateCommentAreaHeight, GROW_EXPAND_W } from '../chrome/GrowthCommentPanel.js';
-import { estimateDescHeight } from '../chrome/DescBlock.js';
+import { estimateDescHeight, estimateDescWidth } from '../chrome/DescBlock.js';
 
 export interface DemoSource {
   editable: EditableNode | null;
@@ -108,16 +108,18 @@ export function idsMeasureKey(ids: ReadonlySet<string>): string {
   return [...ids].sort().join(',');
 }
 
-export function createDescMeasure(base: MeasureFn): MeasureFn {
+export function createDescMeasure(base: MeasureFn, char: CharMeasure): MeasureFn {
   return (node) => {
     const b = base(node);
     const raw = node.note?.desc;
     const desc = typeof raw === 'string' ? raw : '';
-    // 描述区**始终**参与布局（无展开/收缩态）：内容完整换行，超过软上限后由
-    // DescOverlay 内部滚动。这样节点高度可预测，也不用维护展开状态集合。
+    // 描述区**始终**参与布局（无展开/收缩态）。
+    // 幕布语义：描述是轻量单行文本 —— 不自动折行，长了**横向撑开**节点盒；
+    // 只有显式 `\n` 才增高。超过软上限后由描述区内部滚动。
     if (desc === '') return b;
     const dh = estimateDescHeight(desc);
-    return { w: b.w, h: b.h + dh };
+    const dw = estimateDescWidth(desc, char);
+    return { w: Math.max(b.w, dw), h: b.h + dh };
   };
 }
 
@@ -137,7 +139,7 @@ export function layoutDemo(
     ? createExpandMeasure(base, expandedId, GROW_EXPAND_W, estimateCommentAreaHeight())
     : base;
   // 注意：measure 不含 editing 状态（见 createDescMeasure 注释）——编辑态不触发全树重排
-  const measure = createDescMeasure(withQa);
+  const measure = createDescMeasure(withQa, char);
   return {
     layout: layoutMindmap(
       editable,

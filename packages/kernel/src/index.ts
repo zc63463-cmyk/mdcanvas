@@ -168,8 +168,13 @@ export {
 
 export { safeHref } from './protocol/uri.js';
 
-export { hasNote, noteOf } from './protocol/note.js';
-export type { NodeNoteData } from './protocol/note.js';
+export {
+  hasNote,
+  nodeAtPath,
+  noteOf,
+  pathOfNode,
+} from './protocol/note.js';
+export type { NodeNoteData, NodePath } from './protocol/note.js';
 
 export { registerBuiltinKinds } from './registry/builtin.js';
 

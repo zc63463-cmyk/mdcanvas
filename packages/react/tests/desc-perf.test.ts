@@ -39,6 +39,9 @@ function chain(depth: number, descAt?: number): ReturnType<typeof astToEditable>
   return astToEditable(node);
 }
 
+/** 固定宽度度量（desc 撑宽测试用；不依赖 DOM canvas） */
+const FAKE_CHAR = (() => (_s: string) => 8) as never;
+
 describe('编辑路径性能：measure 不含 editing 状态', () => {
   it('layoutDemo 不接受 descEditingId（签名层面防止回退到全树重排实现）', () => {
     // 类型层面已约束；运行时校验参数个数（arity）
@@ -58,8 +61,8 @@ describe('编辑路径性能：measure 不含 editing 状态', () => {
     const noDesc = { id: 'n2', type: 'text', text: 'B', children: [] } as never;
     // createDescMeasure 只有 (base, descExpandedIds) 两个参数 —— 无 editing 入参
     expect(createDescMeasure.length).toBeLessThanOrEqual(3);
-    const m1 = createDescMeasure(base);
-    const m2 = createDescMeasure(base);
+    const m1 = createDescMeasure(base, FAKE_CHAR);
+    const m2 = createDescMeasure(base, FAKE_CHAR);
     // 有 desc：加高
     expect(m1(withDesc).h).toBeGreaterThan(36);
     // 无 desc：原样（editing 由 overlay 浮出处理，不占布局）

@@ -12,6 +12,7 @@
  *
  * 不是什么：不含菜单项的渲染与键盘交互（`ContextMenu` 自己管）。
  */
+import { pathOfNode } from '@mindcanvas/kernel';
 import { contextMenuItemsFor, ContextMenu, type EditorController } from '@mindcanvas/react';
 import { nodeById } from './hooks/useEdgeActions.js';
 
@@ -39,8 +40,11 @@ export interface NodeContextMenuProps {
   setLinkDraft: (v: { sourceId: string; x: number; y: number } | null) => void;
   /** 进入描述编辑 */
   setDescEditingId: (id: string) => void;
-  /** 打开节点注释浮窗并固定（内容可为空 —— 用户可能正要新建） */
-  setPinnedNoteId: (id: string) => void;
+  /**
+   * 打开节点注释浮窗并固定（内容可为空 —— 用户可能正要新建）。
+   * 传**索引路径**而非 id：文档重新解析会重建 id，路径才能稳定复现同一个节点。
+   */
+  setPinnedNotePath: (path: number[]) => void;
   onClose: () => void;
 }
 
@@ -52,7 +56,7 @@ export function NodeContextMenu({
   setPanel,
   setLinkDraft,
   setDescEditingId,
-  setPinnedNoteId,
+  setPinnedNotePath,
   onClose,
 }: NodeContextMenuProps) {
   return (
@@ -83,7 +87,7 @@ export function NodeContextMenu({
         // v1.3.0 幕布描述入口：右键「编辑描述」= 与 Shift+Enter 同一动作
         { onStart: (id) => setDescEditingId(id) },
         // v1.4.0 节点注释入口：打开浮窗（与描述是不同内容）
-        { onStart: (id) => setPinnedNoteId(id) },
+        { onStart: (id) => setPinnedNotePath(pathOfNode(controller.root, id) ?? []) },
       )}
       onClose={onClose}
     />
