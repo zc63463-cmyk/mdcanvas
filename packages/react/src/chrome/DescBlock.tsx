@@ -87,16 +87,16 @@ export const DESC_INDENT = 8;
  */
 export const DESC_MAX_LINES = 12;
 /**
- * 「节点放大展开」态的行数上限与最小宽度（2026-09-03 新增交互）。
+ * 「节点放大展开」态的行数软上限（2026-09-03）。
  *
- * 背景：节点盒内的描述区受制于节点大小（高度算进节点盒），放宽到 12 行仍不够看。
- * 点击节点进入放大展开态后，描述区**浮出**、不占布局，于是可以：
- *   - 行数上限放宽到 40（超出仍内置滚动，内容不丢）
- *   - 宽度不再等于节点宽，至少 260 —— 换行后更易读
- * 浮出的代价是会盖住下方内容，故需要卡片底色 + 阴影 + 高层级（复用 floating 样式）。
+ * 这是**折中方案**：既不把节点撑到内容那么高（一个 30 行的注释会把画布撑爆、
+ * 挤压得面目全非），也不像收缩态那样只给一行 ——
+ * 给一个适中的可视高度（16 行），**保留换行**，超出部分走**局部滚动条**。
+ *
+ * 于是：节点高度可控、内容完整可读（滚动即可），且不影响相邻节点太多。
+ * 曾设过 40，实测观感太夸张，收到 16。
  */
-export const DESC_EXPAND_MAX_LINES = 40;
-export const DESC_EXPAND_MIN_W = 260;
+export const DESC_EXPAND_MAX_LINES = 16;
 /**
  * 编辑态预留行数（交互时序关键常量）：进入编辑时**立即**分配这块高度，再让用户键入。
  *
@@ -307,8 +307,12 @@ export function DescBlock({
             overflow: 'hidden',
             textOverflow: 'ellipsis',
             maxHeight: '100%',
-            // 展开态超出 DESC_MAX_LINES 时内置滚动
+            // 展开态超出行数上限时内置滚动（内容不丢，节点高度可控）
             overflowY: expanded ? 'auto' : 'hidden',
+            // 让滚动条细但可辨识 —— 否则内容溢出时没有任何提示，
+            // 用户会以为"就这些了"，其实是下面还有。
+            scrollbarWidth: 'thin',
+            scrollbarColor: 'rgba(140,140,140,.5) transparent',
           }}
         >
           {text}

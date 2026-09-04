@@ -17,6 +17,7 @@ import {
   DESC_LINE_H,
   DESC_PAD,
   DESC_MAX_LINES,
+  DESC_EXPAND_MAX_LINES,
 } from '../src/chrome/DescBlock.js';
 
 const token = glassToken;
@@ -169,6 +170,18 @@ describe('friction-log 守卫：注释显示（2026-09-03）', () => {
 
   it('#2 叶子字号仍有可读性下限（不小于 8px）', () => {
     expect(descFontSize(2)).toBeGreaterThanOrEqual(8);
+  });
+
+  it('节点放大展开是「软上限」：换行可见、超出走局部滚动，不撑爆节点', () => {
+    const long = Array.from({ length: 60 }, (_, i) => `行${i}`).join('\n');
+    const expandedH = estimateDescHeight(true, long, false, DESC_EXPAND_MAX_LINES);
+    const normalH = estimateDescHeight(true, long, false, DESC_MAX_LINES);
+
+    // 比普通展开看得更多，但就此封顶 —— 不是按内容无限撑高
+    expect(expandedH).toBeGreaterThan(normalH);
+    expect(expandedH).toBe(DESC_EXPAND_MAX_LINES * DESC_LINE_H + DESC_PAD * 2);
+    // 软上限必须有节制（一个节点不该吃掉大半个画布）
+    expect(DESC_EXPAND_MAX_LINES).toBeLessThanOrEqual(20);
   });
 
   it('#2 行高不随层级差分 —— 与 measure 预留高度严格同口径，防错位', () => {
