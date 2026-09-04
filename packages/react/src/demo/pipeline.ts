@@ -21,7 +21,11 @@ import type {
 } from '@mindcanvas/kernel';
 import { createNodeMeasure } from '../render/domMeasure.js';
 import { estimateCommentAreaHeight, GROW_EXPAND_W } from '../chrome/GrowthCommentPanel.js';
-import { estimateDescHeight, estimateDescWidth } from '../chrome/DescBlock.js';
+import {
+  DESC_EDIT_MIN_W,
+  estimateDescHeight,
+  estimateDescWidth,
+} from '../chrome/DescBlock.js';
 
 export interface DemoSource {
   editable: EditableNode | null;
@@ -108,17 +112,35 @@ export function idsMeasureKey(ids: ReadonlySet<string>): string {
   return [...ids].sort().join(',');
 }
 
-export function createDescMeasure(base: MeasureFn, char: CharMeasure): MeasureFn {
+/**
+ * 描述区度量。
+ *
+ * @param descEditingId 正在编辑描述的节点 id —— **必须纳入 measure**。
+ *   早期版本为"避免全树重排"刻意不含 editing（`hasSlot = desc !== ''`），
+ *   代价是：新建描述时节点盒**不扩张**，编辑框只能浮出在节点下方（不占布局），
+ *   用户按 Shift+Enter 后看不到"节点自己长出编辑区"的过程，且浮出框会遮挡邻居。
+ *   现在改为：编辑中的节点即使 desc 为空也预留编辑区高度+最小宽度 → 节点自己扩张。
+ *
+ *   性能取舍：measureKey 纳入 descEditingId 后，进入/退出编辑各触发一次全树重排
+ *   （用户主动的一次性操作，可接受）；**键入过程中 measureKey 不变**，
+ *   因此不会每敲一个字就重排 —— 这与当初避免重排的诉求并不冲突。
+ */
+export function createDescMeasure(
+  base: MeasureFn,
+  char: CharMeasure,
+  descEditingId: string | null = null,
+): MeasureFn {
   return (node) => {
     const b = base(node);
     const raw = node.note?.desc;
     const desc = typeof raw === 'string' ? raw : '';
+    const isEditing = descEditingId !== null && node.id === descEditingId;
     // 描述区**始终**参与布局（无展开/收缩态）。
     // 幕布语义：描述是轻量单行文本 —— 不自动折行，长了**横向撑开**节点盒；
     // 只有显式 `\n` 才增高。超过软上限后由描述区内部滚动。
-    if (desc === '') return b;
-    const dh = estimateDescHeight(desc);
-    const dw = estimateDescWidth(desc, char);
+    if (desc === '' && !isEditing) return b;
+    const dh = estimateDescHeight(desc, isEditing);
+    const dw = Math.max(estimateDescWidth(desc, char), isEditing ? DESC_EDIT_MIN_W : 0);
     return { w: Math.max(b.w, dw), h: b.h + dh };
   };
 }
@@ -133,13 +155,14 @@ export function layoutDemo(
   expandedId: string | null = null,
   cache?: LayoutCache,
   measureKey?: string,
+  descEditingId: string | null = null,
 ): DemoLayout {
   const base = createNodeMeasure(char, entities);
   const withQa = expandedId
     ? createExpandMeasure(base, expandedId, GROW_EXPAND_W, estimateCommentAreaHeight())
     : base;
   // 注意：measure 不含 editing 状态（见 createDescMeasure 注释）——编辑态不触发全树重排
-  const measure = createDescMeasure(withQa, char);
+  const measure = createDescMeasure(withQa, char, descEditingId);
   return {
     layout: layoutMindmap(
       editable,

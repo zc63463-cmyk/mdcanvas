@@ -458,12 +458,17 @@ function StageContent({
    * **重新生成 id** —— 若存 id，一编辑写回（文档重新解析）之前记的 id 就失效了，
    * 表现为"注释浮窗一编辑就消失"。路径不受重新解析影响。
    */
-  const [pinnedNotePath, setPinnedNotePath] = useState<NodePath | null>(null);
+  const [pinnedNotePaths, setPinnedNotePaths] = useState<NodePath[]>([]);
   /** 由路径换算出当前的节点 id（文档重建后自动跟上新 id） */
-  const pinnedNoteId = useMemo(() => {
-    if (pinnedNotePath === null) return null;
-    return nodeAtPath(controller.root, pinnedNotePath)?.id ?? null;
-  }, [pinnedNotePath, controller.root]);
+  const pinnedNoteIds = useMemo(
+    () => pinnedNotePaths.map((path) => nodeAtPath(controller.root, path)?.id).filter(Boolean) as string[],
+    [pinnedNotePaths, controller.root],
+  );
+  const setPinnedNotePath = (path: NodePath): void => {
+    setPinnedNotePaths((prev) =>
+      prev.some((p) => JSON.stringify(p) === JSON.stringify(path)) ? prev : [...prev, path],
+    );
+  };
 
   // E8：关系模式（模式隔离）——浏览态只呈现关系，关系态才暴露连线入口
   // （连接手柄 / Shift+点两节点 / 树边右键编辑 / 边点击编辑 / 右键「连线到…」）
@@ -569,13 +574,18 @@ function StageContent({
         controller.collapsed,
         expandedQaId,
         layoutCacheRef.current!,
-        // 度量语义键：字体/实体规模/展开态任一变化 → 键变 → 内核自动作废缓存（结果恒等于全量）
-        // 性能关键（v1.3.0 编辑性能深度优化）：**descEditingId 不入键**。
-        // measure 只依赖 desc 内容（见 createDescMeasure），进入/退出编辑不改变任何节点高度，
-        // 因此无需作废缓存 → 增量布局命中 → 进入/退出编辑零全树重排（10K 图也不卡）。
-        `${token.font.family}|${token.font.size}|${entities.size}|${expandedQaId ?? ''}`,
-        // v1.3.0 幕布描述：展开全文的节点加高，其余有描述的节点按收缩一行计高
-        // 节点级放大展开：同样加高（行数上限更高）→ 占布局、挤压相邻节点
+        // 度量语义键：字体/实体规模/展开态/描述编辑目标任一变化 → 键变 → 缓存作废（结果恒等于全量）
+        //
+        // descEditingId **必须入键**（2026-09-04 修正）：早期为了"进入/退出编辑零重排"
+        // 刻意不入键，代价是新建描述时 measure 不预留编辑区 → 节点盒不扩张、
+        // 编辑框只能浮出在节点下方（用户反馈：按 Shift+Enter 看不到节点长出编辑区）。
+        //
+        // 修正后的重排成本：**进入/退出编辑各一次**（用户主动操作，可接受）；
+        // 键入过程中 descEditingId 不变 → 键不变 → 不重排。
+        // 这与当初"避免每敲一字就重排"的诉求并不冲突。
+        `${token.font.family}|${token.font.size}|${entities.size}|${expandedQaId ?? ''}|${descEditingId ?? ''}`,
+        // 让正在编辑描述的节点在布局里预留编辑区（节点自己扩张，而不是浮出遮挡）
+        descEditingId,
       ).layout,
     [
       controller.root,
@@ -584,6 +594,7 @@ function StageContent({
       controller.collapsed,
       expandedQaId,
       token.font,
+      descEditingId,
     ],
   );
 
@@ -954,13 +965,16 @@ function StageContent({
           const qa = ln.node.note?.qa;
           setExpandedQaId(Array.isArray(qa) && (qa as string[]).length > 0 ? ln.node.id : null);
           // 有注释的节点：点击即固定浮窗（悬停只是预览）—— 记路径，不是 id
-          setPinnedNotePath(hasNote(ln.node) ? pathOfNode(controller.root, ln.node.id) : null);
+          if (hasNote(ln.node)) {
+            const path = pathOfNode(controller.root, ln.node.id);
+            if (path) setPinnedNotePath(path);
+          }
         }}
         onBlankClick={() => {
           // 点画布空白：取消选中 + 收起放大展开（这是取消选中的唯一入口）
           controller.select(null);
           setExpandedQaId(null);
-          setPinnedNotePath(null);
+          setPinnedNotePaths([]);
         }}
         onNodeContext={(node, sx, sy) => {
           // 右键：命中节点 → 选中并弹菜单；空白 → 关菜单
@@ -971,14 +985,19 @@ function StageContent({
           controller.select(node.node.id);
           setCtxMenu({ nodeId: node.node.id, x: sx, y: sy });
         }}
-        pinnedNoteId={pinnedNoteId}
+        pinnedNoteIds={pinnedNoteIds}
         onNoteChangeSeq={(id, seq) =>
           controller.updateNote(id, seq.length > 0 ? { note: seq } : { note: undefined })
         }
         onNoteChangeText={(id, text) =>
           controller.updateNote(id, text === '' ? { note_text: undefined } : { note_text: text })
         }
-        onNoteClose={() => setPinnedNotePath(null)}
+        onNoteClose={(id) => {
+          if (!id) return setPinnedNotePaths([]);
+          setPinnedNotePaths((prev) =>
+            prev.filter((path) => nodeAtPath(controller.root, path)?.id !== id),
+          );
+        }}
         selectedId={controller.selectedId}
         editingId={controller.editingId}
         onEditCommit={(id, text) => {

@@ -89,12 +89,14 @@ export interface MapViewProps {
   onNoteHover?: (id: string | null) => void;
   /** 固定显示的注释节点 id（null = 无） */
   pinnedNoteId?: string | null;
+  /** 可同时固定多个节点注释 */
+  pinnedNoteIds?: readonly string[];
   /** 注释写回：序列区域 */
   onNoteChangeSeq?: (id: string, seq: string[]) => void;
   /** 注释写回：纯文本区域 */
   onNoteChangeText?: (id: string, text: string) => void;
   /** 关闭浮窗（点 ✕ 或点空白） */
-  onNoteClose?: () => void;
+  onNoteClose?: (id?: string) => void;
   /** 节点右键（hit-test；空白处命中 null；带屏幕坐标） */
   onNodeContext?: (node: LayoutNode | null, sx: number, sy: number) => void;
   /** 选中节点 id（高亮；null = 无） */
@@ -200,6 +202,7 @@ export function MapView({
   onBlankClick,
   onNoteHover,
   pinnedNoteId = null,
+  pinnedNoteIds,
   onNoteChangeSeq,
   onNoteChangeText,
   onNoteClose,
@@ -274,24 +277,30 @@ export function MapView({
   const [hover, setHover] = useState<{ id: string; x: number; y: number } | null>(null);
   /**
    * 当前该显示注释浮窗的目标：固定的优先于悬停的。
-   * 固定态用节点盒下方位置（稳定），悬停态跟随指针（轻快）。
+   * 预览态与固定态都从节点盒下方长出，避免浮窗跟随指针导致位置跳动，
+   * 也让用户能沿着节点直接进入浮窗进行查看或编辑。
    */
-  const noteTarget = useMemo(() => {
-    const id = pinnedNoteId ?? hover?.id ?? null;
-    if (id === null) return null;
-    const ln = layout.nodes.find((n) => n.node.id === id);
-    if (!ln) return null;
-    const pinned = pinnedNoteId === id;
+  const noteTargets = useMemo(() => {
+    const pinnedIds = pinnedNoteIds ?? (pinnedNoteId ? [pinnedNoteId] : []);
+    const targets = pinnedIds.flatMap((id) => {
+      const ln = layout.nodes.find((n) => n.node.id === id);
+      if (!ln) return [];
+      return [{ id, ln, pinned: true }];
+    });
+    if (hover && !pinnedIds.includes(hover.id)) {
+      const ln = layout.nodes.find((n) => n.node.id === hover.id);
+      if (ln && hasNote(ln.node)) targets.push({ id: hover.id, ln, pinned: false });
+    }
+    return targets.map(({ id, ln, pinned }) => {
+      const x = ln.box.x * viewport.transform.k + viewport.transform.x;
+      const y = (ln.box.y + ln.box.h) * viewport.transform.k + viewport.transform.y + 8;
+      return { id, data: noteOf(ln.node), pinned, x, y, width: ln.box.w * viewport.transform.k };
+    });
     // 固定态：**即使没有注释内容也显示** —— 用户右键「编辑注释…」正是要新建，
     // 若在这里拦掉 hasNote，点了菜单什么都不会出现。
     // 悬停态只在有内容时预览 —— 否则鼠标扫过节点就弹空浮窗，太吵。
-    if (!pinned && !hasNote(ln.node)) return null;
-    const pos = pinned
-      ? { x: ln.box.x * viewport.transform.k + viewport.transform.x,
-          y: (ln.box.y + ln.box.h) * viewport.transform.k + viewport.transform.y }
-      : { x: (hover?.x ?? 0), y: (hover?.y ?? 0) };
-    return { id, data: noteOf(ln.node), pinned, ...pos };
-  }, [pinnedNoteId, hover, layout, viewport.transform, ]);
+    // （上面 targets 的构造已体现这两条：pinned 不查 hasNote，hover 才查。）
+  }, [pinnedNoteId, pinnedNoteIds, hover, layout, viewport.transform]);
   onNodeClickRef.current = onNodeClick;
   onBlankClickRef.current = onBlankClick;
   const onNodeContextRef = useRef(onNodeContext);
@@ -1187,19 +1196,21 @@ export function MapView({
         />
 
         {/* v1.4.0 节点注释浮窗：悬停预览 / 点击固定；不占布局，不撑变形节点 */}
-        {noteTarget && (
+        {noteTargets.map((noteTarget) => (
           <NotePopover
+            key={noteTarget.id}
             seq={noteTarget.data.seq}
             text={noteTarget.data.text}
             x={noteTarget.x}
             y={noteTarget.y}
+            width={noteTarget.width}
             pinned={noteTarget.pinned}
             token={token}
             onChangeSeq={(seq) => onNoteChangeSeq?.(noteTarget.id, seq)}
             onChangeText={(text) => onNoteChangeText?.(noteTarget.id, text)}
-            onClose={() => onNoteCloseRef.current?.()}
+            onClose={() => onNoteCloseRef.current?.(noteTarget.id)}
           />
-        )}
+        ))}
       </div>
     </div>
   );

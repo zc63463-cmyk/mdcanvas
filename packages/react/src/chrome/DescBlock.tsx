@@ -120,6 +120,14 @@ export const DESC_SOFT_MAX_LINES = 16;
 export const DESC_EDIT_MIN_LINES = 1; // 编辑态预留一行（同 collapsed 高度，避免"键入后才变大"）
 
 /**
+ * 编辑态描述区的最小宽度。
+ *
+ * 进入编辑时 desc 通常为空 → 按内容算宽得 0 → 节点盒宽度只剩标题宽度，
+ * 输入框窄得没法打字。故编辑态兜一个最小宽度，让编辑区可用。
+ */
+export const DESC_EDIT_MIN_W = 140;
+
+/**
  * 描述区高度估算（布局 measure 与 overlay 共用，必须一致）。
  *
  * 描述区**始终显示**（无展开态），高度 = min(内容行数, 软上限) 行。

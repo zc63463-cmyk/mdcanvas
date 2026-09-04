@@ -23,6 +23,8 @@ function baseMeasure() {
 /** 固定宽度度量（desc 撑宽测试用；不依赖 DOM canvas） */
 const FAKE_CHAR = (() => (_s: string) => 8) as never;
 
+import { DESC_EDIT_MIN_W } from '../src/chrome/DescBlock.js';
+
 describe('createExpandMeasure：展开节点加宽注入', () => {
   it('展开节点 → 宽=定值、高=本体+注释区高', () => {
     const base = baseMeasure();
@@ -111,6 +113,52 @@ describe('createDescMeasure：幕布描述加高（v1.3.0）', () => {
     const measure = createDescMeasure(base, FAKE_CHAR);
     expect(measure(nodeWith('n1'))).toEqual({ w: 120, h: 36 });
     expect(measure(nodeWith('n1', ''))).toEqual({ w: 120, h: 36 });
+  });
+
+  /**
+   * 编辑态必须**让节点自己扩张**出描述编辑区（2026-09-04 用户反馈修复）。
+   *
+   * 早期为"进入/退出编辑零全树重排"刻意把 editing 排除在 measure 之外，
+   * 于是新建描述（desc 为空）时节点盒不增高，编辑框只能浮出在节点下方 ——
+   * 既看不到"节点长出编辑区"，浮出框还会遮挡邻居。
+   */
+  describe('编辑态：节点自己扩张出描述编辑区', () => {
+    it('正在编辑的节点（desc 为空）→ 高度已被加高，不再是原高度', () => {
+      const measure = createDescMeasure(base, FAKE_CHAR, 'n1');
+      const m = measure(nodeWith('n1'));
+      expect(m.h).toBeGreaterThan(36);
+      // 与 estimateDescHeight(_, editing=true) 口径一致
+      expect(m.h).toBe(36 + estimateDescHeight('', true));
+    });
+
+    it('编辑态给足最小宽度（否则输入框窄到没法打字）', () => {
+      const measure = createDescMeasure(base, FAKE_CHAR, 'n1');
+      const m = measure(nodeWith('n1'));
+      expect(m.w).toBeGreaterThanOrEqual(DESC_EDIT_MIN_W);
+    });
+
+    it('未处于编辑态的节点不受影响（只扩张目标节点）', () => {
+      const measure = createDescMeasure(base, FAKE_CHAR, 'n1');
+      expect(measure(nodeWith('n2'))).toEqual({ w: 120, h: 36 });
+      // 有 desc 的兄弟节点按描述内容算，不额外加编辑高度
+      const sib = measure(nodeWith('n2', '描述内容'));
+      expect(sib.h).toBe(36 + estimateDescHeight('描述内容'));
+    });
+
+    it('layoutDemo 端到端：传 descEditingId → 该节点盒变高', () => {
+      const root = makeTextNode('根', [makeTextNode('A'), makeTextNode('B')]);
+      const editable = astToEditable(root)!;
+      const char = (() => (_s: string) => 8)() as never;
+
+      const before = layoutDemo(editable, new Map(), char, new Set(), null);
+      const aBefore = before.layout.nodes.find((n) => n.node.text === 'A')!;
+      const aId = (aBefore.node as unknown as { id: string }).id;
+
+      const after = layoutDemo(editable, new Map(), char, new Set(), null, undefined, undefined, aId);
+      const aAfter = after.layout.nodes.find((n) => n.node.text === 'A')!;
+
+      expect(aAfter.box.h).toBeGreaterThan(aBefore.box.h);
+    });
   });
 
   it('描述越长 → 节点越高（高度按行数增加，无展开态）', () => {

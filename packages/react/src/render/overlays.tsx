@@ -60,12 +60,15 @@ export function DescOverlays({
     const isEditing = descEditingId === ln.node.id;
     // 编辑态即使文本为空也要渲染（新建描述的占位）
     if (desc === '' && !isEditing) continue;
-    // 高度口径必须与 createDescMeasure 严格一致（都只由 desc 内容决定）：
-    // 有 desc 的节点 measure 已预留描述区高度，描述区画在节点盒内的下半部。
-    const dh = estimateDescHeight(desc);
-    // 无 desc 的新建编辑：节点盒**没有**预留（measure 不含 editing，否则会全树重排）→
-    //   描述区浮出在节点盒下方（绝对定位覆盖，不占布局 → 进入/退出编辑零重排）。
-    const hasSlot = desc !== '';
+    // 高度口径必须与 createDescMeasure **严格一致**：
+    //   两者都要把 editing 纳入（同一节点在编辑时 measure 已预留编辑区高度）。
+    //   若这里漏传 editing，编辑中的节点本体高度与描述区高度就会错位。
+    const dh = estimateDescHeight(desc, isEditing);
+    // 编辑中的节点**也有槽位** —— measure 已为其预留（见 createDescMeasure 的
+    // descEditingId 参数），描述区画在节点盒内的下半部，节点自己扩张给出编辑区。
+    // （早期版本 `hasSlot = desc !== ''` 会让新建描述的编辑框浮出在节点下方，
+    //   既不"扩张"也会遮挡邻居。）
+    const hasSlot = desc !== '' || isEditing;
     const bodyH = hasSlot ? Math.max(0, ln.box.h - dh) : ln.box.h;
     out.push(
       <DescBlock
