@@ -145,6 +145,7 @@ export {
   buildEditable,
   buildEntities,
   createDescMeasure,
+  idsMeasureKey,
   createExpandMeasure,
   layoutDemo,
 } from './demo/pipeline.js';

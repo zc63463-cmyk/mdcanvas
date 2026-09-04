@@ -131,6 +131,7 @@ export function ExpandCommentOverlay({
   layout,
   viewport,
   token,
+  expandedNodeIds,
   onChange,
   onClose,
 }: {
@@ -138,6 +139,8 @@ export function ExpandCommentOverlay({
   layout: LayoutResult;
   viewport: ViewportController;
   token: TokenSet;
+  /** 放大展开的节点集合（决定描述区高度，注释区要给它让位） */
+  expandedNodeIds?: ReadonlySet<string>;
   onChange: (qa: string[]) => void;
   onClose: () => void;
 }) {
@@ -147,8 +150,20 @@ export function ExpandCommentOverlay({
   const items = Array.isArray(qa) ? (qa as string[]) : [];
   if (items.length === 0) return null;
   const { k, x, y } = viewport.transform;
-  // 布局盒 = 本体高 + 注释区高；注释区从本体之下开始
-  const bodyH = Math.max(0, ln.box.h - commentAreaH);
+  // 布局盒 = 本体高 + 描述区高 + 注释区高（createDescMeasure 已把描述区算进 box.h）。
+  // ⚠️ 注释区必须从**描述区之上**开始：若这里只扣 commentAreaH，注释区就会落在
+  // 描述块身上（两者都从盒底往上锚）→ 视觉重叠。修正前 ea969d4 引入了这个回归。
+  const descText = typeof ln.node.note?.desc === 'string' ? (ln.node.note.desc as string) : '';
+  const descH =
+    descText === ''
+      ? 0
+      : estimateDescHeight(
+          expandedNodeIds?.has(ln.node.id) ?? false,
+          descText,
+          false,
+          expandedNodeIds?.has(ln.node.id) ? DESC_EXPAND_MAX_LINES : DESC_MAX_LINES,
+        );
+  const bodyH = Math.max(0, ln.box.h - commentAreaH - descH);
   const sx = ln.box.x * k + x;
   const sy = (ln.box.y + bodyH) * k + y;
   const sw = ln.box.w * k;

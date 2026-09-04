@@ -1144,6 +1144,7 @@ export function MapView({
             layout={layout}
             viewport={viewport}
             token={token}
+            expandedNodeIds={expandedNodeIds}
             onChange={(qa) => onQaChangeRef.current?.(expandedId, qa)}
             onClose={() => onToggleExpandRef.current?.(expandedId)}
           />

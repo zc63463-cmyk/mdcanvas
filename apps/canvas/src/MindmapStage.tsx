@@ -23,6 +23,7 @@ import {
   appendEdge,
   assetDiagnostics,
   buildEditable,
+  idsMeasureKey,
   buildEntities,
   CHROME,
   collapsedAncestors,
@@ -566,7 +567,7 @@ function StageContent({
         // 性能关键（v1.3.0 编辑性能深度优化）：**descEditingId 不入键**。
         // measure 只依赖 desc 内容（见 createDescMeasure），进入/退出编辑不改变任何节点高度，
         // 因此无需作废缓存 → 增量布局命中 → 进入/退出编辑零全树重排（10K 图也不卡）。
-        `${token.font.family}|${token.font.size}|${entities.size}|${expandedQaId ?? ''}|${descExpandedIds.size}|${expandedNodeIds.size}`,
+        `${token.font.family}|${token.font.size}|${entities.size}|${expandedQaId ?? ''}|${idsMeasureKey(descExpandedIds)}|${idsMeasureKey(expandedNodeIds)}`,
         // v1.3.0 幕布描述：展开全文的节点加高，其余有描述的节点按收缩一行计高
         descExpandedIds,
         // 节点级放大展开：同样加高（行数上限更高）→ 占布局、挤压相邻节点

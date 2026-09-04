@@ -93,6 +93,21 @@ export function createExpandMeasure(
  * 与 createExpandMeasure（qa 快速注释：仅单个 expandedId 生效）的区别——
  * 描述是**常驻可见**的（默认收缩一行），对所有有 desc 的节点无条件生效。
  */
+/**
+ * 把 id 集合编码进度量键。
+ *
+ * ⚠️ **不能用 size 代替** —— 内核 `LayoutCache` 只靠 measureKey 字符串判定失效
+ * （`mindmap.ts:101-104`，同时比较 collapsedIds 的**引用**）。而调用方的
+ * collapsedIds 通常是稳定引用（如 `controller.collapsed`），于是键就成了唯一依据：
+ * 若只编码数量，"展开 A" 换成 "展开 B"（数量都是 1）键不变 → 缓存未作废 →
+ * 布局仍是旧的（A 还高着、B 没变高）。
+ *
+ * 排序后拼接：成员相同则键相同（稳定，不因遍历顺序抖动）。
+ */
+export function idsMeasureKey(ids: ReadonlySet<string>): string {
+  return [...ids].sort().join(',');
+}
+
 export function createDescMeasure(
   base: MeasureFn,
   descExpandedIds?: ReadonlySet<string>,
