@@ -446,8 +446,17 @@ function StageContent({
   // v1.3.0 幕布描述（note.desc）：正在编辑描述的节点 id + 已展开全文的节点集合
   const [descEditingId, setDescEditingId] = useState<string | null>(null);
   const [descExpandedIds, setDescExpandedIds] = useState<Set<string>>(new Set());
-  /** 节点级「放大展开」：点击已选中的节点切换；描述区浮出不占布局 */
-  const [expandDescId, setExpandDescId] = useState<string | null>(null);
+  /**
+   * 节点级「放大展开」的集合：这些节点占布局、行数上限更高（挤压相邻节点）。
+   * **常驻**：展开态写入 localStorage，刷新后仍保持（不像浮层那样一刷新就没）。
+   * 用 Set 而非单值 —— 多个节点可以同时展开，树会持续保持变形后的形状。
+   */
+  const [expandedNodeIds, setExpandedNodeIds] = useState<Set<string>>(() =>
+    new Set(readExpandedNodes()),
+  );
+  useEffect(() => {
+    writeExpandedNodes(expandedNodeIds);
+  }, [expandedNodeIds]);
 
   // E8：关系模式（模式隔离）——浏览态只呈现关系，关系态才暴露连线入口
   // （连接手柄 / Shift+点两节点 / 树边右键编辑 / 边点击编辑 / 右键「连线到…」）
@@ -557,9 +566,11 @@ function StageContent({
         // 性能关键（v1.3.0 编辑性能深度优化）：**descEditingId 不入键**。
         // measure 只依赖 desc 内容（见 createDescMeasure），进入/退出编辑不改变任何节点高度，
         // 因此无需作废缓存 → 增量布局命中 → 进入/退出编辑零全树重排（10K 图也不卡）。
-        `${token.font.family}|${token.font.size}|${entities.size}|${expandedQaId ?? ''}|${descExpandedIds.size}`,
+        `${token.font.family}|${token.font.size}|${entities.size}|${expandedQaId ?? ''}|${descExpandedIds.size}|${expandedNodeIds.size}`,
         // v1.3.0 幕布描述：展开全文的节点加高，其余有描述的节点按收缩一行计高
         descExpandedIds,
+        // 节点级放大展开：同样加高（行数上限更高）→ 占布局、挤压相邻节点
+        expandedNodeIds,
       ).layout,
     [
       controller.root,
@@ -569,6 +580,7 @@ function StageContent({
       expandedQaId,
       token.font,
       descExpandedIds,
+      expandedNodeIds,
     ],
   );
 
@@ -733,15 +745,15 @@ function StageContent({
     return () => window.removeEventListener('keydown', onKey);
   }, [linkDraft, edgeActions.edgeSel, treeEdgeEdit]);
 
-  // 节点「放大展开」Esc 关闭（浮出卡片会盖住画布，给它一个键盘退出口）
+  // 节点「放大展开」：Esc 收起全部（展开态会改变树的形状，给一个一键复位的退出口）
   useEffect(() => {
-    if (!expandDescId) return;
+    if (expandedNodeIds.size === 0) return;
     const onKey = (e: KeyboardEvent): void => {
-      if (e.key === 'Escape') setExpandDescId(null);
+      if (e.key === 'Escape') setExpandedNodeIds(new Set());
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [expandDescId]);
+  }, [expandedNodeIds]);
 
   if (!layout) return null;
 
@@ -941,11 +953,15 @@ function StageContent({
           // （此前这里是"取消选中"——但取消选中改用点画布空白处，
           //   把"再点一次"这个天然的第二动作让给更常用的放大展开。）
           if (controller.selectedId === ln.node.id) {
-            setExpandDescId((prev) => (prev === ln.node.id ? null : ln.node.id));
+            // 多节点可同时常驻展开（不再收起上一个）
+            setExpandedNodeIds((prev) => {
+              const next = new Set(prev);
+              if (next.has(ln.node.id)) next.delete(ln.node.id);
+              else next.add(ln.node.id);
+              return next;
+            });
             return;
           }
-          // 切到别的节点：收起上一个的放大展开
-          setExpandDescId(null);
           controller.select(ln.node.id);
           const qa = ln.node.note?.qa;
           setExpandedQaId(Array.isArray(qa) && (qa as string[]).length > 0 ? ln.node.id : null);
@@ -954,7 +970,7 @@ function StageContent({
           // 点画布空白：取消选中 + 收起放大展开（这是取消选中的唯一入口）
           controller.select(null);
           setExpandedQaId(null);
-          setExpandDescId(null);
+          setExpandedNodeIds(new Set());
         }}
         onNodeContext={(node, sx, sy) => {
           // 右键：命中节点 → 选中并弹菜单；空白 → 关菜单
@@ -1064,7 +1080,7 @@ function StageContent({
         // v1.3.0 幕布描述（note.desc）
         descEditingId={descEditingId}
         descExpandedIds={descExpandedIds}
-        expandDescId={expandDescId}
+        expandedNodeIds={expandedNodeIds}
         onDescEditRequest={(id) => {
           // 主题文本编辑态按 Shift+Enter → 切到描述编辑（幕布「切换主题与描述」）
           controller.cancelEdit();
@@ -1073,8 +1089,12 @@ function StageContent({
         onDescToggle={(id) => {
           // 放大展开态下，渲染的是浮出分支（不看 descExpandedIds），
           // 所以点它 = 收起放大，而不是去切 descExpandedIds（那会点了没反应）。
-          if (id === expandDescId) {
-            setExpandDescId(null);
+          if (expandedNodeIds.has(id)) {
+            setExpandedNodeIds((prev) => {
+              const next = new Set(prev);
+              next.delete(id);
+              return next;
+            });
             return;
           }
           setDescExpandedIds((prev) => {
@@ -1457,6 +1477,38 @@ function DocBtn({ label, onClick }: { label: string; onClick: () => void }) {
       {label}
     </span>
   );
+}
+
+/**
+ * 节点「放大展开」状态的持久化（常驻）。
+ *
+ * 为什么存 localStorage 而不是文档：展开态是**视图状态**，写进 .mm.md 会污染
+ * 事实源（每次展开都要触发保存，还会把个人视图偏好塞进共享文件）。
+ * 节点 id 全局唯一（`nd<ts><seq>`），所以可以按 id 记录，不绑定文档。
+ *
+ * 读写都吞异常：localStorage 被禁用/写满时退化为"仅本次会话有效"，不影响主流程。
+ */
+const EXPANDED_NODES_KEY = 'mindcanvas.expandedNodes.v1';
+
+function readExpandedNodes(): string[] {
+  try {
+    const raw = localStorage.getItem(EXPANDED_NODES_KEY);
+    if (raw === null) return [];
+    const parsed: unknown = JSON.parse(raw);
+    if (!Array.isArray(parsed)) return [];
+    return parsed.filter((x): x is string => typeof x === 'string');
+  } catch {
+    return [];
+  }
+}
+
+function writeExpandedNodes(ids: ReadonlySet<string>): void {
+  try {
+    if (ids.size === 0) localStorage.removeItem(EXPANDED_NODES_KEY);
+    else localStorage.setItem(EXPANDED_NODES_KEY, JSON.stringify([...ids]));
+  } catch {
+    // localStorage 禁用/满 → 静默，展开态退化为仅本次会话有效
+  }
 }
 
 function qaItemsOf(node: EditableNode): string[] {

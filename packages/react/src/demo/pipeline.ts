@@ -21,7 +21,7 @@ import type {
 } from '@mindcanvas/kernel';
 import { createNodeMeasure } from '../render/domMeasure.js';
 import { estimateCommentAreaHeight, GROW_EXPAND_W } from '../chrome/GrowthCommentPanel.js';
-import { estimateDescHeight } from '../chrome/DescBlock.js';
+import { DESC_EXPAND_MAX_LINES, DESC_MAX_LINES, estimateDescHeight } from '../chrome/DescBlock.js';
 
 export interface DemoSource {
   editable: EditableNode | null;
@@ -96,6 +96,16 @@ export function createExpandMeasure(
 export function createDescMeasure(
   base: MeasureFn,
   descExpandedIds?: ReadonlySet<string>,
+  /**
+   * 节点级「放大展开」：与 descExpandedIds 一样**占布局**（节点盒加高 → 挤压相邻节点），
+   * 但行数上限更高（DESC_EXPAND_MAX_LINES vs DESC_MAX_LINES）。
+   *
+   * 为什么不是浮出：浮出不占布局虽然不影响邻居，但用户要的是「作为实体有体积、
+   * 让树变形」—— 展开就该推开别人，这才符合"节点变大"的直觉。
+   * 代价是展开/收起会让 measureKey 变化 → 全树重排（大图上有开销，可接受：
+   * 这是用户主动触发的一次性操作，不像编辑态那样高频）。
+   */
+  expandedNodeIds?: ReadonlySet<string>,
 ): MeasureFn {
   return (node) => {
     const b = base(node);
@@ -106,7 +116,14 @@ export function createDescMeasure(
     // → 全树重排（10K 节点直接卡死）。改为：高度只由 desc 决定（稳定 → 增量缓存命中），
     // 编辑态的"先生长一行"由 DescBlock overlay 层负责（无预留时绝对定位浮出，不占布局）。
     if (desc === '') return b;
-    const dh = estimateDescHeight(descExpandedIds?.has(node.id) ?? false, desc);
+    const isNodeExpanded = expandedNodeIds?.has(node.id) ?? false;
+    const cap = isNodeExpanded ? DESC_EXPAND_MAX_LINES : DESC_MAX_LINES;
+    const dh = estimateDescHeight(
+      isNodeExpanded || (descExpandedIds?.has(node.id) ?? false),
+      desc,
+      false,
+      cap,
+    );
     return { w: b.w, h: b.h + dh };
   };
 }
@@ -123,13 +140,15 @@ export function layoutDemo(
   measureKey?: string,
   /** v1.3.0：展开全文描述的节点集合（其余有描述的节点按收缩一行计高） */
   descExpandedIds?: ReadonlySet<string>,
+  /** 节点级放大展开：占布局，行数上限更高（挤压相邻节点） */
+  expandedNodeIds?: ReadonlySet<string>,
 ): DemoLayout {
   const base = createNodeMeasure(char, entities);
   const withQa = expandedId
     ? createExpandMeasure(base, expandedId, GROW_EXPAND_W, estimateCommentAreaHeight())
     : base;
   // 注意：measure 不含 editing 状态（见 createDescMeasure 注释）——编辑态不触发全树重排
-  const measure = createDescMeasure(withQa, descExpandedIds);
+  const measure = createDescMeasure(withQa, descExpandedIds, expandedNodeIds);
   return {
     layout: layoutMindmap(
       editable,
