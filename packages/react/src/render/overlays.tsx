@@ -97,7 +97,12 @@ export function DescOverlays({
         text={desc}
         editing={isEditing}
         expanded={expanded}
-        floating={!hasSlot}
+        // 浮出**视觉**（卡片底色 + 圆角 + 阴影 + 高层级）用于两种场景：
+        //   ① !hasSlot：无预留高度的新建编辑 —— 真浮出，不占布局，会遮挡邻居
+        //   ② isNodeExpanded：节点放大展开 —— **有**预留高度（measure 已加高，
+        //      会挤压相邻节点），只是沿用浮出卡片的外观，让它看起来是"浮"起来的。
+        // 即 floating 是**视觉开关**，不等于"不占布局"。
+        floating={!hasSlot || isNodeExpanded}
         token={token}
         x={ln.box.x * k + x}
         y={(ln.box.y + bodyH) * k + y}
