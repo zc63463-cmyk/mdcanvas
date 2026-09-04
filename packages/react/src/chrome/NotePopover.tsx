@@ -1,5 +1,5 @@
 /**
- * 节点注释浮窗（v1.4.0）—— 取代「快速注释向下生长展开」。
+ * note 笔记浮窗（v1.4.0）—— 取代「快速注释向下生长展开」。
  *
  * 一个浮窗，两个区域：
  *   ① 序列区域：`note`（条目列表，取代 qa），可增删改
@@ -10,8 +10,12 @@
  *
  * 不是什么：不参与布局（绝对定位浮在画布上），不改变节点盒高度，
  * 因此不会挤压相邻节点 —— 长内容应该放这里，而不是塞进 `desc`。
+ *
+ * 关于 textarea：使用**非受控**（`defaultValue`），不持 `useState` 草稿。
+ * 之前的"受控 + useEffect 同步外部文本"会让 textarea 实例在每次 props 变化时重建、
+ * 焦点丢失 → 用户体验是"点击就消失"。
  */
-import { useEffect, useRef, useState } from 'react';
+import { useRef } from 'react';
 import { CHROME } from '../theme/tokens.js';
 import type { TokenSet } from '../theme/types.js';
 import { QaEditor } from './QaEditor.js';
@@ -46,11 +50,15 @@ export function NotePopover({
   onChangeText,
   onClose,
 }: NotePopoverProps) {
-  const [draft, setDraft] = useState(text);
   const taRef = useRef<HTMLTextAreaElement | null>(null);
 
-  // 外部文本变化（切换节点 / 落盘后）→ 同步草稿，避免编辑到一半被覆盖
-  useEffect(() => setDraft(text), [text]);
+  // 简化正文编辑：textarea 非受控（defaultValue），失焦时把 DOM 当前值与 prop.text 对比
+  // —— 有差异才回传。这样 props 变化不会重建 textarea 实例，焦点不丢，
+  // 也不会出现 props.text 与正在输入的内容打架的情况。
+  const onTextBlur = (): void => {
+    const cur = taRef.current?.value ?? text;
+    if (cur !== text) onChangeText(cur);
+  };
 
   const sectionStyle = {
     maxHeight: REGION_MAX_H,
@@ -93,7 +101,7 @@ export function NotePopover({
             fontWeight: 600,
           }}
         >
-          节点注释
+          note 笔记
         </span>
         {!pinned && (
           <span style={{ color: CHROME.textMuted, fontSize: 10 }}>点击固定</span>
@@ -171,12 +179,9 @@ export function NotePopover({
         {pinned ? (
           <textarea
             ref={taRef}
-            value={draft}
+            defaultValue={text}
             placeholder="整段说明…"
-            onChange={(e) => setDraft(e.target.value)}
-            onBlur={() => {
-              if (draft !== text) onChangeText(draft);
-            }}
+            onBlur={onTextBlur}
             onKeyDown={(e) => e.stopPropagation()}
             style={{
               width: '100%',

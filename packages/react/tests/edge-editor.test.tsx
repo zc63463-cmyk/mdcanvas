@@ -185,6 +185,32 @@ describe('EdgeEditor 交互（含样式）', () => {
     fireEvent.click(container.querySelector('[data-style-default]')!);
     expect(onStyle).toHaveBeenLastCalledWith({ color: undefined });
   });
+  it('绕行侧三态：routingSide 写回（↰/↱）与回切自动（forceSide 可见化）', () => {
+    const onChange = vi.fn();
+    const onInvalidate = vi.fn();
+    const onRestore = vi.fn();
+    const { container } = render(
+      <ThemeProvider>
+        <EdgeEditor
+          edge={edge}
+          x={10}
+          y={10}
+          onChange={onChange}
+          onStyle={() => undefined}
+          onInvalidate={onInvalidate}
+          onRestore={onRestore}
+          onDelete={() => undefined}
+          onClose={() => undefined}
+        />
+      </ThemeProvider>,
+    );
+    fireEvent.click(container.querySelector('[data-routing-side-opt="left"]')!);
+    expect(onChange).toHaveBeenLastCalledWith({ routingSide: 'left' });
+    fireEvent.click(container.querySelector('[data-routing-side-opt="right"]')!);
+    expect(onChange).toHaveBeenLastCalledWith({ routingSide: 'right' });
+    fireEvent.click(container.querySelector('[data-routing-side-opt="auto"]')!);
+    expect(onChange).toHaveBeenLastCalledWith({ routingSide: undefined });
+  });
   it('删除 → onDelete 回调', () => {
     const onDelete = vi.fn();
     const onInvalidate = vi.fn();

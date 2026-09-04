@@ -294,6 +294,109 @@ export function bezierFromAnchors(
 }
 
 /**
+ * 语义锚点对（P0 · 锚点语义化）：按「源→靶」的相对位置产出稳定的书签位锚点 + 进出方向。
+ *
+ * 参照成熟产品（React Flow 端口 / markvault 树形「父右中点→子左中点」/ Obsidian 边缘珠子）：
+ * 锚点是语义端口、落在卡片边中点上，而不是随目标中心方向漂移的对角交点。
+ *
+ * 规则：
+ * - 水平主导（|dx| ≥ |dy|）→ 源右缘/左缘中点 → 靶左缘/右缘中点，进出方向沿水平轴相对；
+ * - 垂直主导 → 源下缘/上缘中点 → 靶上缘/下缘中点，进出方向沿垂直轴相对。
+ *
+ * `stagger`（平行错位）：第 N 条平行入边沿外侧轴反向错位，步长 = 盒边长 × 0.125。
+ * 多条边指向同一节点时不再在同一个点扇形炸开（Obsidian 平行入边观感）。
+ */
+export function semanticAnchorPair(
+  a: Box,
+  b: Box,
+  stagger = 0,
+): { p0: { x: number; y: number }; dir0: { x: number; y: number }; p3: { x: number; y: number }; dir3: { x: number; y: number } } {
+  const acx = a.x + a.w / 2;
+  const acy = a.y + a.h / 2;
+  const bcx = b.x + b.w / 2;
+  const bcy = b.y + b.h / 2;
+  const dx = bcx - acx;
+  const dy = bcy - acy;
+  if (Math.abs(dx) >= Math.abs(dy)) {
+    // 水平主导：进出水平，错位沿垂直轴（两侧反向）
+    const forward = dx >= 0;
+    const off = (stagger * a.h * 0.125) / 2;
+    const p0 = { x: forward ? a.x + a.w : a.x, y: acy + off };
+    const p3 = { x: forward ? b.x : b.x + b.w, y: bcy - off };
+    return {
+      p0,
+      dir0: { x: forward ? 1 : -1, y: 0 },
+      p3,
+      dir3: { x: forward ? -1 : 1, y: 0 },
+    };
+  }
+  // 垂直主导：进出垂直，错位沿水平轴（两侧反向）
+  const forward = dy >= 0;
+  const off = (stagger * a.w * 0.125) / 2;
+  const p0 = { x: acx + off, y: forward ? a.y + a.h : a.y };
+  const p3 = { x: bcx - off, y: forward ? b.y : b.y + b.h };
+  return {
+    p0,
+    dir0: { x: 0, y: forward ? 1 : -1 },
+    p3,
+    dir3: { x: 0, y: forward ? -1 : 1 },
+  };
+}
+
+/**
+ * 端点切向 S 形三次贝塞尔（P0 · 规范形状语言）。
+ *
+ * 与 bezierFromAnchors（法向弓）的区别：控制点由端点**进出方向**决定 —— 平出平入，
+ * 曲线以相切方式离开/进入卡片（markvault computeDirectBezier 同款；React Flow bezier 左出右进语义）。
+ *
+ * 控制点 = 端点 ± 方向 × max(弦距 × beta, 20)。输出与 bezierFromAnchors 相同形状对象
+ * （c1/c2/d/mid/nx/ny），使调用方可以无缝替换。
+ */
+export function tangentSBezier(
+  p0: { x: number; y: number },
+  dir0: { x: number; y: number },
+  p3: { x: number; y: number },
+  dir3: { x: number; y: number },
+  beta = 0.4,
+): {
+  c1: { x: number; y: number };
+  c2: { x: number; y: number };
+  d: string;
+  mid: { x: number; y: number };
+  nx: number;
+  ny: number;
+} {
+  const dx = p3.x - p0.x;
+  const dy = p3.y - p0.y;
+  const len = Math.hypot(dx, dy) || 1;
+  const ext = Math.max(len * beta, 20);
+  const c1 = { x: p0.x + dir0.x * ext, y: p0.y + dir0.y * ext };
+  const c2 = { x: p3.x - dir3.x * ext, y: p3.y - dir3.y * ext };
+  const mid = {
+    x: 0.125 * p0.x + 0.375 * c1.x + 0.375 * c2.x + 0.125 * p3.x,
+    y: 0.125 * p0.y + 0.375 * c1.y + 0.375 * c2.y + 0.125 * p3.y,
+  };
+  // 与 bezierFromAnchors 同款法向（归一：优先朝上，次优先朝右）
+  const tx = p3.x + c2.x - c1.x - p0.x;
+  const ty = p3.y + c2.y - c1.y - p0.y;
+  const tl = Math.hypot(tx, ty) || 1;
+  let nx = -ty / tl;
+  let ny = tx / tl;
+  if (ny > 0 || (Math.abs(ny) < 0.15 && nx < 0)) {
+    nx = -nx;
+    ny = -ny;
+  }
+  return {
+    c1,
+    c2,
+    d: `M ${p0.x} ${p0.y} C ${c1.x} ${c1.y}, ${c2.x} ${c2.y}, ${p3.x} ${p3.y}`,
+    mid,
+    nx,
+    ny,
+  };
+}
+
+/**
  * 从 path d 推断连线当前鼓向：'left' / 'right' / 'auto'（无法判断时）。
  *
  * 用于「Opp」一键反向操作 —— 当 routingSide 未显式设置、靠算法自动选择时，
@@ -585,11 +688,20 @@ export function routeAesthetic(
      * 调大 → 连线更坚持绕到开阔的外侧；调小 → 容许从较窄的缝里穿过。
      */
     clearTarget?: number;
+    /**
+     * 语义锚优先（P0，默认 true）：以「书签位锚点 + 平出平入 S 形」为默认形状语言；
+     * 只有显著绕行时才进入 12 锚点 × 曲率档的贪心枚举。false = 回到逐边贪心（测试旁路）。
+     */
+    semantic?: boolean;
+    /** 平行错位步数（P0）：第 N 条平行入边的锚点沿外侧轴反向错位（见 semanticAnchorPair） */
+    anchorStagger?: number;
   } = {},
   /** 空旷区域（走廊内无障碍）时是否优先直连（默认 true：能直连就不做无谓弯曲） */
   preferStraight = true,
 ): RouteResult {
   const steps = opts.curvatureSteps ?? DEFAULT_CURVATURE_STEPS;
+  const semanticOpt = opts.semantic ?? true;
+  const anchorStagger = opts.anchorStagger ?? 0;
   const w: Required<AestheticWeights> = {
     crossing: opts.weights?.crossing ?? 12,
     inward: opts.weights?.inward ?? 8,
@@ -681,10 +793,20 @@ export function routeAesthetic(
     }
   }
   pairs.sort((u, v) => u.dist - v.dist);
-  // 不做距离剪枝：**绕开障碍恰恰需要"远"的锚点对**（如源右下 → 靶右上，弦更长、
-  // 相同曲率下绝对偏移更大）。曾按距离升序只取前 48 对，结果把能绕开的组合全剪掉了，
-  // 导致本可绕行的场景误判为无解而降级直穿。改由早停（找到优质解即停）来控制成本。
+  // P0 · 语义锚对前置：书签位锚点（右缘/左缘/下缘/上缘中点）是「默认形状语言」的第一候选。
+  // 不加距离剪枝（见上）。
   const considered = pairs;
+  // 平行错位（P0）：stagger > 0 时语义锚对不在 12 候选内，需显式前置；
+  // stagger = 0 时它必然已在 12 候选内（右缘中点是候选的子集），无需重复插入。
+  const sem = semanticOpt ? semanticAnchorPair(a, b, anchorStagger) : null;
+  if (sem && !pairs.some((q) =>
+    Math.abs(q.p0.x - sem.p0.x) < 1e-6 &&
+    Math.abs(q.p0.y - sem.p0.y) < 1e-6 &&
+    Math.abs(q.p3.x - sem.p3.x) < 1e-6 &&
+    Math.abs(q.p3.y - sem.p3.y) < 1e-6,
+  )) {
+    considered.unshift({ p0: sem.p0, p3: sem.p3, dist: Math.hypot(sem.p3.x - sem.p0.x, sem.p3.y - sem.p0.y) });
+  }
 
   // preferStraight 快路径：最近锚点对的直线本身畅通（不穿障、不与已有边交叉）→ 直接直连。
   //
@@ -693,10 +815,13 @@ export function routeAesthetic(
   //   · forceSide —— 用户已明确指定绕行方向，直线不满足该约束；
   //   · threading —— 直线要从节点缝里挤过去时不走快路径，交给下层的走廊穿越罚分
   //     去权衡"直穿"还是"绕外侧"（否则永远直穿，权重形同虚设）。
+  // 直连候选：P0 平行错位时改用「错位后的语义锚对」直线（多条平行入边错开而非重叠）；
+  // 否则仍取最近锚点对（保持既有直连行为）。
+  const straightPair =
+    semanticOpt && anchorStagger > 0 && sem ? { p0: sem.p0, p3: sem.p3 } : pairs[0]!;
   if (preferStraight && !opts.forceSide && !threading && pairs.length > 0) {
-    const first = pairs[0]!;
-    const p0 = first.p0;
-    const p3 = first.p3;
+    const p0 = straightPair.p0;
+    const p3 = straightPair.p3;
     if (!polylineHitsObstacle([p0, p3], obstacles, blockPad)) {
       let cross = 0;
       for (const other of existingPolylines) {
@@ -724,6 +849,42 @@ export function routeAesthetic(
           ny,
         };
       }
+    }
+  }
+
+  // P0 · 语义 S 形快路径：直连被挡、但「书签位锚点 + 平出平入 S 形」即可绕开时直接采用。
+  //
+  // 目的：让"轻微错位即可绕"的边保持统一的规范形状（两端相切、小曲率），
+  // 而不是被 12 锚点 × 曲率档的贪心枚举扭出异形弧。threading（贴缝）与 forceSide
+  // （用户显式定侧）时不走快路径 —— 分别交给评分权衡外绕 vs 直穿、交由用户定侧。
+  if (semanticOpt && sem && !opts.forceSide && !threading) {
+    const bzs = tangentSBezier(sem.p0, sem.dir0, sem.p3, sem.dir3);
+    const spts = sampleCubic(sem.p0, bzs.c1, bzs.c2, sem.p3, samples);
+    let scross = 0;
+    for (const other of existingPolylines) {
+      for (let i = 0; i + 1 < spts.length && scross === 0; i++) {
+        const a1 = spts[i];
+        const a2 = spts[i + 1];
+        for (let j = 0; a1 && a2 && j + 1 < other.length; j++) {
+          const b1 = other[j];
+          const b2 = other[j + 1];
+          if (b1 && b2 && segmentsCross(a1, a2, b1, b2)) {
+            scross++;
+            break;
+          }
+        }
+      }
+      if (scross > 0) break;
+    }
+    if (scross === 0 && !polylineHitsObstacle(spts, obstacles, blockPad)) {
+      return {
+        d: bzs.d,
+        points: [sem.p0, bzs.mid, sem.p3],
+        routed: false,
+        mid: bzs.mid,
+        nx: bzs.nx,
+        ny: bzs.ny,
+      };
     }
   }
 

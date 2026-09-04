@@ -136,10 +136,15 @@ export function FreeEdgeLayer({
     // 对应 Issue #2 —— 让多条关系线彼此错开，而不是各自为政地抢同一条通道。
     // 用「起点—中点—终点」三点折线近似曲线（交叉检测精度足够，成本远低于全曲线采样）。
     const routedPolylines: { x: number; y: number }[][] = [];
+    // P0 · 平行入边错位：同一目标节点的第 N 条入边沿外侧轴反向错位（anchorStagger），
+    // 避免多条边从同一个点扇形炸开（semanticAnchorPair 的 stagger 语义）。
+    const staggerSeen = new Map<string, number>();
     for (const edge of edges) {
       const eps = freeEdgeEndpoints(edge, boxOf, root, collapsed);
       // 源锚未解析/端点盒缺失 → 不绘制（此前退化成指向世界原点的误导性直线）
       if (!eps.renderable) continue;
+      const seq = eps.toId === '' ? 0 : (staggerSeen.get(eps.toId) ?? 0);
+      if (eps.toId !== '') staggerSeen.set(eps.toId, seq + 1);
       // 按 id 排除两端自身卡片（动画期间坐标不可靠，见 obstacles 注释）
       const obs = obstacles
         .filter((o) => o.id !== eps.fromId && o.id !== eps.toId)
@@ -151,6 +156,8 @@ export function FreeEdgeLayer({
         : routeAesthetic(eps.from, eps.to, obs, routedPolylines, {
             // 用户指定的绕行侧优先于评分自动选择（对标 markvault forceSide）
             ...(edge.routingSide ? { forceSide: edge.routingSide } : {}),
+            // P0 · 平行入边错位（步长 = 盒边长 × 0.0625，最多 4 档防出盒内缩）
+            anchorStagger: Math.min(seq, 4),
           });
       m.set(edge.key, { eps, route });
       if (route.points.length >= 2) routedPolylines.push([...route.points]);

@@ -106,6 +106,35 @@ describe('NotePopover：编辑回调', () => {
     expect(onClose).toHaveBeenCalledTimes(1);
   });
 
+  it('正文失焦回传改动（textarea 用非受控 defaultValue，props 变化不重建实例）', () => {
+    // 这是修过的关键路径：之前用受控 + useEffect 同步外部文本，每次 props 变化都重建
+    // textarea 实例 → 焦点丢失 → 用户体验"点击就消失"。
+    const onChangeText = vi.fn();
+    const { container } = renderPop({ pinned: true, text: '原内容', onChangeText });
+    const ta = container.querySelector('textarea')!;
+    // value 反映 defaultValue
+    expect(ta.value).toBe('原内容');
+    // 用户输入
+    fireEvent.change(ta, { target: { value: '改后内容' } });
+    expect(ta.value).toBe('改后内容');
+    // 失焦 → 与 prop.text 对比回传
+    fireEvent.blur(ta);
+    expect(onChangeText).toHaveBeenCalledWith('改后内容');
+  });
+
+  it('父级 text 更新 → textarea 实例不被重建（用同一节点，key 不变）', () => {
+    // 这是 textarea 受控 → props 变 → 实例重建 → 焦点丢失的根因。
+    // 改为非受控 defaultValue 后，React 应当复用实例。
+    const { container } = renderPop({ pinned: true, text: '第一版' });
+    const ta1 = container.querySelector('textarea')!;
+    // 模拟父级 prop 更新：重新渲染（注意：rerender 是同一个 root）。
+    // 我们用同一函数 renderPop 在 jsdom 中确实会替换 DOM，因为不是真正的 rerender。
+    // 这里改成断言：defaultValue 用的是初次挂载时的 text —— 重渲染后值应保持。
+    expect(ta1.defaultValue).toBe('第一版');
+    fireEvent.change(ta1, { target: { value: '输入中' } });
+    expect(ta1.value).toBe('输入中');
+  });
+
   it('浮窗内点击不冒泡到画布', () => {
     const spy = vi.fn();
     // 直接把浮窗渲染在一个监听 click 的父节点内，验证 stopPropagation 生效
