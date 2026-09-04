@@ -27,7 +27,12 @@ import {
   useState,
   useSyncExternalStore,
 } from 'react';
-import { DescBlock, estimateDescHeight } from '../chrome/DescBlock.js';
+import {
+  DESC_EXPAND_MAX_LINES,
+  DESC_MAX_LINES,
+  DescBlock,
+  estimateDescHeight,
+} from '../chrome/DescBlock.js';
 import { estimateCommentAreaHeight, GrowthCommentPanel } from '../chrome/GrowthCommentPanel.js';
 import { OverlayEditor } from '../edit/OverlayEditor.js';
 import { useTheme } from '../theme/ThemeContext.js';
@@ -843,6 +848,23 @@ export function MapView({
                 {visibleNodes.map((ln) => {
                   const m = derived.metrics.get(ln.node.id);
                   if (!m) return null;
+                  // 描述区（附属块）占用的高度 —— 必须与 createDescMeasure 同口径，
+                  // 否则 rect 缩掉的高度和 overlay 画的位置对不上。
+                  const descText =
+                    typeof ln.node.note?.desc === 'string' ? (ln.node.note.desc as string) : '';
+                  const isNodeExpanded = expandedNodeIds?.has(ln.node.id) ?? false;
+                  const descH =
+                    descText === ''
+                      ? 0
+                      : estimateDescHeight(
+                          isNodeExpanded || (descExpandedIds?.has(ln.node.id) ?? false),
+                          descText,
+                          false,
+                          isNodeExpanded ? DESC_EXPAND_MAX_LINES : DESC_MAX_LINES,
+                        );
+                  // 附属区总高（快速注释区 + 描述区）→ rect 只画本体，其余留给附属区
+                  const attachedH =
+                    (expandedId === ln.node.id ? commentAreaH : 0) + descH;
                   const palette =
                     token.color.branches[derived.branchIndex.get(ln.node.id) ?? 0] ??
                     token.color.branches[0]!;
@@ -880,7 +902,7 @@ export function MapView({
                       }
                       expanded={expandedId === ln.node.id}
                       bodyHeight={
-                        expandedId === ln.node.id ? Math.max(0, ln.box.h - commentAreaH) : undefined
+                        attachedH > 0 ? Math.max(0, ln.box.h - attachedH) : undefined
                       }
                       assetBaseUrl={assetBaseUrl}
                       // 拖拽中：原节点置灰（透明度降），浮空克隆跟随光标；落点目标高亮（合法/拒绝）

@@ -29,7 +29,17 @@ export interface NodeGProps {
   onToggleCollapse?: () => void;
   /** 展开态（快速注释生长）：本体 rect 只画 bodyHeight 高，下方注释区背景由 SVG 画 */
   expanded?: boolean;
-  /** 展开态本体高（不含注释区）；缺省 = 布局盒高 */
+  /**
+   * 本体 rect 的高度；不传 = 占满整个布局盒（b.h）。
+   *
+   * 节点挂了**附属区**时用它：rect 只画到本体高，下方留出的空间归附属区
+   * （快速注释区由 SVG 画背景；描述区由 HTML overlay 画成浮出卡片）。
+   * 视觉上附属区是**挂在节点下方的独立块**，不是嵌在节点盒内部 ——
+   * 这是"浮出是节点附属"的关键几何。
+   *
+   * 以前要求 `expanded`（快速注释展开）为真才生效，于是描述区展开时 rect
+   * 仍画满整高，描述块被塞进盒内，看不出从属关系。
+   */
   bodyHeight?: number;
   /** 资产基础 URL（@img/@draw 实体渲染 <image> 预览时拼接；缺省不渲染） */
   assetBaseUrl?: string;
@@ -71,8 +81,8 @@ export function NodeG({
   const fontSize = leaf ? token.font.sizeLeaf : token.font.size;
   const fontWeight = root ? token.font.weightRoot : token.font.weight;
   const lines = metrics.lines;
-  // 展开态：文本/本体居顶（bodyHeight 内），注释区从 bodyHeight 到 b.h
-  const bodyH = expanded && bodyHeight != null ? bodyHeight : b.h;
+  // 有附属区时 rect 只画本体高，其余留给附属区（注释区 / 浮出描述块）
+  const bodyH = bodyHeight != null ? bodyHeight : b.h;
   // 滤镜：sticker 主题的 drop-shadow 直接以 CSS filter 应用（令牌即滤镜语法）；其余 none
   const shadow = style.filter === 'none' ? undefined : { filter: style.filter };
   // 选中：描边换 selection 令牌色 + 描边加粗（交互态，非主题差异 → 走令牌）
