@@ -280,8 +280,12 @@ export function MapView({
     const id = pinnedNoteId ?? hover?.id ?? null;
     if (id === null) return null;
     const ln = layout.nodes.find((n) => n.node.id === id);
-    if (!ln || !hasNote(ln.node)) return null;
+    if (!ln) return null;
     const pinned = pinnedNoteId === id;
+    // 固定态：**即使没有注释内容也显示** —— 用户右键「编辑注释…」正是要新建，
+    // 若在这里拦掉 hasNote，点了菜单什么都不会出现。
+    // 悬停态只在有内容时预览 —— 否则鼠标扫过节点就弹空浮窗，太吵。
+    if (!pinned && !hasNote(ln.node)) return null;
     const pos = pinned
       ? { x: ln.box.x * viewport.transform.k + viewport.transform.x,
           y: (ln.box.y + ln.box.h) * viewport.transform.k + viewport.transform.y }
@@ -888,6 +892,7 @@ export function MapView({
                   );
                   const isDragged = nodeDrag?.nodeId === ln.node.id;
                   return (
+                    <>
                     <NodeG
                       key={ln.node.id}
                       node={ln}
@@ -937,6 +942,18 @@ export function MapView({
                           : undefined
                       }
                     />
+                    {/* v1.4.0：有节点注释的标记（右上角小圆点）—— 没有它用户无从发现
+                        哪些节点挂着注释（注释本身不占节点空间、不显示在节点盒里）。 */}
+                    {hasNote(ln.node) && !lodSkipText(lod, ln.depth) && (
+                      <circle
+                        data-note-badge={ln.node.id}
+                        cx={ln.box.x + ln.box.w - 5}
+                        cy={ln.box.y + 5}
+                        r={3}
+                        fill={token.color.annotationAccent ?? '#BA7517'}
+                      />
+                    )}
+                    </>
                   );
                 })}
               </g>

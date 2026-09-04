@@ -39,6 +39,8 @@ export interface NodeContextMenuProps {
   setLinkDraft: (v: { sourceId: string; x: number; y: number } | null) => void;
   /** 进入描述编辑 */
   setDescEditingId: (id: string) => void;
+  /** 打开节点注释浮窗并固定（内容可为空 —— 用户可能正要新建） */
+  setPinnedNoteId: (id: string) => void;
   onClose: () => void;
 }
 
@@ -50,6 +52,7 @@ export function NodeContextMenu({
   setPanel,
   setLinkDraft,
   setDescEditingId,
+  setPinnedNoteId,
   onClose,
 }: NodeContextMenuProps) {
   return (
@@ -79,6 +82,8 @@ export function NodeContextMenu({
           : undefined,
         // v1.3.0 幕布描述入口：右键「编辑描述」= 与 Shift+Enter 同一动作
         { onStart: (id) => setDescEditingId(id) },
+        // v1.4.0 节点注释入口：打开浮窗（与描述是不同内容）
+        { onStart: (id) => setPinnedNoteId(id) },
       )}
       onClose={onClose}
     />

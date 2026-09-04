@@ -1352,6 +1352,7 @@ function StageContent({
           setPanel={setPanel}
           setLinkDraft={setLinkDraft}
           setDescEditingId={setDescEditingId}
+          setPinnedNoteId={setPinnedNoteId}
           onClose={() => setCtxMenu(null)}
         />
       )}

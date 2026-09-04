@@ -5,6 +5,8 @@
  *
  * v1.3.0 扩展：可选 descActions —— 在「新建子节点」与「新建同级节点」之间插入「编辑描述」入口，
  * 与 Shift+Enter 同一动作（进入节点下方幕布描述 note.desc 的行内编辑）。
+ * v1.4.0 扩展：可选 noteActions —— 追加「编辑注释…」，打开节点注释浮窗（note / note_text）。
+ * 两种注释是**不同内容**：desc 常驻节点盒内，note 在浮窗里不占节点空间。
  */
 import { getNode, type EditableNode } from '@mindcanvas/kernel';
 import type { ContextMenuItem } from '../chrome/ContextMenu.js';
@@ -30,12 +32,22 @@ export interface DescMenuActions {
   onStart: (id: string) => void;
 }
 
+/**
+ * v1.4.0 节点注释（note 浮窗）菜单动作。
+ * 与「编辑描述」是两种不同内容：描述常驻节点盒内，注释在浮窗里。
+ */
+export interface NoteMenuActions {
+  /** 打开该节点的注释浮窗并固定（缺省 = 隐藏该入口） */
+  onStart: (id: string) => void;
+}
+
 export function contextMenuItemsFor(
   controller: EditorController,
   id: string,
   entityActions?: EntityMenuActions,
   edgeActions?: EdgeMenuActions,
   descActions?: DescMenuActions,
+  noteActions?: NoteMenuActions,
 ): ContextMenuItem[] {
   const isRoot = id === controller.root.id;
   const items: ContextMenuItem[] = [
@@ -53,6 +65,13 @@ export function contextMenuItemsFor(
     items.push({
       label: '编辑描述',
       onSelect: () => descActions.onStart(id),
+    });
+  }
+  // v1.4.0：节点注释（浮窗）。与「编辑描述」并列 —— 两者是不同内容，不是同一功能的两处入口。
+  if (noteActions) {
+    items.push({
+      label: '编辑注释…',
+      onSelect: () => noteActions.onStart(id),
     });
   }
   if (!isRoot) {
