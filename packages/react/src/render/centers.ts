@@ -199,10 +199,13 @@ export function collectCenters(root: EditableNode): Center[] {
     // 重复 cid：first-wins，丢弃重复条目并记录诊断（挂在首个条目上）
     if (cid !== undefined) {
       if (seenCid.has(cid)) {
-        const firstIdx = seenCid.get(cid)!;
-        const arr = diagByIndex.get(firstIdx) ?? [];
-        arr.push({ code: 'dup-cid', message: `重复 cid 已忽略（沿用首个条目）`, cid });
-        diagByIndex.set(firstIdx, arr);
+        const firstIdx = seenCid.get(cid);
+        // 防御式收窄（has 已保证存在，但不用非空断言——预算纪律 bang 只减不增）
+        if (firstIdx !== undefined) {
+          const arr = diagByIndex.get(firstIdx) ?? [];
+          arr.push({ code: 'dup-cid', message: `重复 cid 已忽略（沿用首个条目）`, cid });
+          diagByIndex.set(firstIdx, arr);
+        }
         return;
       }
       seenCid.set(cid, index);

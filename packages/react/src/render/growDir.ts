@@ -170,12 +170,15 @@ export function probeDirRoundTrip(dir: GrowDir): {
   after: GrowDir | null;
 } {
   const text = `# 中心议题\n\n<!--\ndir: ${dir}\n-->\n#### 分支\n- 叶子`;
-  const ast = parseMm(text).root!;
   // 注意：parseMm 产出的是协议 AST（MindNode），没有会话 id——id 是 EditableNode
   // 概念（astToEditable 才生成）。探针只做字段级往返验证，诊断上下文传 null。
-  const branch = ast.children[0]!;
-  const before = readGrowDir(branch.note, null);
-  const round = parseMm(serializeMm(ast)).root!;
-  const after = readGrowDir(round.children[0]!.note, null);
+  // 防御式取值（不用非空断言——预算纪律 bang 只减不增）：结构异常时 before/after
+  // 为 null、ok=false，由调用方诊断而非抛错。
+  const ast = parseMm(text).root;
+  const branch = ast?.children[0];
+  const before = branch ? readGrowDir(branch.note, null) : null;
+  const round = ast ? parseMm(serializeMm(ast)).root : null;
+  const roundBranch = round?.children[0];
+  const after = roundBranch ? readGrowDir(roundBranch.note, null) : null;
   return { ok: before === dir && after === dir, before, after };
 }
