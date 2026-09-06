@@ -14,6 +14,12 @@ echo "  （约 2-3 分钟，可用 --no-verify 绕过）"
 
 # pnpm 可用时走原命令；不可用时（受管 Node 沙箱无 pnpm shim，如 WorkBuddy/CI 受限环境）
 # 回退到等价的直接二进制调用——门禁项目一项不少，只换 invocation。
+# vitest 一律 timeout 兜底：沙箱下 hook 上下文偶发套件不退出（2026-09-06 实测
+# 挂起 20+ 分钟），超时即判失败可重跑，绝不静默挂起；被杀任务残留的僵尸
+# node 进程会加剧该问题（需人工清理）。
+run_vitest() {
+  timeout 480 node "$1" run --root "$2"
+}
 run_gate() {
   if command -v pnpm >/dev/null 2>&1; then
     pnpm gate
@@ -23,9 +29,9 @@ run_gate() {
   node packages/react/node_modules/typescript/bin/tsc -b \
     packages/kernel/tsconfig.json packages/react/tsconfig.json apps/canvas/tsconfig.json \
     --pretty false || return 1
-  node packages/kernel/node_modules/vitest/vitest.mjs run --root packages/kernel || return 1
-  node packages/react/node_modules/vitest/vitest.mjs run --root packages/react || return 1
-  node apps/canvas/node_modules/vitest/vitest.mjs run --root apps/canvas || return 1
+  run_vitest packages/kernel/node_modules/vitest/vitest.mjs packages/kernel || return 1
+  run_vitest packages/react/node_modules/vitest/vitest.mjs packages/react || return 1
+  run_vitest apps/canvas/node_modules/vitest/vitest.mjs apps/canvas || return 1
   ./node_modules/.bin/depcruise packages apps --config .dependency-cruiser.js || return 1
   node node_modules/@biomejs/biome/bin/biome lint packages apps || return 1
   node scripts/check-code-budget.mjs || return 1
