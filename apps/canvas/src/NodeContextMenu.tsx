@@ -13,7 +13,7 @@
  * 不是什么：不含菜单项的渲染与键盘交互（`ContextMenu` 自己管）。
  */
 import { pathOfNode } from '@mindcanvas/kernel';
-import { anchorOfNode, collectCenters, contextMenuItemsFor, ContextMenu, planAttachIsland, removeCenter, upsertCenter, type EditorController } from '@mindcanvas/react';
+import { anchorOfNode, collectCenters, contextMenuItemsFor, ContextMenu, planAttachIsland, readGrowDir, removeCenter, upsertCenter, type EditorController } from '@mindcanvas/react';
 import { nodeById } from './hooks/useEdgeActions.js';
 
 /** 侧面板标识（与 MindmapStage 的 panel 状态一致；null = 全部关闭） */
@@ -32,6 +32,8 @@ export interface NodeContextMenuProps {
   controller: EditorController;
   /** 是否关系编辑模式（决定是否有「连线到…」入口） */
   relationMode: boolean;
+  /** C3：当前文档名（复制中心编号的「文档名#cid」格式） */
+  docName: string;
   /** 打开实体 picker（改引用） */
   setPicker: (v: { nodeId: string; query: string; current: { kind: string; id: string } | null } | null) => void;
   /** 打开侧面板（'relation' 等） */
@@ -54,6 +56,7 @@ export function NodeContextMenu({
   ctxMenu,
   controller,
   relationMode,
+  docName,
   setPicker,
   setPanel,
   setLinkDraft,
@@ -148,6 +151,21 @@ export function NodeContextMenu({
               centers: centers && centers.length > 0 ? centers : undefined,
               center_pos: history && history.length > 0 ? history : undefined,
             });
+          },
+          // C3：中心 cid 查询与复制（格式「文档名#cid」——跨文件时代天然兼容 doc+cid 寻址）
+          cidOf: (id) => collectCenters(controller.root).find((c) => c.nodeId === id)?.cid,
+          onCopyCid: (id) => {
+            const cid = collectCenters(controller.root).find((c) => c.nodeId === id)?.cid;
+            if (!cid) return;
+            void navigator.clipboard?.writeText(`${docName}#${cid}`);
+          },
+        },
+        // D3′：生长方向（note.dir 语义意图；updateNote 合并写——
+        // dir: undefined 删键 = 恢复继承；OpHistory 天然覆盖 undo）
+        {
+          explicitDirOf: (id) => readGrowDir(nodeById(controller.root, id)?.note, id),
+          onSetGrowDir: (id, dir) => {
+            controller.updateNote(id, { dir: dir ?? undefined });
           },
         },
       )}

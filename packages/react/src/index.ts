@@ -300,6 +300,17 @@ export {
 } from './render/centers.js';
 export type { Center, CenterPosEntry, DocCenter } from './render/centers.js';
 
+// D 包：节点级生长方向 note.dir（思想分叉）协议层（集成人统一导出）
+export {
+  collectExplicitDir,
+  effectiveGrowDir,
+  probeDirRoundTrip,
+  readGrowDir,
+  summarizeGrowDirDiagnostics,
+  upsertGrowDir,
+} from './render/growDir.js';
+export type { GrowDirDiagnostic } from './render/growDir.js';
+
 export type {
   CardLevel,
   LinkPathResult,

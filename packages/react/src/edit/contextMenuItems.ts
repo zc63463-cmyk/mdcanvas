@@ -60,6 +60,21 @@ export interface CenterMenuActions {
   isDetached: (id: string) => boolean;
   /** G2（A5）：接回 detached 分支到目标父节点（成环/深度超限由命令层拒绝并提示） */
   onAttach: (id: string, targetParentId: string) => void;
+  /** C3：该中心的 cid（无 cid 的旧数据返回 undefined——菜单据此隐藏复制入口） */
+  cidOf?: (id: string) => string | undefined;
+  /** C3：复制中心编号到剪贴板（格式「文档名#cid」，由上层写剪贴板与反馈） */
+  onCopyCid?: (id: string) => void;
+}
+
+/**
+ * D3′ 生长方向菜单动作（思想分叉）。
+ * dir 写在节点 note（语义意图，先例 via/edge/desc/qa；随子树迁移零成本）。
+ */
+export interface GrowDirMenuActions {
+  /** 节点当前显式 dir（null = 继承父级/岛方向） */
+  explicitDirOf: (id: string) => GrowDir | null;
+  /** 设置/清除生长方向（null = 恢复继承；经 OpHistory 可撤销） */
+  onSetGrowDir: (id: string, dir: GrowDir | null) => void;
 }
 
 export function contextMenuItemsFor(
@@ -70,6 +85,7 @@ export function contextMenuItemsFor(
   descActions?: DescMenuActions,
   noteActions?: NoteMenuActions,
   centerActions?: CenterMenuActions,
+  growDirActions?: GrowDirMenuActions,
 ): ContextMenuItem[] {
   const isRoot = id === controller.root.id;
   const items: ContextMenuItem[] = [
@@ -154,6 +170,15 @@ export function contextMenuItemsFor(
           onSelect: () => centerActions.onToggleParentLink(id, pl === 'show' ? 'hide' : 'show'),
         });
       }
+      // C3：复制中心编号（cid 存在才提供；旧数据无 cid 时隐藏——
+      // 升格/切线事务会自动补发，见 ensureNodeCid 埋点）
+      const cid = centerActions.cidOf?.(id);
+      if (cid !== undefined && centerActions.onCopyCid) {
+        items.push({
+          label: `复制中心编号（${cid}）`,
+          onSelect: () => centerActions.onCopyCid?.(id),
+        });
+      }
     } else {
       // G6″（A3）：任意深度节点可升格（用户批准的产品核心）。
       // v1 的「仅根直接子节点」守卫源于布局层重复投影缺陷——A3 起由 kernel
@@ -169,6 +194,28 @@ export function contextMenuItemsFor(
           onSelect: () => centerActions.onPromote(id, dir),
         });
       }
+    }
+  }
+  // D3′：生长方向（思想分叉；note.dir 语义意图随子树迁移，四向 + 继承。
+  // 与「升为中心 › 方向」同一扁平模式；✓ 标当前显式方向）
+  if (growDirActions && !isRoot) {
+    const cur = growDirActions.explicitDirOf(id);
+    for (const [dir, label] of [
+      ['right', '向右'],
+      ['left', '向左'],
+      ['down', '向下'],
+      ['up', '向上'],
+    ] as const) {
+      items.push({
+        label: `生长方向 › ${label}${cur === dir ? ' ✓' : ''}`,
+        onSelect: () => growDirActions.onSetGrowDir(id, dir),
+      });
+    }
+    if (cur !== null) {
+      items.push({
+        label: '生长方向 › 继承（跟随父级）',
+        onSelect: () => growDirActions.onSetGrowDir(id, null),
+      });
     }
   }
   // N2：实体节点专属项（改引用 / 关系图定位 / 转纯文本）

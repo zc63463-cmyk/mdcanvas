@@ -1596,6 +1596,7 @@ function StageContent({
           ctxMenu={ctxMenu}
           controller={controller}
           relationMode={relationMode}
+          docName={doc.name}
           setPicker={setPicker}
           setPanel={setPanel}
           setLinkDraft={setLinkDraft}

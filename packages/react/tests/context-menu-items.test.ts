@@ -115,3 +115,102 @@ describe('节点右键菜单项（v1.3.0：幕布描述入口）', () => {
     expect(labels).toContain('编辑描述');
   });
 });
+
+describe('C3：复制中心编号菜单', () => {
+  const centerActionsBase = (id: string, cid: string | undefined) => ({
+    isCenter: () => true,
+    isDetached: () => false,
+    parentLinkOf: () => 'hide' as const,
+    onToggleParentLink: () => undefined,
+    onPromote: () => undefined,
+    onDemote: () => undefined,
+    onAttach: () => undefined,
+    cidOf: () => cid,
+    onCopyCid: vi.fn(),
+  });
+
+  it('中心有 cid → 提供「复制中心编号（cid）」且回调生效', () => {
+    const c = build(PLAIN);
+    const id = c.root.children[0]!.id;
+    const actions = centerActionsBase(id, 'c7');
+    const items = contextMenuItemsFor(c, id, undefined, undefined, undefined, undefined, actions);
+    const item = items.find((i) => i.label === '复制中心编号（c7）');
+    expect(item).toBeDefined();
+    item!.onSelect();
+    expect(actions.onCopyCid).toHaveBeenCalledWith(id);
+  });
+
+  it('中心无 cid（旧数据）→ 隐藏复制入口', () => {
+    const c = build(PLAIN);
+    const id = c.root.children[0]!.id;
+    const items = contextMenuItemsFor(
+      c, id, undefined, undefined, undefined, undefined,
+      centerActionsBase(id, undefined),
+    );
+    expect(items.some((i) => i.label.startsWith('复制中心编号'))).toBe(false);
+  });
+
+  it('非中心节点 → 不出现复制入口', () => {
+    const c = build(PLAIN);
+    const id = c.root.children[0]!.id;
+    const items = contextMenuItemsFor(c, id, undefined, undefined, undefined, undefined, {
+      ...centerActionsBase(id, 'c7'),
+      isCenter: () => false,
+    });
+    expect(items.some((i) => i.label.startsWith('复制中心编号'))).toBe(false);
+  });
+});
+
+describe('D3′：生长方向菜单（思想分叉）', () => {
+  const growDirFixture = (cur: 'right' | 'left' | 'down' | 'up' | null) => ({
+    explicitDirOf: () => cur,
+    onSetGrowDir: vi.fn(),
+  });
+
+  it('非根节点 → 四向项全出现；当前显式方向带 ✓', () => {
+    const c = build(PLAIN);
+    const id = c.root.children[0]!.id;
+    const actions = growDirFixture('left');
+    const labels = contextMenuItemsFor(
+      c, id, undefined, undefined, undefined, undefined, undefined, actions,
+    ).map((i) => i.label);
+    expect(labels).toContain('生长方向 › 向右');
+    expect(labels).toContain('生长方向 › 向左 ✓');
+    expect(labels).toContain('生长方向 › 向下');
+    expect(labels).toContain('生长方向 › 向上');
+    // 显式状态下提供「继承」出口
+    expect(labels).toContain('生长方向 › 继承（跟随父级）');
+  });
+
+  it('继承状态（无显式 dir）→ 无 ✓、无「继承」项（已在继承）', () => {
+    const c = build(PLAIN);
+    const id = c.root.children[0]!.id;
+    const labels = contextMenuItemsFor(
+      c, id, undefined, undefined, undefined, undefined, undefined, growDirFixture(null),
+    ).map((i) => i.label);
+    expect(labels).toContain('生长方向 › 向右');
+    expect(labels.some((l) => l.includes('✓'))).toBe(false);
+    expect(labels).not.toContain('生长方向 › 继承（跟随父级）');
+  });
+
+  it('点选方向 → onSetGrowDir 回调携带目标 dir；继承 → null', () => {
+    const c = build(PLAIN);
+    const id = c.root.children[0]!.id;
+    const actions = growDirFixture('down');
+    const items = contextMenuItemsFor(
+      c, id, undefined, undefined, undefined, undefined, undefined, actions,
+    );
+    items.find((i) => i.label === '生长方向 › 向上')!.onSelect();
+    expect(actions.onSetGrowDir).toHaveBeenCalledWith(id, 'up');
+    items.find((i) => i.label === '生长方向 › 继承（跟随父级）')!.onSelect();
+    expect(actions.onSetGrowDir).toHaveBeenCalledWith(id, null);
+  });
+
+  it('根节点 → 不出现生长方向项（根的方向由岛/布局决定）', () => {
+    const c = build(PLAIN);
+    const labels = contextMenuItemsFor(
+      c, c.root.id, undefined, undefined, undefined, undefined, undefined, growDirFixture(null),
+    ).map((i) => i.label);
+    expect(labels.some((l) => l.startsWith('生长方向'))).toBe(false);
+  });
+});
