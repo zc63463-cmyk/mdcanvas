@@ -12,15 +12,40 @@ export function kindOfFileName(name: string): 'img' | 'draw' {
   return ext === 'svg' ? 'draw' : 'img';
 }
 
+/** 图片扩展名 → MIME（N-6 兜底依据 + IdbAssetHost 构造 Blob 用，单一事实源） */
+export const IMAGE_EXT_MIME: Record<string, string> = {
+  svg: 'image/svg+xml',
+  png: 'image/png',
+  jpg: 'image/jpeg',
+  jpeg: 'image/jpeg',
+  gif: 'image/gif',
+  webp: 'image/webp',
+  avif: 'image/avif',
+};
+
+/** 是否图片文件：file.type 可能为空（Windows 部分注册表状态/未知来源拖拽），扩展名兜底判定 */
+export function isImageFileName(name: string): boolean {
+  const ext = name.toLowerCase().split('.').pop() ?? '';
+  return ext in IMAGE_EXT_MIME;
+}
+
+/** 文件 MIME：file.type 优先，扩展名兜底，最终 octet-stream（保证 Blob 可构造可加载） */
+export function mimeOfFileName(name: string, fileType: string): string {
+  if (fileType) return fileType;
+  const ext = name.toLowerCase().split('.').pop() ?? '';
+  return IMAGE_EXT_MIME[ext] ?? 'application/octet-stream';
+}
+
 export interface AssetHost {
   /** 图库资产清单（宿主可异步：HTTP/FS 目录扫描） */
   listAssets(): Promise<AssetItem[]>;
-  /** 资产 → 可加载 URL（相对导图根路径 → 平台 URL / objectURL） */
-  resolveAsset(item: AssetItem): string;
+  /** 资产 → 可加载 URL（相对导图根路径 → 平台 URL / objectURL）；
+   *  参数只依赖 id（Pick 收窄）：渲染层可直接传 EntityRef 适配（P0-1 渲染接线） */
+  resolveAsset(item: Pick<AssetItem, 'id'>): string;
   /** 上传资产（拖拽/粘贴文件 → 图库）；返回新资产项 */
   uploadAsset(file: File, kind?: 'img' | 'draw'): Promise<AssetItem>;
   /** 资产存在性（同步判定：demo host 查清单；HTTP 宿主可先返回 true 由渲染层兜底） */
-  hasAsset(item: AssetItem): boolean;
+  hasAsset(item: Pick<AssetItem, 'kind' | 'id'>): boolean;
   /** 资产 base URL（透传给渲染层 assetBaseUrl） */
   baseUrl: string;
 }
@@ -41,7 +66,7 @@ export class DemoAssetHost implements AssetHost {
     return [...this.items];
   }
 
-  resolveAsset(item: AssetItem): string {
+  resolveAsset(item: Pick<AssetItem, 'kind' | 'id'>): string {
     const blob = this.objectUrls.get(item.id);
     if (blob) return blob;
     return this.baseUrl + item.id;
@@ -54,12 +79,15 @@ export class DemoAssetHost implements AssetHost {
       name: file.name,
       type: (file.name.toLowerCase().split('.').pop() ?? 'bin').slice(0, 8),
     };
+    // 替换语义：同 id 覆盖旧 objectURL（revoke 防泄漏）+ 清单去重（原实现会 push 重复项）
+    const prevUrl = this.objectUrls.get(item.id);
+    if (prevUrl) URL.revokeObjectURL(prevUrl);
     this.objectUrls.set(item.id, URL.createObjectURL(file));
-    this.items = [...this.items, item];
+    this.items = [...this.items.filter((a) => a.id !== item.id), item];
     return item;
   }
 
-  hasAsset(item: AssetItem): boolean {
+  hasAsset(item: Pick<AssetItem, 'kind' | 'id'>): boolean {
     return this.items.some((a) => a.kind === item.kind && a.id === item.id);
   }
 }

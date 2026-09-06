@@ -37,7 +37,6 @@ import {
   collectNodeChoices,
   createCharMeasure,
   createReactRegistries,
-  DemoAssetHost,
   DemoPlugin,
   DocLibrary,
   EditorController,
@@ -48,8 +47,10 @@ import {
   FlipCard,
   formatNote,
   getNodeLabel,
+  IdbAssetHost,
   installBeforeUnload,
   isEscapedEntityInput,
+  isImageFileName,
   isMindDocFile,
   idsMeasureKey,
   LocalDocHost,
@@ -538,7 +539,7 @@ function StageContent({
   // 批次 4：Ctrl+Shift+A 图库面板（资产实体化；点资产 → 插入 @img/@draw 引用到选中节点下）
   // 图库资产宿主（P0）：清单/解析/上传全部经宿主注入；demo 宿主 = 打包资产 + objectURL 会话上传
   const assetHostRef = useRef<AssetHost | null>(null);
-  if (assetHostRef.current === null) assetHostRef.current = new DemoAssetHost(DEMO_ASSETS, '/');
+  if (assetHostRef.current === null) assetHostRef.current = new IdbAssetHost(DEMO_ASSETS, '/');
   const assetHost = assetHostRef.current;
 
   // 文档库（文件管理的索引层）：只登记已落盘的文档，
@@ -554,6 +555,13 @@ function StageContent({
   }, [doc.id, doc.name, doc.source, doc.saved, library]);
   // 异步清单（宿主可换 HTTP/FS 实现）；插入/上传后由 Stage 更新本地副本
   const [assetList, setAssetList] = useState<AssetItem[]>([]);
+
+  // 图库上传（P1-1）：上传按钮 / 面板拖拽 / 画布 drop 共用的「入清单」原语（不插节点）
+  const uploadToGallery = useCallback(async (file: File) => {
+    const item = await assetHost.uploadAsset(file);
+    setAssetList((prev) => (prev.some((a) => a.id === item.id) ? prev : [...prev, item]));
+    return item;
+  }, [assetHost]);
 
   // B3：失效诊断入解析层——parse 诊断 + 资产缺失诊断（清单更新后自动重算）
   const allDiags = useMemo(
@@ -1059,6 +1067,8 @@ function StageContent({
         char={char}
         // assetBaseUrl = 导图根 URL（demo 资产 id 已含「demo-assets/」相对导图前缀）
         assetBaseUrl="/"
+        // P0-1 渲染接线：上传资产（objectURL）只有宿主能解析，NodeG 优先走宿主
+        resolveAssetUrl={(ref) => assetHost.resolveAsset(ref)}
         apiRef={apiRef}
         onStats={setStats}
         relationMode={relationMode}
@@ -1212,12 +1222,12 @@ function StageContent({
             return;
           }
           // 文件拖入/粘贴 → 上传图库并插入 @img 引用（P1）：宿主上传 → 清单并集 → 选中节点下插入（无选中 = 根）
-          const images = files.filter((f) => f.type.startsWith('image/') || /\.svg$/i.test(f.name));
+          // N-6：file.type 可能为空（系统拖拽）→ isImageFileName 扩展名兜底
+          const images = files.filter((f) => f.type.startsWith('image/') || isImageFileName(f.name));
           if (images.length === 0) return;
           void (async () => {
             for (const file of images) {
-              const item = await assetHost.uploadAsset(file);
-              setAssetList((prev) => (prev.some((a) => a.id === item.id) ? prev : [...prev, item]));
+              const item = await uploadToGallery(file);
               const parentId = controller.selectedId ?? controller.root.id;
               const id = controller.addEntityChild(parentId, { kind: item.kind, id: item.id });
               setEntities((prev) => {
@@ -1632,6 +1642,16 @@ function StageContent({
         relations={relations}
         activeRefKey={activeRefKey}
         edgeItems={edgeItems}
+        onUpload={(files) => {
+          // P1-1 图库上传入口：按钮/面板拖拽 → 仅入图库清单（使用 = 点击资产插入）
+          void (async () => {
+            for (const file of files) {
+              if (file.type.startsWith('image/') || isImageFileName(file.name)) {
+                await uploadToGallery(file);
+              }
+            }
+          })();
+        }}
         onSelectNode={(id) => {
           setExpandedQaId(null);
           focusNode(id);

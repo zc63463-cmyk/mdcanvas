@@ -37,6 +37,8 @@ export interface SidePanelsProps {
   activeRefKey: string | null;
   /** 形状跟随 EntityGraphPanel 的 edges（用 ComponentProps 推导，避免依赖其内部类型名） */
   edgeItems: ComponentProps<typeof EntityGraphPanel>['edges'];
+  /** 图库上传（P1-1）：上传按钮 / 面板拖拽 → 文件数组（上层经资产宿主入清单） */
+  onUpload: (files: File[]) => void;
   /** 定位并选中节点（由调用方封装「收起快速注释展开态 + 画布定位」） */
   onSelectNode: (id: string) => void;
   onClose: () => void;
@@ -51,6 +53,7 @@ export function SidePanels({
   relations,
   activeRefKey,
   edgeItems,
+  onUpload,
   onSelectNode,
   onClose,
 }: SidePanelsProps) {
@@ -80,9 +83,11 @@ export function SidePanels({
         <AssetPanel
           assets={assetList}
           resolve={(item) => assetHost.resolveAsset(item)}
+          onUpload={onUpload}
           onInsert={(item) => {
-            if (!controller.selectedId) return;
-            const id = controller.addEntityChild(controller.selectedId, {
+            // 无选中 → 回落根节点下插入（与画布 drop 语义一致，不再静默 no-op）
+            const parentId = controller.selectedId ?? controller.root.id;
+            const id = controller.addEntityChild(parentId, {
               kind: item.kind,
               id: item.id,
             });
@@ -97,7 +102,8 @@ export function SidePanels({
               });
               return next;
             });
-            controller.select(id);
+            // 定位新节点（select + 视口平移）：避免新节点落在视口外造成「插入了却看不见」
+            onSelectNode(id);
             onClose();
           }}
           onClose={onClose}

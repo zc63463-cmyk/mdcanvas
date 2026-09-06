@@ -16,8 +16,10 @@ export {
 export type { AssetHost } from './chrome/assetHost.js';
 export {
   DemoAssetHost,
+  isImageFileName,
   kindOfFileName,
 } from './chrome/assetHost.js';
+export { IdbAssetHost } from './chrome/idbAssetHost.js';
 export type {
   ContextMenuItem,
   ContextMenuProps,

@@ -44,6 +44,11 @@ export interface NodeGProps {
   /** 资产基础 URL（@img/@draw 实体渲染 <image> 预览时拼接；缺省不渲染） */
   assetBaseUrl?: string;
   /**
+   * 资产 URL 宿主解析（P0-1）：优先于 assetBaseUrl 拼接 —— 上传资产的 objectURL
+   * 只有宿主知道，裸拼 baseUrl 会 404。返回 undefined → 回落 assetBaseUrl + id 拼接。
+   */
+  resolveAssetUrl?: (ref: { kind: string; id: string }) => string | undefined;
+  /**
    * 动画覆盖（M5-T2）：提供则整体平移/缩放/透明度取代布局坐标（淡入淡出/位置插值）；
    * 缺省 = 布局盒原位渲染。内容排版仍按 node.box 尺寸——插值只动 x/y 与整组变换。
    */
@@ -73,6 +78,7 @@ export function NodeG({
   expanded,
   bodyHeight,
   assetBaseUrl,
+  resolveAssetUrl,
   anim,
   dragTarget,
 }: NodeGProps) {
@@ -94,14 +100,14 @@ export function NodeG({
       ? token.color.selection
       : style.stroke;
   const strokeWidth = dragTarget || selected ? style.strokeWidth + 1 : style.strokeWidth;
-  // 资产预览：@img/@draw 实体 → 拼接 assetBaseUrl 渲染 <image>（非资产实体 / 无 baseUrl 不渲染）
+  // 资产预览：@img/@draw 实体 → 渲染 <image>（非资产实体 / 无法解析 URL 不渲染）
+  // P0-1：URL 解析优先走宿主 resolveAssetUrl（上传资产 objectURL），undefined 回落 baseUrl 拼接
+  const ref = node.node.type === 'entity' ? node.node.ref : null;
   const assetKind =
-    node.node.type === 'entity' &&
-    node.node.ref?.kind &&
-    (node.node.ref.kind === 'img' || node.node.ref.kind === 'draw')
-      ? node.node.ref.kind
-      : null;
-  const assetHref = assetKind && assetBaseUrl ? assetBaseUrl + (node.node.ref?.id ?? '') : null;
+    ref?.kind && (ref.kind === 'img' || ref.kind === 'draw') ? ref.kind : null;
+  const assetHref = assetKind && ref
+    ? (resolveAssetUrl?.(ref) ?? (assetBaseUrl ? assetBaseUrl + ref.id : null))
+    : null;
   // 资产区高度仅当确实要渲染图片时才占位（无 baseUrl 时降级为纯文本节点，不留空白）
   const assetH = assetHref !== null ? (metrics.assetH ?? 0) : 0;
   // 文本区起点：有资产时下移至资产区之下，二者垂直分离不再重叠（布局侧已同步预留高度）

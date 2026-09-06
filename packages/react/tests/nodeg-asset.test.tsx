@@ -43,6 +43,45 @@ describe('NodeG：@img/@draw 资产预览渲染', () => {
 });
 
 /**
+ * P0-1 资产 URL 宿主解析：上传资产（objectURL）无法经 assetBaseUrl 拼接加载——
+ * NodeG 必须优先走宿主注入的 resolveAssetUrl，返回 undefined 时回落默认拼接。
+ */
+describe('NodeG：resolveAssetUrl 宿主解析（P0-1）', () => {
+  it('宿主返回 URL → <image> href 用宿主值；undefined → 回落 assetBaseUrl 拼接', () => {
+    const { layout, char } = assetLayout();
+    const { container } = render(
+      <ThemeProvider>
+        <MapView
+          layout={layout}
+          entities={new Map()}
+          char={char}
+          assetBaseUrl="/"
+          resolveAssetUrl={(ref) => (ref.kind === 'img' ? `blob:host-${ref.id}` : undefined)}
+        />
+      </ThemeProvider>,
+    );
+    const hrefs = Array.from(container.querySelectorAll('image')).map((i) =>
+      i.getAttribute('href'),
+    );
+    expect(hrefs).toContain('blob:host-demo-assets/demo-diagram.svg');
+    expect(hrefs).toContain('/demo-assets/board.svg');
+  });
+
+  it('未传 resolveAssetUrl → 行为不变（全部回落 assetBaseUrl 拼接）', () => {
+    const { layout, char } = assetLayout();
+    const { container } = render(
+      <ThemeProvider>
+        <MapView layout={layout} entities={new Map()} char={char} assetBaseUrl="/" />
+      </ThemeProvider>,
+    );
+    const hrefs = Array.from(container.querySelectorAll('image')).map((i) =>
+      i.getAttribute('href'),
+    );
+    expect(hrefs).toContain('/demo-assets/demo-diagram.svg');
+  });
+});
+
+/**
  * 编辑态文字层守卫（2026-09-03）：
  * 内联编辑器是浮在节点盒上的 <input>，若 SVG 仍绘制文字就是两层同时可见 ——
  * 暗色主题下 input 底色只有 7% 不透明度，底下文字会直接透出来。

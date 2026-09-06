@@ -153,6 +153,8 @@ export interface MapViewProps {
   onQaChange?: (id: string, qa: string[]) => void;
   /** 资产基础 URL（透传给 NodeG：@img/@draw 实体渲染 <image> 预览时拼接；缺省不渲染） */
   assetBaseUrl?: string;
+  /** 资产 URL 宿主解析（P0-1，透传 NodeG）：优先于 assetBaseUrl 拼接；undefined 回落拼接 */
+  resolveAssetUrl?: (ref: { kind: string; id: string }) => string | undefined;
   /**
    * 节点拖拽重排落点（M5-T5）：拖拽松手时给出 move-node op（由上层经 controller.apply 执行，
    * 保证 undo/redo 正确）；非法落点（成环/自拖/根目标）不会触发本回调。
@@ -281,6 +283,7 @@ export function MapView({
   onNodeContext,
   onEditStart,
   assetBaseUrl,
+  resolveAssetUrl,
   onNodeMove,
   onAssetFiles,
   selectedEdgeKey,
@@ -1134,6 +1137,7 @@ export function MapView({
                         fixedNoteHeight: fixedNoteIds.has(ln.node.id) ? estimateNoteAreaHeight() : 0,
                       }).body.h}
                       assetBaseUrl={assetBaseUrl}
+                      resolveAssetUrl={resolveAssetUrl}
                       // 拖拽中：原节点置灰（透明度降），浮空克隆跟随光标；落点目标高亮（合法/拒绝）
                       anim={
                         isDragged
@@ -1240,6 +1244,8 @@ export function MapView({
                       noText={lodSkipText(lod, draggedLn.depth)}
                       hasChildren={draggedLn.node.children.length > 0}
                       collapsed={collapsedIds?.has(draggedLn.node.id) ?? false}
+                      assetBaseUrl={assetBaseUrl}
+                      resolveAssetUrl={resolveAssetUrl}
                       anim={{
                         x: draggedLn.box.x + nodeDrag.dx / k,
                         y: draggedLn.box.y + nodeDrag.dy / k,

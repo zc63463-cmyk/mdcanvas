@@ -36,8 +36,66 @@ describe('AssetPanel：图库侧栏', () => {
     expect(close).toHaveBeenCalled();
   });
 
-  it('空资产 → 空态引导', () => {
-    const { container } = render(<AssetPanel assets={[]} onInsert={vi.fn()} onClose={vi.fn()} />);
-    expect(container.textContent).toContain('assets/');
+  it('空资产 → 空态引导（指向面板上传/画布拖拽，不再指浏览器做不到的本地目录）', () => {
+    const { container } = render(
+      <AssetPanel assets={[]} onInsert={vi.fn()} onClose={vi.fn()} onUpload={vi.fn()} />,
+    );
+    expect(container.textContent).toContain('上传');
+    expect(container.textContent).not.toContain('assets/');
+  });
+});
+
+/**
+ * P1-1 面板上传入口：唯一外部入口曾是「拖进画布/粘贴」，图库面板只读。
+ * 上传按钮（file input）+ 面板拖拽 → onUpload(files)；未传 onUpload 时按钮不渲染（向后兼容）。
+ */
+describe('AssetPanel：上传入口（P1-1）', () => {
+  const FILES = [new File(['x'], 'u.png', { type: 'image/png' })];
+
+  it('提供 onUpload → 渲染上传按钮；点击按钮触发隐藏 file input', () => {
+    const { container } = render(
+      <AssetPanel assets={ASSETS} onInsert={vi.fn()} onClose={vi.fn()} onUpload={vi.fn()} />,
+    );
+    const btn = container.querySelector('[data-asset-upload]');
+    expect(btn).not.toBeNull();
+    const input = container.querySelector('input[type="file"]') as HTMLInputElement;
+    expect(input).not.toBeNull();
+    const clickSpy = vi.spyOn(input, 'click');
+    fireEvent.click(btn!);
+    expect(clickSpy).toHaveBeenCalled();
+  });
+
+  it('file input change → onUpload 收到文件数组', () => {
+    const onUpload = vi.fn();
+    const { container } = render(
+      <AssetPanel assets={ASSETS} onInsert={vi.fn()} onClose={vi.fn()} onUpload={onUpload} />,
+    );
+    const input = container.querySelector('input[type="file"]') as HTMLInputElement;
+    Object.defineProperty(input, 'files', { value: FILES });
+    fireEvent.change(input);
+    expect(onUpload).toHaveBeenCalledWith(FILES);
+  });
+
+  it('面板 drop 文件 → 阻止默认并透传 onUpload', () => {
+    const onUpload = vi.fn();
+    const { container } = render(
+      <AssetPanel assets={ASSETS} onInsert={vi.fn()} onClose={vi.fn()} onUpload={onUpload} />,
+    );
+    const panel = container.querySelector('[data-asset-panel]')!;
+    const dt = { files: FILES };
+    const dropEvent = fireEvent.drop(panel, { dataTransfer: dt, bubbles: true });
+    expect(dropEvent).toBe(false); // fireEvent 返回 false = preventDefault 已被调用
+    expect(onUpload).toHaveBeenCalledWith(FILES);
+  });
+
+  it('未传 onUpload → 上传按钮不渲染（既有只读用法零破坏）', () => {
+    const { container } = render(<AssetPanel assets={ASSETS} onInsert={vi.fn()} onClose={vi.fn()} />);
+    expect(container.querySelector('[data-asset-upload]')).toBeNull();
+    expect(() => {
+      fireEvent.drop(container.querySelector('[data-asset-panel]')!, {
+        dataTransfer: { files: FILES },
+        bubbles: true,
+      });
+    }).not.toThrow();
   });
 });

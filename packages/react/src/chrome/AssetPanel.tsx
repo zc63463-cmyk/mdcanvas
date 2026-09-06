@@ -3,6 +3,8 @@
  * 资产清单经宿主注入（P0）；大图集窗口化渲染（P3：虚拟滚动，固定行高 + 可视区间裁剪）；
  * 缩略图可选（resolve prop，宿主解析 URL）；失效项 warn 标识 + 禁插（P2）。
  * 点击资产 → onInsert（宿主负责插入 @img/@draw 引用）；空态引导。
+ * 上传入口（P1-1）：「+ 上传」按钮（file input）+ 面板拖拽 → onUpload(files)；
+ * 未传 onUpload 时按钮不渲染（既有只读用法零破坏）。
  */
 import { useEffect, useRef, useState } from 'react';
 import { CHROME } from '../theme/tokens.js';
@@ -22,6 +24,8 @@ export interface AssetPanelProps {
   isMissing?: (item: AssetItem) => boolean;
   /** 缩略图 URL 解析（P3）：宿主 resolveAsset；缺省不渲染缩略图 */
   resolve?: (item: AssetItem) => string;
+  /** 上传入口（P1-1）：上传按钮 / 面板拖拽 → 文件数组（宿主负责过滤 + uploadAsset） */
+  onUpload?: (files: File[]) => void;
 }
 
 /** 虚拟滚动行高（px）：项 + 2px 间距（与渲染样式一致） */
@@ -29,8 +33,9 @@ const ROW_H = 30;
 /** 可视区上下缓冲行数（防快速滚动闪白） */
 const BUFFER = 6;
 
-export function AssetPanel({ assets, onInsert, onClose, isMissing, resolve }: AssetPanelProps) {
+export function AssetPanel({ assets, onInsert, onClose, isMissing, resolve, onUpload }: AssetPanelProps) {
   const scrollerRef = useRef<HTMLDivElement | null>(null);
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
   const [range, setRange] = useState({ start: 0, end: Math.min(assets.length, 30) });
   const viewHRef = useRef(400);
 
@@ -71,6 +76,18 @@ export function AssetPanel({ assets, onInsert, onClose, isMissing, resolve }: As
         padding: 8,
         zIndex: 4,
       }}
+      // P1-1 面板拖拽上传：dragover 阻止默认以允许 drop；drop 透传文件列表
+      onDragOver={(e) => {
+        if (!onUpload || !e.dataTransfer?.types.includes('Files')) return;
+        e.preventDefault();
+      }}
+      onDrop={(e) => {
+        if (!onUpload) return;
+        const files = Array.from(e.dataTransfer?.files ?? []);
+        if (files.length === 0) return;
+        e.preventDefault();
+        onUpload(files);
+      }}
     >
       <div
         style={{
@@ -82,6 +99,22 @@ export function AssetPanel({ assets, onInsert, onClose, isMissing, resolve }: As
         }}
       >
         <span style={{ color: CHROME.neon, fontWeight: 600, fontSize: CHROME.fontSize }}>图库</span>
+        {onUpload && (
+          <span
+            data-asset-upload
+            onClick={() => fileInputRef.current?.click()}
+            style={{
+              color: CHROME.neon,
+              cursor: 'pointer',
+              fontSize: CHROME.fontSizeSmall,
+              padding: '1px 6px',
+              borderRadius: 6,
+              border: `1px solid ${CHROME.panelBorder}`,
+            }}
+          >
+            + 上传
+          </span>
+        )}
         <span style={{ flex: 1 }} />
         <span
           data-asset-close
@@ -95,7 +128,9 @@ export function AssetPanel({ assets, onInsert, onClose, isMissing, resolve }: As
         <div
           style={{ color: CHROME.textMuted, fontSize: CHROME.fontSizeSmall, padding: '8px 6px' }}
         >
-          暂无资产。将图片放入导图同目录 assets/ 后刷新。
+          {onUpload
+            ? '暂无资产。点击上方「+ 上传」选择图片，或将图片拖到这里 / 画布。'
+            : '暂无资产。'}
         </div>
       ) : (
         <div
@@ -165,6 +200,21 @@ export function AssetPanel({ assets, onInsert, onClose, isMissing, resolve }: As
             })}
           </div>
         </div>
+      )}
+      {/* P1-1 隐藏 file input：上传按钮的唯一数据源；change 后清空 value 以支持重复选同一文件 */}
+      {onUpload && (
+        <input
+          ref={fileInputRef}
+          type="file"
+          multiple
+          accept="image/*,.svg"
+          style={{ display: 'none' }}
+          onChange={(e) => {
+            const files = Array.from(e.target.files ?? []);
+            if (files.length > 0) onUpload(files);
+            e.target.value = '';
+          }}
+        />
       )}
     </div>
   );

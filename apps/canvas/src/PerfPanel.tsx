@@ -42,9 +42,9 @@ export function PerfPanel({ stats }: { stats: MapStats | null }) {
   );
 }
 
-function Row({ k, v }: { k: string; v: string }) {
+function Row({ k, v, title }: { k: string; v: string; title?: string }) {
   return (
-    <div style={{ display: 'flex', gap: 8 }}>
+    <div style={{ display: 'flex', gap: 8 }} title={title}>
       <span style={{ color: CHROME.textMuted }}>{k}</span>
       <span style={{ color: CHROME.text }}>{v}</span>
     </div>
