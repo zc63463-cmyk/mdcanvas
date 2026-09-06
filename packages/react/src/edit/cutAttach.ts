@@ -25,7 +25,7 @@ import {
   type Note,
   type TreeOp,
 } from '@mindcanvas/kernel';
-import { collectCenters, isRec, removeCenter, upsertCenter } from '../render/centers.js';
+import { collectCenters, ensureNodeCid, isRec, removeCenter, upsertCenter } from '../render/centers.js';
 import { anchorOfNode } from '../render/freeEdges.js';
 
 /** .mm.md heading 层级上限（H6）→ 节点相对根的最大深度（根深度 0） */
@@ -106,7 +106,13 @@ export function collectReferenceAnchors(root: EditableNode): AnchorRef[] {
           }
           if (!isRec(item)) return;
           if (typeof item.at === 'string') {
-            refs.push({ noteKey: n.id, field: `${key}[${i}].at`, anchor: item.at });
+            // centers[].at 携带所属对象 cid → anchor-migrate 走 cid 双轨（按身份重建 at 提示）
+            refs.push({
+              noteKey: n.id,
+              field: `${key}[${i}].at`,
+              anchor: item.at,
+              ...(typeof item.cid === 'string' ? { cid: item.cid } : {}),
+            });
           }
           if (typeof item.from === 'string') {
             refs.push({ noteKey: n.id, field: `${key}[${i}].from`, anchor: item.from });
@@ -243,11 +249,17 @@ export function planCutTreeEdge(
     ops.push({ type: 'move-node', id: childId, targetParentId: root.id, index: root.children.length });
   }
   // ② detached 标记（先按 before 锚 upsert；锚迁移由 ④ 统一改写为新锚）
+  // 事务内自动分配/沿用 cid：节点已有 cid 沿用，无则分配（bump next_cid，永不复用）
+  const { rootNote, nodeNote, cid, allocated } = ensureNodeCid(root.note, loc.node.note);
+  if (allocated) {
+    ops.push({ type: 'update-node', id: childId, patch: { note: nodeNote } });
+  }
   const dir = center?.dir ?? 'right';
   const posPatch = opts.pos !== undefined ? { x: opts.pos.x, y: opts.pos.y } : {};
-  const noteAfterUpsert = upsertCenter(root.note, beforeAt, {
+  const noteAfterUpsert = upsertCenter(rootNote, beforeAt, {
     dir,
     detached: true,
+    cid,
     ...posPatch,
   });
   ops.push({ type: 'update-node', id: root.id, patch: { note: noteAfterUpsert } });
@@ -336,11 +348,16 @@ export function planAttachIsland(
   }
 
   const beforeAt = anchorOfNode(root, childId) ?? '';
+  // 事务内确保节点持有 cid（无则分配；降格/接回不回收节点 cid，再升格沿用）
+  const { rootNote, nodeNote, allocated } = ensureNodeCid(root.note, loc.node.note);
   const ops: TreeOp[] = [
     { type: 'move-node', id: childId, targetParentId, index: target.children.length },
   ];
+  if (allocated) {
+    ops.push({ type: 'update-node', id: childId, patch: { note: nodeNote } });
+  }
   // 清 detached（降格语义但**保留坐标**：坐标进 center_pos 历史区，再切断可吸附回原位）
-  const noteAfterRemove = removeCenter(root.note, beforeAt, false);
+  const noteAfterRemove = removeCenter(rootNote, beforeAt, false);
   ops.push({ type: 'update-node', id: root.id, patch: { note: noteAfterRemove } });
 
   let staged = simulate(root, ops);

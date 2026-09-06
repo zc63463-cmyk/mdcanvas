@@ -23,6 +23,7 @@
  * 对齐（E8：空名节点不占锚路径段，其子树上提一级）。
  */
 import {
+  buildCidIndex,
   parseLinkAnchor,
   resolveLinkAnchor,
 } from './note-anchor.js';
@@ -37,6 +38,12 @@ export interface AnchorRef {
   field: string;
   /** 原始锚文本 */
   anchor: string;
+  /**
+   * 该锚所属对象的稳定 cid（centers 条目携带）。存在时按 cid 身份解析 nodeId，
+   * 迁移后仅重建 `at` 位置提示（双轨；cid 不变），根治改名/移动 dangling。
+   * 无 cid 的旧数据走 nodeId 路径匹配（行为不变）。
+   */
+  cid?: string;
 }
 
 /** 单条锚迁移结果（from !== to 才产出；锚文本未变不进 updates，天然幂等） */
@@ -249,6 +256,45 @@ export function planReferenceMigration(
     const parsed = parseLinkAnchor(ref.anchor);
     if (!parsed) {
       keepWithDiagnostic(diagnostics, 'unparsable-anchor', ref, '锚文本不可解析，保留原值');
+      continue;
+    }
+    // —— cid 双轨：锚所属对象带稳定 cid → 按 cid 身份解析 nodeId ——
+    // 迁移后仅重建 `at` 位置提示（cid 不变），根治改名/移动导致路径锚 dangling。
+    // 无 cid 的旧数据落到下方 nodeId 路径匹配分支（行为不变）。
+    if (ref.cid !== undefined) {
+      const idxBefore = buildCidIndex(before);
+      const nodeId = idxBefore.get(ref.cid);
+      if (nodeId === undefined) {
+        keepWithDiagnostic(
+          diagnostics,
+          'dangling-kept',
+          ref,
+          '迁移前 cid 在树中未命中（cid 已丢失），保留原值',
+        );
+        continue;
+      }
+      const built = buildAnchorFor(after, nodeId);
+      if ('conflict' in built) {
+        pushConflict(conflicts, ref, built.conflict, nodeId, built.message);
+        continue;
+      }
+      const verify = resolveLinkAnchor(after, {
+        kind: 'node',
+        target: built.anchor.slice('node:'.length),
+      });
+      if (verify.state !== 'well-formed' || verify.nodeId !== nodeId) {
+        pushConflict(
+          conflicts,
+          ref,
+          'migration-verify-failed',
+          nodeId,
+          `新锚回解析未指回原节点（${verify.state}${verify.reason ? `: ${verify.reason}` : ''}）`,
+        );
+        continue;
+      }
+      if (built.anchor !== ref.anchor) {
+        updates.push({ noteKey: ref.noteKey, field: ref.field, from: ref.anchor, to: built.anchor });
+      }
       continue;
     }
     if (parsed.kind === 'node') {

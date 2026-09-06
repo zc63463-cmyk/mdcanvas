@@ -11,10 +11,10 @@ import type { EditableNode } from '../tree/treeOps.js';
 /** 锚定目标解析状态（spec §5.5） */
 export type AnchorResolutionState = 'well-formed' | 'dangling' | 'stale';
 
-/** 链接锚定目标：节点锚（路径）或实体锚（kind:id） */
+/** 链接锚定目标：节点锚（路径）或实体锚（kind:id）或 cid 锚（稳定子树身份） */
 export interface LinkAnchor {
-  kind: 'node' | 'entity';
-  /** 节点锚：`根/分支/节点名`；实体锚：`kind:id` */
+  kind: 'node' | 'entity' | 'cid';
+  /** 节点锚：`根/分支/节点名`；实体锚：`kind:id`；cid 锚：`c7`（node.note.cid 标量） */
   target: string;
 }
 
@@ -71,16 +71,42 @@ export interface ResolvedGroup {
   state: AnchorResolutionState;
 }
 
-/** 解析锚文本：`node:...` → 节点锚；`kind:id` → 实体锚；无法识别 → null */
+/**
+ * 解析锚文本：`node:...` → 节点锚；`cid:...` → cid 锚（稳定子树身份）；
+ * `kind:id` → 实体锚；无法识别 → null。
+ *
+ * cid 锚优先级在「解析」侧与 `node:` 并列（先于实体正则），避免被实体正则误吞为
+ * `cid:c7` 实体锚。cid 锚在「解析结果」侧优先于 `at`（路径提示），根治改名/移动 dangling。
+ */
 export function parseLinkAnchor(to: string): LinkAnchor | null {
   if (to.startsWith('node:')) {
     const target = to.slice('node:'.length);
     return target.trim() === '' ? null : { kind: 'node', target };
   }
+  if (to.startsWith('cid:')) {
+    const target = to.slice('cid:'.length);
+    return target.trim() === '' ? null : { kind: 'cid', target };
+  }
   // 实体锚：`kind:id`（kind 非空、id 非空、不含空白；含冒号的 doc 路径等按首个冒号切分）
   const m = to.match(/^([^:\s][^:]*?):(.+)$/);
   if (!m) return null;
   return { kind: 'entity', target: to };
+}
+
+/**
+ * 构建 cid → nodeId 索引（扫描全树 node.note.cid 标量）。
+ * 纯函数、零 DOM；kernel 内建索引而非由 react 注入，避免 kernel 反向依赖 react
+ * （仍允许调用方注入现成索引以省去扫描，见 resolveLinkAnchor 第三参）。
+ */
+export function buildCidIndex(root: EditableNode): Map<string, string> {
+  const idx = new Map<string, string>();
+  const walk = (n: EditableNode): void => {
+    const c = n.note?.cid;
+    if (typeof c === 'string' && c !== '' && !idx.has(c)) idx.set(c, n.id);
+    n.children.forEach(walk);
+  };
+  walk(root);
+  return idx;
 }
 
 /** 节点锚匹配名：text 节点用文本；entity 节点用 `@kind:id`；其余空 */
@@ -132,8 +158,24 @@ function resolveNodeTextPath(
   return { node: candidates[0] ?? null, ambiguous: false };
 }
 
-/** 解析单个锚（对树）：well-formed（唯一命中）/ dangling（路径失效）/ stale（歧义/非法） */
-export function resolveLinkAnchor(root: EditableNode, anchor: LinkAnchor): AnchorResolution {
+/**
+ * 解析单个锚（对树）：well-formed（唯一命中）/ dangling（路径失效）/ stale（歧义/非法）。
+ *
+ * @param cidIndex 可选注入的 cid→nodeId 索引（调用方预建，省去每次解析全树扫描）；
+ *                 不传则内部用 buildCidIndex 现建（kernel 纯协议，零 react 依赖）。
+ */
+export function resolveLinkAnchor(
+  root: EditableNode,
+  anchor: LinkAnchor,
+  cidIndex?: Map<string, string>,
+): AnchorResolution {
+  if (anchor.kind === 'cid') {
+    const idx = cidIndex ?? buildCidIndex(root);
+    const nodeId = idx.get(anchor.target);
+    return nodeId !== undefined
+      ? { state: 'well-formed', nodeId }
+      : { state: 'dangling', reason: 'cid-not-found' };
+  }
   if (anchor.kind === 'entity') {
     // 实体锚：语法合法即 well-formed（实体是否存在由 resolver 判定，超出内核纯函数范畴）
     const ok = /^[^:\s][^:]*?:[^:\s]+$/.test(anchor.target);

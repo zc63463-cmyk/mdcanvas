@@ -216,6 +216,7 @@ export type { LayoutAlgorithm } from './registry/layout.js';
 
 export {
   parseLinkAnchor,
+  buildCidIndex,
   resolveGroups,
   resolveLinkAnchor,
   resolveLinks,
