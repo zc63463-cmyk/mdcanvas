@@ -22,6 +22,13 @@ export default mergeConfig(
       // 单进程顺序执行，不建 worker 池。同 packages/react/vitest.config.ts：
       // 并行 worker 跑 jsdom 时进程跑完不退出（Windows），单进程无此问题且更快。
       fileParallelism: false,
+
+      // 2026-09-06 实测：pretendToBeVisual 的 rAF 循环让事件循环永不排空——
+      // 套件打印完成后进程不退出（pre-push 门禁挂起 480s 超时的根因）。
+      // react 包有 18 个测试依赖该行为不能关；canvas 28 个测试实测不依赖（全绿）。
+      environmentOptions: {
+        jsdom: { pretendToBeVisual: false },
+      },
     },
   }),
 );
