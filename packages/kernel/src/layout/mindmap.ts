@@ -40,6 +40,10 @@ export interface LayoutResult {
 
 export type MeasureFn = (node: EditableNode) => { w: number; h: number };
 
+/** 生长方向（四向）。定义在布局基座：forest（中心森林）与 layouts（结构布局/分支调度）
+ *  都依赖它，置此避免上层模块互取类型形成循环依赖。 */
+export type GrowDir = 'right' | 'left' | 'down' | 'up';
+
 export const H_GAP = 64;
 export const V_GAP = 14;
 
@@ -438,6 +442,20 @@ export function orgBeamLink(parent: LayoutNode, child: LayoutNode, beamY: number
     { x: parent.box.x + parent.box.w / 2, y: beamY },
     { x: child.box.x + child.box.w / 2, y: beamY },
     { x: child.box.x + child.box.w / 2, y: child.box.y },
+  ]);
+}
+
+/**
+ * 组织架构连线（向上生长版；G6′ 四向生长）。
+ * 与 orgBeamLink 镜像：起点取父**顶边**中点、终点取子**底边**中点。
+ * beamY 落在父顶边与子底边之间（由调用方按 direction 计算）。
+ */
+export function orgBeamLinkUp(parent: LayoutNode, child: LayoutNode, beamY: number): string {
+  return orthogonalPath([
+    { x: parent.box.x + parent.box.w / 2, y: parent.box.y },
+    { x: parent.box.x + parent.box.w / 2, y: beamY },
+    { x: child.box.x + child.box.w / 2, y: beamY },
+    { x: child.box.x + child.box.w / 2, y: child.box.y + child.box.h },
   ]);
 }
 

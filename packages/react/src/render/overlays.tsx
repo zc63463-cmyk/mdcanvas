@@ -13,6 +13,8 @@ import type { ReactElement } from 'react';
 import type { LayoutResult } from '@mindcanvas/kernel';
 import { DescBlock, estimateDescHeight } from '../chrome/DescBlock.js';
 import { estimateCommentAreaHeight, GrowthCommentPanel } from '../chrome/GrowthCommentPanel.js';
+import { estimateNoteAreaHeight } from '../chrome/NoteGrowthPanel.js';
+import { nodeAuxiliaryRegions } from './nodeAuxiliary.js';
 import { OverlayEditor } from '../edit/OverlayEditor.js';
 import type { TokenSet } from '../theme/types.js';
 import type { ViewportController } from './viewport.js';
@@ -43,6 +45,8 @@ export function DescOverlays({
   descEditingId,
   onCommit,
   onCancel,
+  fixedNoteIds = new Set(),
+  expandedId = null,
 }: {
   /** 视口裁剪后的节点（性能：不遍历全量 layout.nodes —— 10K 图会渲染上万个 div） */
   visible: readonly LayoutNodeLike[];
@@ -51,6 +55,10 @@ export function DescOverlays({
   descEditingId: string | null;
   onCommit?: (id: string, text: string) => void;
   onCancel?: () => void;
+  /** 固定 note 笔记占据节点最下方的布局区，描述需避开该区。 */
+  fixedNoteIds?: ReadonlySet<string>;
+  /** 快速注释也占用附属区，描述必须排在它之前。 */
+  expandedId?: string | null;
 }) {
   const { k, x, y } = viewport.transform;
   const out: ReactElement[] = [];
@@ -69,7 +77,13 @@ export function DescOverlays({
     // （早期版本 `hasSlot = desc !== ''` 会让新建描述的编辑框浮出在节点下方，
     //   既不"扩张"也会遮挡邻居。）
     const hasSlot = desc !== '' || isEditing;
-    const bodyH = hasSlot ? Math.max(0, ln.box.h - dh) : ln.box.h;
+    const regions = nodeAuxiliaryRegions(ln.box.h, {
+      descHeight: hasSlot ? dh : 0,
+      qaHeight: expandedId === ln.node.id ? commentAreaH : 0,
+      fixedNoteHeight: fixedNoteIds.has(ln.node.id) ? estimateNoteAreaHeight() : 0,
+    });
+    const descRegion = regions.desc;
+    if (!descRegion) continue;
     out.push(
       <DescBlock
         key={ln.node.id}
@@ -77,7 +91,7 @@ export function DescOverlays({
         editing={isEditing}
         token={token}
         x={ln.box.x * k + x}
-        y={(ln.box.y + bodyH) * k + y}
+        y={(ln.box.y + descRegion.y) * k + y}
         width={ln.box.w * k}
         height={dh * k}
         scale={k}
@@ -104,6 +118,7 @@ export function ExpandCommentOverlay({
   token,
   onChange,
   onClose,
+  fixedNoteIds = new Set(),
 }: {
   expandedId: string;
   layout: LayoutResult;
@@ -111,6 +126,7 @@ export function ExpandCommentOverlay({
   token: TokenSet;
   onChange: (qa: string[]) => void;
   onClose: () => void;
+  fixedNoteIds?: ReadonlySet<string>;
 }) {
   const ln = layout.nodes.find((n) => n.node.id === expandedId);
   if (!ln) return null;
@@ -118,11 +134,16 @@ export function ExpandCommentOverlay({
   const items = Array.isArray(qa) ? (qa as string[]) : [];
   if (items.length === 0) return null;
   const { k, x, y } = viewport.transform;
-  // 布局盒 = 本体高 + 注释区高；注释区从本体之下开始。
-  // （描述区现在画在节点盒内，不参与附属区分配，故这里无需扣减。）
-  const bodyH = Math.max(0, ln.box.h - commentAreaH);
+  const desc = typeof ln.node.note?.desc === 'string' ? ln.node.note.desc : '';
+  const regions = nodeAuxiliaryRegions(ln.box.h, {
+    descHeight: desc === '' ? 0 : estimateDescHeight(desc),
+    qaHeight: commentAreaH,
+    fixedNoteHeight: fixedNoteIds.has(expandedId) ? estimateNoteAreaHeight() : 0,
+  });
+  const qaRegion = regions.qa;
+  if (!qaRegion) return null;
   const sx = ln.box.x * k + x;
-  const sy = (ln.box.y + bodyH) * k + y;
+  const sy = (ln.box.y + qaRegion.y) * k + y;
   const sw = ln.box.w * k;
   const sh = commentAreaH * k;
   return (
@@ -150,6 +171,7 @@ export function NodeTextOverlay({
   onCommit,
   onCancel,
   onDescEditRequest,
+  onTabGrow,
 }: {
   editingId: string;
   layout: LayoutResult;
@@ -158,6 +180,8 @@ export function NodeTextOverlay({
   onCommit?: (id: string, text: string) => void;
   onCancel?: () => void;
   onDescEditRequest?: (id: string) => void;
+  /** G10：编辑态 Tab → 提交 (editingId, text) 并建子节点 */
+  onTabGrow?: (id: string, text: string) => void;
 }) {
   const ln = layout.nodes.find((n) => n.node.id === editingId);
   if (!ln || !onCommit) return null;
@@ -182,6 +206,8 @@ export function NodeTextOverlay({
       onCancel={() => onCancel?.()}
       // v1.3.0：主题编辑态 Shift+Enter → 切换到该节点的描述编辑（幕布语义）
       onRequestDesc={onDescEditRequest ? () => onDescEditRequest(editingId) : undefined}
+      // G10：Tab → 提交并建子节点（未注入时不启用，Tab 走浏览器默认行为）
+      onTabGrow={onTabGrow ? (t) => onTabGrow(editingId, t) : undefined}
     />
   );
 }

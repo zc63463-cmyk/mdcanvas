@@ -517,6 +517,7 @@ export function TreeEdgeEditor({
   y,
   onChange,
   onClose,
+  onCut,
 }: {
   childId: string;
   /** 结构化标注（note.edge）；null = 尚未标注（label 空白起步） */
@@ -527,6 +528,8 @@ export function TreeEdgeEditor({
   y: number;
   onChange: (ann: TreeEdgeAnn | undefined) => void;
   onClose: () => void;
+  /** A5（G2）：切断并独立——B 子树移为文档根直接分支 + detached；缺省不显示（外部命令未接入时） */
+  onCut?: (childId: string) => void;
 }) {
   const { token } = useTheme();
   const [rel, setRel] = useState(ann?.rel ?? '');
@@ -620,6 +623,27 @@ export function TreeEdgeEditor({
           清除
         </button>
       </div>
+      {onCut && (
+        <div style={{ marginTop: 6 }}>
+          <button
+            data-tree-edge-cut
+            onClick={() => {
+              onCut(childId);
+              onClose();
+            }}
+            style={{
+              ...inputStyle,
+              width: '100%',
+              cursor: 'pointer',
+              color: '#e24b4a',
+              borderColor: '#e24b4a',
+            }}
+            title="切断该父子树边：子分支移为文档根直接分支并独立摆放（可撤销）"
+          >
+            ✂ 切断并独立
+          </button>
+        </div>
+      )}
     </div>
   );
 }

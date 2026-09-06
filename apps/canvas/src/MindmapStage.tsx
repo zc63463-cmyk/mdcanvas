@@ -51,14 +51,19 @@ import {
   installBeforeUnload,
   isEscapedEntityInput,
   isMindDocFile,
+  idsMeasureKey,
   LocalDocHost,
   LocalEntityStore,
   layoutDemo,
+  buildIslandView,
+  collectCenters,
+  upsertCenter,
   MapView,
   matchEditorKey,
   OutlinePanel,
   PluginHost,
   QaEditor,
+  planCutTreeEdge,
   SearchPanel,
   ShortcutHelpPanel,
   scaleNoticeFor,
@@ -452,22 +457,33 @@ function StageContent({
   // v1.3.0 幕布描述（note.desc）：正在编辑描述的节点 id + 已展开全文的节点集合
   const [descEditingId, setDescEditingId] = useState<string | null>(null);
   /**
-   * 固定显示的节点注释（v1.4.0）：悬停只是预览，点击才固定并可编辑。
+   * 固定显示的 note 笔记：悬停只是预览，点击固定后保持只读。
    *
    * ⚠️ 存**索引路径**而不是节点 id：`buildEditable` 每次解析都会经 `astToEditable`
    * **重新生成 id** —— 若存 id，一编辑写回（文档重新解析）之前记的 id 就失效了，
-   * 表现为"注释浮窗一编辑就消失"。路径不受重新解析影响。
+   * 表现为"note 笔记一编辑就消失"。路径不受重新解析影响。
    */
   const [pinnedNotePaths, setPinnedNotePaths] = useState<NodePath[]>([]);
+  const [editingNotePaths, setEditingNotePaths] = useState<NodePath[]>([]);
   /** 由路径换算出当前的节点 id（文档重建后自动跟上新 id） */
   const pinnedNoteIds = useMemo(
     () => pinnedNotePaths.map((path) => nodeAtPath(controller.root, path)?.id).filter(Boolean) as string[],
     [pinnedNotePaths, controller.root],
   );
-  const setPinnedNotePath = (path: NodePath): void => {
+  const editingNoteIds = useMemo(
+    () => editingNotePaths.map((path) => nodeAtPath(controller.root, path)?.id).filter(Boolean) as string[],
+    [editingNotePaths, controller.root],
+  );
+  const pinnedNoteIdSet = useMemo(() => new Set(pinnedNoteIds), [pinnedNoteIds]);
+  const setPinnedNotePath = (path: NodePath, editing = false): void => {
     setPinnedNotePaths((prev) =>
       prev.some((p) => JSON.stringify(p) === JSON.stringify(path)) ? prev : [...prev, path],
     );
+    if (editing) {
+      setEditingNotePaths((prev) =>
+        prev.some((p) => JSON.stringify(p) === JSON.stringify(path)) ? prev : [...prev, path],
+      );
+    }
   };
 
   // E8：关系模式（模式隔离）——浏览态只呈现关系，关系态才暴露连线入口
@@ -565,6 +581,24 @@ function StageContent({
   // M5-T6 增量布局：缓存实例跨编辑复用（折叠/度量键变化时内核自动作废重算，结果恒等于全量）
   const layoutCacheRef = useRef<LayoutCache | null>(null);
   if (layoutCacheRef.current === null) layoutCacheRef.current = new LayoutCache();
+
+  // G6″：文档级中心标注 → 布局岛视图（A3-2：specs + 跨岛边界边 + 中心诊断）。
+  // 无标注时 specs 为 null，回退既有的单树 layoutMindmap 路径（行为完全不变）。
+  const islandView = useMemo(
+    () => buildIslandView(controller.root, collectCenters(controller.root)),
+    [controller.root],
+  );
+  const centerSpecs = islandView.specs;
+
+  /** G6′：中心节点 id 集合（MapView 据此把拖拽解释为「移动坐标」而非改树结构）。
+   *  与布局同源（islandView.specs = projectIslands 投影结果）——布局忽略的
+   *  中心不得进入手势，否则深层中心「能拖但布局不认」，拖拽变成无效写坐标。 */
+  const centerIds = useMemo(() => {
+    const s = new Set<string>();
+    for (const c of centerSpecs ?? []) s.add(c.node.id);
+    return s;
+  }, [centerSpecs]);
+
   const layout = useMemo(
     () =>
       layoutDemo(
@@ -583,9 +617,11 @@ function StageContent({
         // 修正后的重排成本：**进入/退出编辑各一次**（用户主动操作，可接受）；
         // 键入过程中 descEditingId 不变 → 键不变 → 不重排。
         // 这与当初"避免每敲一字就重排"的诉求并不冲突。
-        `${token.font.family}|${token.font.size}|${entities.size}|${expandedQaId ?? ''}|${descEditingId ?? ''}`,
+        `${token.font.family}|${token.font.size}|${entities.size}|${expandedQaId ?? ''}|${descEditingId ?? ''}|${idsMeasureKey(pinnedNoteIdSet)}`,
         // 让正在编辑描述的节点在布局里预留编辑区（节点自己扩张，而不是浮出遮挡）
         descEditingId,
+        pinnedNoteIdSet,
+        centerSpecs,
       ).layout,
     [
       controller.root,
@@ -595,15 +631,103 @@ function StageContent({
       expandedQaId,
       token.font,
       descEditingId,
+      pinnedNoteIdSet,
+      centerSpecs,
     ],
   );
 
+  /**
+   * 提交节点文本（Enter / Tab 共用）。
+   * 返回 true 表示已转入实体 picker（`@` 查询）——调用方不应再做后续动作。
+   */
+  const commitNodeText = (id: string, text: string): boolean => {
+    const t = text.trim();
+    // N4：转义输入（@@ / \@）→ 落为纯文本 @ 内容（不触发 picker）
+    if (isEscapedEntityInput(t)) {
+      controller.commitEdit(id, unescapeEntityInput(t));
+      return false;
+    }
+    // M1：以 @ 开头 → 不落文本，转实体 picker（查询串 = @ 后内容）
+    if (t.startsWith('@')) {
+      controller.cancelEdit();
+      setPicker({ nodeId: id, query: t.slice(1).trim(), current: null });
+      return true;
+    }
+    controller.commitEdit(id, text);
+    return false;
+  };
+
+  /**
+   * G6′：中心拖拽落库。
+   *
+   * 起点取 note 里的既有坐标；若中心尚未落过坐标（自动排列中），
+   * 则用它在当前布局里的位置作为起点 —— 否则第一次拖动会瞬移到原点附近。
+   */
+  const handleCenterMove = useCallback(
+    (id: string, worldDx: number, worldDy: number) => {
+      const at = anchorOfNode(controller.root, id);
+      if (!at) return;
+      const cur = collectCenters(controller.root).find((c) => c.at === at);
+      const ln = layout.nodes.find((n) => n.node.id === id);
+      // A4 防线（design §7「revision 变更则取消」的保守等价）：拖动期间节点被删
+      // （树重建后 id 消失）且中心无既有坐标 → 无法确定落点基准，放弃提交。
+      if (!ln && !cur) return;
+      const baseX = cur?.pos?.x ?? (ln ? ln.box.x + ln.box.w / 2 : 0);
+      const baseY = cur?.pos?.y ?? (ln ? ln.box.y + ln.box.h / 2 : 0);
+      const next = upsertCenter(controller.root.note, at, {
+        x: baseX + worldDx,
+        y: baseY + worldDy,
+      });
+      controller.updateNote(controller.root.id, { centers: next.centers ?? undefined });
+    },
+    [controller, layout],
+  );
+
+  // A5（G2）：切断并独立——命令层 planCutTreeEdge 产出事务 ops（move + detached + 引用迁移），
+  // applyTransaction 原子提交；pos 取当前布局盒中心，防切断后首次落位跳变。
+  const handleCutTreeEdge = useCallback(
+    (childId: string) => {
+      const ln = layout.nodes.find((n) => n.node.id === childId);
+      const pos =
+        ln !== undefined
+          ? { x: ln.box.x + ln.box.w / 2, y: ln.box.y + ln.box.h / 2 }
+          : undefined;
+      const plan = planCutTreeEdge(controller.root, childId, { pos });
+      if (!plan.ok) {
+        setCommandNotice(plan.error.message);
+        return;
+      }
+      const result = controller.applyTransaction(plan.ops);
+      if (!result.ok) setCommandNotice(`切断未提交：${result.error.message}`);
+    },
+    [controller, layout],
+  );
+
+  // A5：命令拒绝/事务失败的告警（4s 自动消退；与中心诊断条同样「宁可不写也不错写」）
+  const [commandNotice, setCommandNotice] = useState<string | null>(null);
+  useEffect(() => {
+    if (commandNotice === null) return;
+    const timer = setTimeout(() => setCommandNotice(null), 4000);
+    return () => clearTimeout(timer);
+  }, [commandNotice]);
+
   // 导出（SVG / PNG）—— 依赖 layout，故在其定义之后调用
-  const { handleExport, handleExportPng } = useExportActions({
-    layout,
-    token,
-    docName: doc.name,
-  });
+    // A6/T23：boundaryLinks 补线随导出（islandView.boundaryLinks 已按 parent_link 过滤）
+    const { handleExport, handleExportPng } = useExportActions({
+      layout,
+      token,
+      docName: doc.name,
+      boundaryLinks: islandView.boundaryLinks,
+    });
+
+    // A6/T23 Canvas 门禁：含中心岛（跨岛父子连接）或自由边的文档仅 SVG 后端完整支持
+    // → 显式 forceBackend='svg' 压过 >50K 自动 Canvas 降级，不静默丢岛/边；
+    //   纯树文档保持既有降级策略（Canvas 大图性能路径）不变。
+    const forceBackend = useMemo<'svg' | undefined>(() => {
+      if (centerSpecs !== null) return 'svg';
+      if (edgeActions.freeEdges.length > 0) return 'svg';
+      return undefined;
+    }, [centerSpecs, edgeActions.freeEdges]);
 
   // 全局快捷键（editing 时输入框自行拦截；此处只处理画布层）
   useEffect(() => {
@@ -926,6 +1050,11 @@ function StageContent({
 
       <MapView
         layout={layout}
+        // G6′复审修复：自由边/折叠路由必须读完整文档树（森林布局有多个几何根）
+        documentRoot={controller.root}
+        boundaryLinks={islandView.boundaryLinks}
+          // A6/T23 门禁：岛/自由边文档强制 SVG（见上方 forceBackend memo）
+          forceBackend={forceBackend}
         entities={entities}
         char={char}
         // assetBaseUrl = 导图根 URL（demo 资产 id 已含「demo-assets/」相对导图前缀）
@@ -952,6 +1081,11 @@ function StageContent({
               return;
             }
           }
+          // 有 note 笔记的节点：点击即固定展示（悬停只是预览）—— 记路径，不是 id
+          if (hasNote(ln.node)) {
+            const path = pathOfNode(controller.root, ln.node.id);
+            if (path) setPinnedNotePath(path);
+          }
           // 点击已选中的节点 → 切换「放大展开」：描述区浮出在节点下方，
           // 不占布局、不受节点盒尺寸限制，注释可完整换行阅读。
           // （此前这里是"取消选中"——但取消选中改用点画布空白处，
@@ -964,17 +1098,13 @@ function StageContent({
           controller.select(ln.node.id);
           const qa = ln.node.note?.qa;
           setExpandedQaId(Array.isArray(qa) && (qa as string[]).length > 0 ? ln.node.id : null);
-          // 有注释的节点：点击即固定浮窗（悬停只是预览）—— 记路径，不是 id
-          if (hasNote(ln.node)) {
-            const path = pathOfNode(controller.root, ln.node.id);
-            if (path) setPinnedNotePath(path);
-          }
         }}
         onBlankClick={() => {
           // 点画布空白：取消选中 + 收起放大展开（这是取消选中的唯一入口）
           controller.select(null);
           setExpandedQaId(null);
           setPinnedNotePaths([]);
+          setEditingNotePaths([]);
         }}
         onNodeContext={(node, sx, sy) => {
           // 右键：命中节点 → 选中并弹菜单；空白 → 关菜单
@@ -986,6 +1116,7 @@ function StageContent({
           setCtxMenu({ nodeId: node.node.id, x: sx, y: sy });
         }}
         pinnedNoteIds={pinnedNoteIds}
+        editingNoteIds={editingNoteIds}
         onNoteChangeSeq={(id, seq) =>
           controller.updateNote(id, seq.length > 0 ? { note: seq } : { note: undefined })
         }
@@ -993,29 +1124,39 @@ function StageContent({
           controller.updateNote(id, text === '' ? { note_text: undefined } : { note_text: text })
         }
         onNoteClose={(id) => {
-          if (!id) return setPinnedNotePaths([]);
+          if (!id) {
+            setPinnedNotePaths([]);
+            setEditingNotePaths([]);
+            return;
+          }
           setPinnedNotePaths((prev) =>
             prev.filter((path) => nodeAtPath(controller.root, path)?.id !== id),
           );
+          setEditingNotePaths((prev) =>
+            prev.filter((path) => nodeAtPath(controller.root, path)?.id !== id),
+          );
+        }}
+        onNotePin={(id) => {
+          const path = pathOfNode(controller.root, id);
+          if (path) setPinnedNotePath(path);
         }}
         selectedId={controller.selectedId}
         editingId={controller.editingId}
         onEditCommit={(id, text) => {
-          const t = text.trim();
-          // N4：转义输入（@@ / \@）→ 落为纯文本 @ 内容（不触发 picker）
-          if (isEscapedEntityInput(t)) {
-            controller.commitEdit(id, unescapeEntityInput(t));
-            return;
-          }
-          // M1：以 @ 开头 → 不落文本，转实体 picker（查询串 = @ 后内容）
-          if (t.startsWith('@')) {
-            controller.cancelEdit();
-            setPicker({ nodeId: id, query: t.slice(1).trim(), current: null });
-            return;
-          }
-          controller.commitEdit(id, text);
+          commitNodeText(id, text);
         }}
         onEditCancel={() => controller.cancelEdit()}
+        // G10：编辑态 Tab = 提交 + 建子节点（连续录入不打断）
+        onEditTabGrow={(id, text) => {
+          // 输入 @ 已转入实体 picker —— 此时不应再建子节点
+          if (commitNodeText(id, text)) return;
+          const newId = controller.addChild(id);
+          controller.select(newId);
+          controller.startEdit(newId);
+        }}
+        // G6′：中心拖拽 = 移动坐标（带动整棵子树），其余节点仍是改树结构
+        centerIds={centerIds}
+        onCenterMove={handleCenterMove}
         onEditStart={(id) => {
           controller.select(id);
           // M1：实体节点 → 直接开 picker 改引用（而非文本编辑）
@@ -1110,6 +1251,68 @@ function StageContent({
       />
 
       <PerfPanel stats={stats} />
+
+      {/* A5：命令拒绝/事务失败告警条（置顶居中，4s 消退） */}
+      {commandNotice !== null && (
+        <div
+          style={{
+            position: 'absolute',
+            top: 64,
+            left: '50%',
+            transform: 'translateX(-50%)',
+            maxWidth: 460,
+            padding: '8px 14px',
+            borderRadius: 8,
+            background: 'rgba(226, 75, 74, 0.14)',
+            border: '1px solid rgba(226, 75, 74, 0.5)',
+            color: '#e24b4a',
+            fontFamily: 'inherit',
+            fontSize: 12,
+            lineHeight: 1.6,
+            zIndex: 5,
+            pointerEvents: 'none',
+            userSelect: 'none',
+          }}
+        >
+          ⚠ {commandNotice}
+        </div>
+      )}
+
+      {/* G6″（A3-2）：中心诊断警示条（宁可不写也不错写——坏锚/重复中心的原因在此可见）。
+          自适应高度随条目数增长；不做交互（定位/跳转归后续工作包）。 */}
+      {islandView.diagnostics.length > 0 && (
+        <div
+          style={{
+            position: 'absolute',
+            left: 16,
+            bottom: 178,
+            maxWidth: 420,
+            padding: '8px 12px',
+            borderRadius: 'var(--mc-radius, 8px)',
+            background: 'rgba(186, 117, 23, 0.12)',
+            border: '1px solid rgba(186, 117, 23, 0.45)',
+            color: 'var(--mc-warning, #BA7517)',
+            fontFamily: 'inherit',
+            fontSize: 12,
+            lineHeight: 1.6,
+            pointerEvents: 'none',
+            userSelect: 'none',
+          }}
+        >
+          <div style={{ fontWeight: 600 }}>
+            ⚠ 中心标注诊断：{islandView.diagnostics.length} 条（已安全忽略）
+          </div>
+          {islandView.diagnostics.slice(0, 3).map((d, i) => (
+            <div key={`${d.code}-${i}`} style={{ wordBreak: 'break-word' }}>
+              · {d.message}
+              {d.at !== null ? `（${d.at}）` : ''}
+            </div>
+          ))}
+          {islandView.diagnostics.length > 3 && (
+            <div>… 其余 {islandView.diagnostics.length - 3} 条略</div>
+          )}
+        </div>
+      )}
 
       {/* B1 文档栏：名称 + 未保存标记 + 新建/打开/最近/保存/另存为（左上角玻璃条） */}
       <div
@@ -1388,6 +1591,7 @@ function StageContent({
           setLinkDraft={setLinkDraft}
           setDescEditingId={setDescEditingId}
           setPinnedNotePath={setPinnedNotePath}
+          onAttachError={(message) => setCommandNotice(message)}
           onClose={() => setCtxMenu(null)}
         />
       )}
@@ -1400,6 +1604,7 @@ function StageContent({
         linkDraft={linkDraft}
         onCloseTreeEdge={() => setTreeEdgeEdit(null)}
         onCloseLinkDraft={() => setLinkDraft(null)}
+        onCutTreeEdge={handleCutTreeEdge}
       />
 
       {/* 批次 2：? 快捷键帮助面板 */}

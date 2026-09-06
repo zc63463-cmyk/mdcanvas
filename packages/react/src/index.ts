@@ -119,7 +119,10 @@ export type { QaEditorProps } from './chrome/QaEditor.js';
 export { QaEditor } from './chrome/QaEditor.js';
 
 export type { NotePopoverProps } from './chrome/NotePopover.js';
-export { NotePopover } from './chrome/NotePopover.js';export type {
+export { NotePopover } from './chrome/NotePopover.js';
+export type { NoteGrowthPanelProps } from './chrome/NoteGrowthPanel.js';
+export { estimateNoteAreaHeight, NoteGrowthPanel } from './chrome/NoteGrowthPanel.js';
+export type {
   RelationTypeConfig,
   SemanticGroup,
 } from './chrome/relationSchema.js';
@@ -144,9 +147,12 @@ export type {
   DemoSource,
 } from './demo/pipeline.js';
 export {
+  buildCenterSpecs,
+  buildIslandView,
   buildEditable,
   buildEntities,
   createDescMeasure,
+  createFixedNoteMeasure,
   idsMeasureKey,
   createExpandMeasure,
   layoutDemo,
@@ -162,6 +168,15 @@ export {
 } from './edit/contextMenuItems.js';
 export type { EditorControllerOptions } from './edit/controller.js';
 export { EditorController } from './edit/controller.js';
+export {
+  applyAnchorUpdateToNote,
+  collectReferenceAnchors,
+  MAX_NODE_DEPTH,
+  planAttachIsland,
+  planCutTreeEdge,
+  subtreeMaxDepth,
+} from './edit/cutAttach.js';
+export type { CutAttachErrorCode, CutAttachPlan } from './edit/cutAttach.js';
 export type { DocEntry } from './edit/docLibrary.js';
 
 export { DocLibrary, SOURCE_KEEP, UNTAGGED } from './edit/docLibrary.js';
@@ -269,6 +284,20 @@ export {
   relVisualOf,
   splitEntityAnchor,
 } from './render/freeEdges.js';
+
+// G6′ 中心（升格节点）数据层：root.note.centers + 历史坐标 root.note.center_pos
+export {
+  collectCenterHistory,
+  collectCenters,
+  forgetCenterPos,
+  GROW_DIRS,
+  isGrowDir,
+  rememberCenterPos,
+  removeCenter,
+  upsertCenter,
+} from './render/centers.js';
+export type { Center, CenterPosEntry, DocCenter } from './render/centers.js';
+
 export type {
   CardLevel,
   LinkPathResult,

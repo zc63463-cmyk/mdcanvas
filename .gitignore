@@ -1,5 +1,7 @@
 node_modules/
 dist/
+# pnpm 本地存储（沙箱内由 pnpm 生成，勿入库）
+.pnpm-store/
 # TypeScript build mode 的增量信息（tsc -b 产物，勿入库）
 *.tsbuildinfo
 coverage/

@@ -284,6 +284,9 @@ describe('全链路：updateNote(root) 写入 → 画布边可见 → 编辑 →
     // 删除 + undo 恢复（含样式）
     c.updateNote(rootId, { edges: removeEdgeAt(edgesOf(c.root.note), 0) });
     expect(collectFreeEdges(c.root)).toHaveLength(0);
+    // T22：删除自由边不拆树——节点与结构原样
+    expect(c.root.children.map((n) => n.text)).toEqual(['A', 'B']);
+    expect(c.root.text).toBe('根');
     expect(c.undo()).toBe(true);
     edges = collectFreeEdges(c.root);
     expect(edges).toHaveLength(1);

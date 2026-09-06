@@ -21,3 +21,16 @@ export {
   type ResolvedRel,
   type RelGeometry,
 } from './relations.js';
+export {
+  projectIslands,
+  layoutIslands,
+  type ValidatedCenterSpec,
+  type IslandSourceKind,
+  type LayoutIsland,
+  type BoundaryLink,
+  type IslandDiagnostic,
+  type IslandProjection,
+  type Bounds,
+  type IslandLayoutOptions,
+  type IslandLayoutResult,
+} from './islands.js';

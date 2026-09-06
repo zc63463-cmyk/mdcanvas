@@ -15,7 +15,8 @@ export interface EntityGraphPanelProps {
   activeRefKey?: string | null;
   onFocusNode: (nodeId: string) => void;
   onClose: () => void;
-  /** E4：语义边清单（note.links 自由边；缺省 = 不显示连线区，向后兼容） */
+  /** E4：canvas 自由边清单（root.note.edges 解析结果；ADR-0008 数据面①——非 note.links）。
+   *  缺省 = 不显示连线区，向后兼容 */
   edges?: readonly EdgeListItem[];
 }
 

@@ -10,9 +10,9 @@ import type { Box } from '@mindcanvas/kernel';
 import type { TokenSet } from '../theme/types.js';
 import { edgeVisualOf, freeEdgeEndpoints, type EdgeManual, type FreeEdge } from './freeEdges.js';
 import {
-  bezierFromAnchors,
-  findCrossings,
-  pathWithJumps,
+  applyLineJumps,
+  manualAnchors,
+  manualBezier,
   routeAesthetic,
   type RouteObstacle,
   type RouteResult,
@@ -30,19 +30,19 @@ import { EdgeLabel } from './EdgeLabel.js';
 // 本文件依赖 freeEdges，反向 import 会成环。此处 re-export 保持既有导入路径可用。
 export type { EdgeManual } from './freeEdges.js';
 
-/** 由手动字段还原路径；字段不全时退回直连 */
+/** 由手动字段还原路径；字段不全时退回直连。
+ *  P1-3：形状语言与自动路由统一——语义锚基形（缺省贴边中点）+ 相切控制点 + 可调侧弓
+ *  （curvature），不再回退到旧「盒中心法向弓」（跳变源头）。 */
 function manualPathOf(edge: FreeEdge, from?: Box, to?: Box): RouteResult {
   const c = edge.manual?.curvature ?? 0;
   if (from && to) {
-    const p0 = {
-      x: from.x + from.w * (edge.manual?.from?.x ?? 0.5),
-      y: from.y + from.h * (edge.manual?.from?.y ?? 0.5),
-    };
-    const p3 = {
-      x: to.x + to.w * (edge.manual?.to?.x ?? 0.5),
-      y: to.y + to.h * (edge.manual?.to?.y ?? 0.5),
-    };
-    const bez = bezierFromAnchors(p0, p3, c);
+    const { p0, dir0, p3, dir3 } = manualAnchors(
+      from,
+      to,
+      edge.manual?.from,
+      edge.manual?.to,
+    );
+    const bez = manualBezier(p0, dir0, p3, dir3, c);
     return {
       d: bez.d,
       points: [p0, bez.mid, p3],
@@ -94,6 +94,11 @@ export interface FreeEdgeLayerProps {
    * 用回调而非让上层复刻计算：复刻会漏掉跨边交叉协调与 Line jumps 的影响，结论可能与实际渲染不符。
    */
   onRoutesChange?: (routes: ReadonlyMap<string, EdgeRouteEntry>) => void;
+  /**
+   * P2-1 降载：动画/瞬态期间跳过跨边交叉检测与 Line jumps（O(E²×P²) 成本），
+   * 路由本身仍按 obstacles 快路径执行。静态态默认 false 行为不变。
+   */
+  fastRouting?: boolean;
 }
 
 const GHOST_R = 4;
@@ -121,6 +126,7 @@ export function FreeEdgeLayer({
   toWorld,
   onManualChange,
   onRoutesChange,
+  fastRouting = false,
 }: FreeEdgeLayerProps) {
   // Issue #3：正在拖拽的 handle（端点 / bend 控制点）。仅选中的边渲染 handle，
   // 与 XMind 交互一致——选中关系线后才出现可拖拽的端点与控制点。
@@ -163,29 +169,10 @@ export function FreeEdgeLayer({
       if (route.points.length >= 2) routedPolylines.push([...route.points]);
     }
 
-    // ── Line jumps（Issue #4）：交叉处让「下方」那条线画跨越小弧，使交叉可读 ──
-    // 不强求消除交叉（几何上未必可行），而是明确上下关系 —— 参照 Miro Line jumps，
-    // 但 Miro 仅支持直线/正交线型，曲线用此处自绘实现（pathWithJumps）。
-    if (m.size >= 2) {
-      const orderedKeys = [...m.keys()];
-      const polys = orderedKeys.map((k) => m.get(k)!.route.points);
-      const crossings = findCrossings(polys);
-      // 按「被跨越的边」归组跳线点
-      const jumpsByKey = new Map<string, { x: number; y: number }[]>();
-      for (const c of crossings) {
-        const key = orderedKeys[c.under];
-        if (!key) continue;
-        const arr = jumpsByKey.get(key) ?? [];
-        arr.push({ x: c.x, y: c.y });
-        jumpsByKey.set(key, arr);
-      }
-      for (const [key, jps] of jumpsByKey) {
-        const entry = m.get(key)!;
-        entry.route = { ...entry.route, d: pathWithJumps(entry.route.points, jps) };
-      }
-    }
-    return m;
-  }, [edges, boxOf, root, collapsed, obstacles]);
+    // P2-1：动画/瞬态（fastRouting）跳过跨边交叉检测与 Line jumps——瞬态让步帧率。
+    // 静态态行为与原实现逐位一致（applyLineJumps 抽出自下方的跳线块）。
+    return fastRouting ? m : applyLineJumps(m);
+  }, [edges, boxOf, root, collapsed, obstacles, fastRouting]);
 
   // Opp 精确翻转：把实际渲染结果抛给上层（含跨边交叉协调与 Line jumps 的最终 d）。
   // 上层据此用 inferBowSide 判断当前鼓向，避免"复刻计算"与真实渲染不一致。

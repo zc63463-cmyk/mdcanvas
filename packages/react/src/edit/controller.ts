@@ -18,6 +18,7 @@ import {
   serializeMm,
   type EditableNode,
   type Note,
+  type TransactionResult,
   type TreeOp,
 } from '@mindcanvas/kernel';
 import { FrameScheduler } from '../render/scheduler.js';
@@ -95,6 +96,20 @@ export class EditorController {
     return next;
   }
 
+  /**
+   * A5：原子批次事务（透传 kernel OpHistory.applyTransaction）。
+   * 全批预校验、失败零副作用；成功一次 history 记录、一次 dirty/广播。
+   * 断言一刀切语义见 kernel TransactionResult；禁止以「连调多次 apply」替代。
+   */
+  applyTransaction(ops: readonly TreeOp[]): TransactionResult {
+    const result = this.history.applyTransaction(ops);
+    if (result.ok && result.applied > 0) {
+      this.dirty = true;
+      this.notify();
+    }
+    return result;
+  }
+
   /** 新建子节点（Tab）；返回新节点 id */
   addChild(parentId: string, text?: string): string {
     const child = makeTextNode(text ?? this.newText);
@@ -151,12 +166,12 @@ export class EditorController {
   updateNote(id: string, patch: Partial<Note>): void {
     const node = getNode(this.root, id);
     if (!node) return;
-    const next: Record<string, unknown> = { ...(node.note ?? {}) };
+    const next: Note = { ...(node.note ?? {}) };
     for (const [k, v] of Object.entries(patch)) {
       if (v === undefined) delete next[k];
       else next[k] = v;
     }
-    this.apply({ type: 'update-node', id, patch: { note: next as Note } });
+    this.apply({ type: 'update-node', id, patch: { note: next } });
   }
 
   /** 撤销 / 重做（OpHistory 逆操作） */

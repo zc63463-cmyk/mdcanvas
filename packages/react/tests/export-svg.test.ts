@@ -45,4 +45,46 @@ describe('SVG 导出（GH-T4：全图导出）', () => {
     expect(svg).toContain('A &amp; B &lt;C&gt;');
     expect(svg).not.toContain('A & B <C>');
   });
+
+  describe('A6/T23 跨岛父子连接补线', () => {
+    it('boundaryLinks 有效端点 → 虚线路径（6 4 / 0.55，与渲染侧同款）', () => {
+      const layout = layoutOf();
+      const rootId = layout.nodes.find((n) => n.depth === 0)!.node.id;
+      const leafId = layout.nodes.find((n) => n.depth === 1)!.node.id;
+      const svg = exportSvg(layout, glassToken, {
+        boundaryLinks: [{ fromId: rootId, toId: leafId }],
+      });
+      expect(svg).toContain('stroke-dasharray="6 4"');
+      expect(svg).toContain('opacity="0.55"');
+      expect(svg).toContain('跨岛父子连接');
+      // 树线 2 + 补线 1
+      expect((svg.match(/<path d=/g) ?? []).length).toBe(3);
+    });
+
+    it('端点盒缺失（ghost id）→ 跳过不误连', () => {
+      const layout = layoutOf();
+      const svg = exportSvg(layout, glassToken, {
+        boundaryLinks: [{ fromId: 'ghost-a', toId: 'ghost-b' }],
+      });
+      expect(svg).not.toContain('stroke-dasharray');
+      expect((svg.match(/<path d=/g) ?? []).length).toBe(2);
+    });
+
+    it('两端点包围盒完全在视口外 → 裁剪（bbox 语义：跨视口曲线不误删）', () => {
+      const layout = layoutOf();
+      const rootId = layout.nodes.find((n) => n.depth === 0)!.node.id;
+      const leafId = layout.nodes.find((n) => n.depth === 1)!.node.id;
+      const far = {
+        x: layout.bounds.maxX + 100000,
+        y: layout.bounds.maxY + 100000,
+        w: 10,
+        h: 10,
+      };
+      const svg = exportSvg(layout, glassToken, {
+        view: far,
+        boundaryLinks: [{ fromId: rootId, toId: leafId }],
+      });
+      expect(svg).not.toContain('stroke-dasharray');
+    });
+  });
 });

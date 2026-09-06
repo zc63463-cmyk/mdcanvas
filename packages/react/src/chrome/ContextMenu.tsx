@@ -12,6 +12,8 @@ export interface ContextMenuItem {
   onSelect: () => void;
   /** 危险操作（删除）：红色语义 */
   danger?: boolean;
+  /** 禁用态（置灰、不可点；如根节点不可切断） */
+  disabled?: boolean;
 }
 
 export interface ContextMenuProps {
@@ -68,19 +70,25 @@ export function ContextMenu({ x, y, items, onClose }: ContextMenuProps) {
             key={item.label}
             role="menuitem"
             data-menu-item
+            data-menu-disabled={item.disabled === true ? 'true' : undefined}
             onClick={(e) => {
               e.stopPropagation();
+              if (item.disabled === true) return;
               item.onSelect();
               onClose();
             }}
             style={{
               padding: '6px 10px',
               borderRadius: 6,
-              cursor: 'pointer',
-              color: item.danger ? CHROME.warn : CHROME.text,
+              cursor: item.disabled === true ? 'default' : 'pointer',
+              color: item.disabled === true ? CHROME.textMuted : item.danger ? CHROME.warn : CHROME.text,
+              opacity: item.disabled === true ? 0.55 : 1,
               whiteSpace: 'nowrap',
             }}
-            onMouseEnter={(e) => (e.currentTarget.style.background = 'rgba(255,255,255,.06)')}
+            onMouseEnter={(e) => {
+              if (item.disabled === true) return;
+              e.currentTarget.style.background = 'rgba(255,255,255,.06)';
+            }}
             onMouseLeave={(e) => (e.currentTarget.style.background = 'transparent')}
           >
             {item.label}

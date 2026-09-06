@@ -1,17 +1,24 @@
 // @vitest-environment jsdom
 /**
- * OverlayEditor：节点文本内联编辑（v1.3.0 Shift+Enter 切换描述）。
+ * OverlayEditor：节点文本内联编辑（v1.3.0 Shift+Enter 切换描述；G10 编辑态 Tab 生长）。
  *
  * 关键回归点：原实现 onKeyDown 只判 `e.key === 'Enter'`，**不区分 Shift**——
  * Shift+Enter 被当作普通提交，导致幕布核心语义「Shift+Enter 切换主题 ↔ 描述」
  * 在编辑态完全失效。本测试锁定修复后的行为。
+ *
+ * G10 关键回归点：Tab 曾被 stopPropagation 拦掉后**什么都不做**，只换来浏览器
+ * 默认焦点跳转；而单行 input 根本不需要 Tab 缩进。现 Tab = 提交 + 建子节点。
  */
-import { describe, expect, it, vi } from 'vitest';
-import { fireEvent, render } from '@testing-library/react';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import { cleanup, fireEvent, render } from '@testing-library/react';
 import { glassToken } from '../src/theme/tokens.js';
 import { OverlayEditor } from '../src/edit/OverlayEditor.js';
 
 const token = glassToken;
+
+afterEach(() => {
+  cleanup();
+});
 
 function renderEditor(props: Partial<React.ComponentProps<typeof OverlayEditor>> = {}) {
   return render(
@@ -93,6 +100,59 @@ describe('OverlayEditor：节点文本内联编辑', () => {
     const spy = vi.fn();
     window.addEventListener('keydown', spy);
     fireEvent.keyDown(input, { key: 'Enter' });
+    window.removeEventListener('keydown', spy);
+    expect(spy).not.toHaveBeenCalled();
+  });
+
+  // ── G10：编辑态 Tab = 提交 + 建子节点（连续录入不打断）──
+
+  it('G10：Tab → 触发 onTabGrow 并带上当前文本', () => {
+    const onTabGrow = vi.fn();
+    const { container } = renderEditor({ onTabGrow });
+    const input = container.querySelector('input')!;
+    fireEvent.change(input, { target: { value: '分支主题' } });
+    fireEvent.keyDown(input, { key: 'Tab' });
+    expect(onTabGrow).toHaveBeenCalledWith('分支主题');
+  });
+
+  it('G10：Tab 不触发 onCommit —— 提交由上层统一做，避免在 undo 栈留两条', () => {
+    // 若本组件自行 commit 后再交给上层 commitEdit，updateText 会被调用两次。
+    const onCommit = vi.fn();
+    const onTabGrow = vi.fn();
+    const { container } = renderEditor({ onCommit, onTabGrow });
+    const input = container.querySelector('input')!;
+    fireEvent.change(input, { target: { value: '只提交一次' } });
+    fireEvent.keyDown(input, { key: 'Tab' });
+    expect(onTabGrow).toHaveBeenCalledTimes(1);
+    expect(onCommit).not.toHaveBeenCalled();
+  });
+
+  it('G10：Tab 之后随卸载触发 blur 不再二次提交（committedRef 守卫）', () => {
+    const onCommit = vi.fn();
+    const onTabGrow = vi.fn();
+    const { container } = renderEditor({ onCommit, onTabGrow });
+    const input = container.querySelector('input')!;
+    fireEvent.change(input, { target: { value: '切换节点' } });
+    fireEvent.keyDown(input, { key: 'Tab' });
+    fireEvent.blur(input);
+    expect(onTabGrow).toHaveBeenCalledTimes(1);
+    expect(onCommit).not.toHaveBeenCalled();
+  });
+
+  it('G10：未注入 onTabGrow 时 Tab 不触发任何回调（向后兼容）', () => {
+    const onCommit = vi.fn();
+    const { container } = renderEditor({ onCommit });
+    const input = container.querySelector('input')!;
+    fireEvent.keyDown(input, { key: 'Tab' });
+    expect(onCommit).not.toHaveBeenCalled();
+  });
+
+  it('G10：Tab 同样不冒泡（不误触画布层 add-child）', () => {
+    const { container } = renderEditor({ onTabGrow: () => {} });
+    const input = container.querySelector('input')!;
+    const spy = vi.fn();
+    window.addEventListener('keydown', spy);
+    fireEvent.keyDown(input, { key: 'Tab' });
     window.removeEventListener('keydown', spy);
     expect(spy).not.toHaveBeenCalled();
   });

@@ -10,6 +10,8 @@ export interface ExportSvgOptions {
   /** 世界坐标可见区域（缺省 = 全图 bounds 外扩） */
   view?: { x: number; y: number; w: number; h: number };
   title?: string;
+  /** G6″（A6/T23）：跨岛父子连接——导出补线（虚线；端点盒缺失时跳过，不误连） */
+  boundaryLinks?: ReadonlyArray<{ fromId: string; toId: string }>;
 }
 
 export function exportSvg(
@@ -47,6 +49,28 @@ export function exportSvg(
     const p = buildLinkPath(token, from, to);
     parts.push(
       `<path d="${esc(p.d)}" fill="none" stroke="${esc(p.stroke)}" stroke-width="${r(p.width)}"/>`,
+    );
+  }
+
+  // G6″（A6/T23）：跨岛父子连接补线——与 MapView 渲染侧同款虚线样式（6 4 / 0.55）。
+  // 按【两端点包围盒】裁剪（E8 同款教训：两端都在视口外但曲线中段穿过时不误删）。
+  for (const l of opts.boundaryLinks ?? []) {
+    const from = boxes.get(l.fromId);
+    const to = boxes.get(l.toId);
+    if (!from || !to) continue; // 端点不在布局（盒缺失）→ 跳过，不误连到原点
+    const sx = Math.min(from.x, to.x);
+    const sy = Math.min(from.y, to.y);
+    const span = {
+      x: sx,
+      y: sy,
+      w: Math.max(from.x + from.w, to.x + to.w) - sx,
+      h: Math.max(from.y + from.h, to.y + to.h) - sy,
+    };
+    if (!isBoxInView(span, view, 64)) continue;
+    const p = buildLinkPath(token, from, to);
+    parts.push(
+      `<path d="${esc(p.d)}" fill="none" stroke="${esc(p.stroke)}" stroke-width="${r(p.width)}" ` +
+        `stroke-dasharray="6 4" opacity="0.55"><title>跨岛父子连接（升格中心 · parent_link: show）</title></path>`,
     );
   }
 

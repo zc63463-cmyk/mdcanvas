@@ -5,10 +5,10 @@
  *
  * v1.3.0 扩展：可选 descActions —— 在「新建子节点」与「新建同级节点」之间插入「编辑描述」入口，
  * 与 Shift+Enter 同一动作（进入节点下方幕布描述 note.desc 的行内编辑）。
- * v1.4.0 扩展：可选 noteActions —— 追加「编辑注释…」，打开节点注释浮窗（note / note_text）。
- * 两种注释是**不同内容**：desc 常驻节点盒内，note 在浮窗里不占节点空间。
+ * v1.4.0 扩展：可选 noteActions —— 追加「编辑 note笔记」，打开节点下方的固定笔记。
+ * 两种内容不同：desc 常驻节点盒内，固定 note 笔记在节点下方向下生长并参与布局。
  */
-import { getNode, type EditableNode } from '@mindcanvas/kernel';
+import { getNode, type EditableNode, type GrowDir } from '@mindcanvas/kernel';
 import type { ContextMenuItem } from '../chrome/ContextMenu.js';
 import type { EditorController } from './controller.js';
 
@@ -33,12 +33,33 @@ export interface DescMenuActions {
 }
 
 /**
- * v1.4.0 节点注释（note 浮窗）菜单动作。
- * 与「编辑描述」是两种不同内容：描述常驻节点盒内，注释在浮窗里。
+ * note 笔记菜单动作。
+ * 与「编辑描述」是两种不同内容：描述常驻节点盒内，note 笔记在节点下方布局区。
  */
 export interface NoteMenuActions {
-  /** 打开该节点的注释浮窗并固定（缺省 = 隐藏该入口） */
+  /** 打开该节点的固定 note 笔记并进入编辑（缺省 = 隐藏该入口） */
   onStart: (id: string) => void;
+}
+
+/**
+ * G6′ 中心菜单动作（升格 / 降格 / 父级连接显示切换）。
+ * 升格 = 该子树从根下提出来成为可拖拽摆放的中心；降格 = 回到自动树布局。
+ */
+export interface CenterMenuActions {
+  /** 升格为中心并指定生长方向 */
+  onPromote: (id: string, dir: GrowDir) => void;
+  /** 降格为普通节点（坐标进历史区，再升格可吸附回原位） */
+  onDemote: (id: string) => void;
+  /** 该节点当前是否已是中心 */
+  isCenter: (id: string) => boolean;
+  /** G3：该中心当前的跨岛父级连接显示状态（缺省 hide） */
+  parentLinkOf: (id: string) => 'show' | 'hide';
+  /** G3：切换跨岛父级连接显示（只影响显示，不改变语义归属） */
+  onToggleParentLink: (id: string, next: 'show' | 'hide') => void;
+  /** G2（A5）：该中心是否为切断独立（detached）——detached 禁普通降格，走显式接回 */
+  isDetached: (id: string) => boolean;
+  /** G2（A5）：接回 detached 分支到目标父节点（成环/深度超限由命令层拒绝并提示） */
+  onAttach: (id: string, targetParentId: string) => void;
 }
 
 export function contextMenuItemsFor(
@@ -48,6 +69,7 @@ export function contextMenuItemsFor(
   edgeActions?: EdgeMenuActions,
   descActions?: DescMenuActions,
   noteActions?: NoteMenuActions,
+  centerActions?: CenterMenuActions,
 ): ContextMenuItem[] {
   const isRoot = id === controller.root.id;
   const items: ContextMenuItem[] = [
@@ -67,10 +89,10 @@ export function contextMenuItemsFor(
       onSelect: () => descActions.onStart(id),
     });
   }
-  // v1.4.0：节点注释（浮窗）。与「编辑描述」并列 —— 两者是不同内容，不是同一功能的两处入口。
+  // note 笔记与「编辑描述」并列 —— 两者是不同内容，不是同一功能的两处入口。
   if (noteActions) {
     items.push({
-      label: '编辑注释…',
+      label: '编辑 note笔记',
       onSelect: () => noteActions.onStart(id),
     });
   }
@@ -93,6 +115,61 @@ export function contextMenuItemsFor(
   // E3：连线到…（以该节点为源新建自由边；树形之外的语义连接）
   if (edgeActions) {
     items.push({ label: '连线到…', onSelect: () => edgeActions.onStartLink(id) });
+  }
+  // G6′：中心升格 / 降格（根节点不可升格 —— 它要么是所有未升格分支的容器，
+  // 要么在全部子节点升格后自然成为空壳）
+  if (centerActions && !isRoot) {
+    if (centerActions.isCenter(id)) {
+      const detached = centerActions.isDetached(id);
+      if (detached) {
+        // G2（A5）：detached 无有效父级 → 禁普通降格；接回 = 显式命令（选中目标节点后操作）
+        const target = controller.selectedId;
+        const attachable =
+          target !== null && target !== id
+            ? { targetId: target }
+            : null;
+        items.push({
+          label:
+            attachable !== null
+              ? '接为所选节点的子树'
+              : '接为子树（先选中目标父节点）',
+          disabled: attachable === null,
+          onSelect: () => {
+            if (attachable === null) return;
+            centerActions.onAttach(id, attachable.targetId);
+          },
+        });
+      } else {
+        // 非切断中心 → 普通降格出口（坐标进历史区，再升格可吸附回原位）
+        items.push({
+          label: '降格为普通节点',
+          onSelect: () => centerActions.onDemote(id),
+        });
+      }
+      // G3：跨岛父级连接显示切换（detached 强制不显示容器线，无切换意义）
+      if (!detached) {
+        const pl = centerActions.parentLinkOf(id);
+        items.push({
+          label: pl === 'show' ? '隐藏父级连接' : '显示父级连接',
+          onSelect: () => centerActions.onToggleParentLink(id, pl === 'show' ? 'hide' : 'show'),
+        });
+      }
+    } else {
+      // G6″（A3）：任意深度节点可升格（用户批准的产品核心）。
+      // v1 的「仅根直接子节点」守卫源于布局层重复投影缺陷——A3 起由 kernel
+      // projectIslands 递归投影根治（深层升格从父岛剔除、独立成岛），菜单不再设限。
+      for (const [dir, label] of [
+        ['right', '向右'],
+        ['left', '向左'],
+        ['down', '向下'],
+        ['up', '向上'],
+      ] as const) {
+        items.push({
+          label: `升为中心 › ${label}`,
+          onSelect: () => centerActions.onPromote(id, dir),
+        });
+      }
+    }
   }
   // N2：实体节点专属项（改引用 / 关系图定位 / 转纯文本）
   if (entityActions) {

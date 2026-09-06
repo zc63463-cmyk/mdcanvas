@@ -5,10 +5,16 @@
  */
 import {
   astToEditable,
+  layoutForest,
   layoutMindmap,
   parseMm,
+  projectIslands,
   refKey,
+  type BoundaryLink,
+  type CenterSpec,
+  type IslandDiagnostic,
   type LayoutCache,
+  type ValidatedCenterSpec,
 } from '@mindcanvas/kernel';
 import type {
   Diagnostic,
@@ -26,6 +32,7 @@ import {
   estimateDescHeight,
   estimateDescWidth,
 } from '../chrome/DescBlock.js';
+import { estimateNoteAreaHeight } from '../chrome/NoteGrowthPanel.js';
 
 export interface DemoSource {
   editable: EditableNode | null;
@@ -89,6 +96,19 @@ export function createExpandMeasure(
     if (node.id !== expandedId) return base(node);
     const b = base(node);
     return { w: Math.max(expandW, b.w), h: b.h + extraH };
+  };
+}
+
+/** 固定 note 笔记为每个指定节点增加下方布局区域，宽度保持与节点本体完全一致。 */
+export function createFixedNoteMeasure(
+  base: MeasureFn,
+  fixedIds: ReadonlySet<string>,
+  extraH: number,
+): MeasureFn {
+  if (fixedIds.size === 0) return base;
+  return (node) => {
+    const b = base(node);
+    return fixedIds.has(node.id) ? { w: b.w, h: b.h + extraH } : b;
   };
 }
 
@@ -156,20 +176,122 @@ export function layoutDemo(
   cache?: LayoutCache,
   measureKey?: string,
   descEditingId: string | null = null,
+  fixedNoteIds: ReadonlySet<string> = new Set(),
+  /**
+   * G6′ 中心清单。非空 → 走 layoutForest（多中心各自布局后按坐标合并）；
+   * 空 → 沿用 layoutMindmap（既有行为，含 LayoutCache 增量）。
+   *
+   * ⚠️ 森林路径**不走 LayoutCache**：layoutLogic / layoutOrg 不支持缓存，
+   * 故多中心模式每次全量重算。先做对，性能待实测后再优化。
+   */
+  centers: readonly CenterSpec[] | null = null,
 ): DemoLayout {
   const base = createNodeMeasure(char, entities);
   const withQa = expandedId
     ? createExpandMeasure(base, expandedId, GROW_EXPAND_W, estimateCommentAreaHeight())
     : base;
   // 注意：measure 不含 editing 状态（见 createDescMeasure 注释）——编辑态不触发全树重排
-  const measure = createDescMeasure(withQa, char, descEditingId);
+  // note 笔记必须位于节点最下方；描述区先占用自身空间，再由固定笔记追加末尾区域。
+  const withDesc = createDescMeasure(withQa, char, descEditingId);
+  const measure = createFixedNoteMeasure(withDesc, fixedNoteIds, estimateNoteAreaHeight());
+  const useForest = centers !== null && centers !== undefined && centers.length > 0;
   return {
-    layout: layoutMindmap(
-      editable,
-      measure,
-      collapsedIds,
-      cache ? { cache, measureKey: measureKey ?? undefined } : undefined,
-    ),
+    layout: useForest
+      ? layoutForest(centers!, measure, collapsedIds)
+      : layoutMindmap(
+          editable,
+          measure,
+          collapsedIds,
+          cache ? { cache, measureKey: measureKey ?? undefined } : undefined,
+        ),
     measure,
   };
+}
+
+/**
+ * G6″：布局岛视图组装（A3-2）——specs + 跨岛边界边 + 中心诊断，单一投影事实源。
+ *
+ * boundaryLinks 过滤（G3 批准案）：仅显示中心条目 `parent_link: 'show'` 的跨岛
+ * 真实父子边；缺省 hide 兼容旧数据（已有 centers 文件历史行为是隐藏父子线）。
+ * 边集合不参与自动布局，仅供渲染层画跨岛连接。
+ */
+export function buildIslandView(
+  root: EditableNode,
+  centers: readonly ValidatedCenterSpec[],
+): {
+  specs: CenterSpec[] | null;
+  boundaryLinks: BoundaryLink[];
+  diagnostics: IslandDiagnostic[];
+  membersByRoot: Map<string, string[]>;
+} {
+  // 无中心标注 → null（回退既有单树 layoutMindmap，行为完全不变）
+  if (centers.length === 0) {
+    return { specs: null, boundaryLinks: [], diagnostics: [], membersByRoot: new Map() };
+  }
+
+  const projection = projectIslands(root, centers);
+  const rootIsCenter = centers.some((c) => c.nodeId === root.id && c.state === 'well-formed');
+  // 有效中心 = 实际产生了独立岛（升格节点在树上被投影剔除），或根本身是中心。
+  // 「spec 形状有效但树上找不到」（如 nodeId 悬空）不算——projectIslands 会给它
+  // 诊断并忽略，此时必须回退单树，不能退化成「只含根岛」的森林绕开 LayoutCache。
+  const hasPromoted = projection.islands.some((i) => i.sourceKind === 'promoted');
+  const specs: CenterSpec[] =
+    hasPromoted || rootIsCenter
+      ? projection.islands.flatMap((island): CenterSpec[] => {
+          // 根岛输出条件：根本身是中心（显示根本体），或仍有未升格内容（虚拟根职责）。
+          // 全部一级升格且根非中心 → 不输出根岛（文档根不显示，与 v1 行为一致，
+          // 见 free-edges ★ 回归：此时自由边从 documentRoot 解析而非布局结果）。
+          if (
+            island.sourceKind === 'root' &&
+            !rootIsCenter &&
+            island.projectedRoot.children.length === 0
+          ) {
+            return [];
+          }
+          return [
+            {
+              node: island.projectedRoot,
+              dir: island.direction,
+              // pos 缺省 = 自动摆放；{x:0,y:0} 是合法坐标，只能按 null 判缺省
+              ...(island.position !== null ? { pos: island.position } : {}),
+            },
+          ];
+        })
+      : [];
+
+  // G3：跨岛父子边按中心条目的 parentLink 过滤（toId = 升格岛根 = 中心条目）
+  const parentLinkShow = new Set(
+    centers.filter((c) => c.parentLink === 'show').map((c) => c.nodeId),
+  );
+  const boundaryLinks = projection.boundaryLinks.filter((l) => parentLinkShow.has(l.toId));
+
+  // A4：岛成员映射（拖动预览用；ownerByNodeId 反转即得，岛根恒在首位）
+  const membersByRoot = new Map<string, string[]>();
+  for (const island of projection.islands) {
+    membersByRoot.set(island.rootId, [...island.memberIds]);
+  }
+
+  return {
+    specs: specs.length > 0 ? specs : null,
+    boundaryLinks,
+    diagnostics: projection.diagnostics,
+    membersByRoot,
+  };
+}
+
+/**
+ * G6″：由文档级 center 标注构造中心清单（A3 起由递归布局岛投影驱动）。
+ * specs 之外的边界边/诊断请用 buildIslandView（本函数是其薄包装，保持既有签名）。
+ *
+ * 升格语义 = 该子树从父岛**提出来**成为独立中心（任意深度，G1 批准），
+ * 因此与语义父级的连线不再由树布局绘制（跨岛边界边由渲染层另行处理）。
+ *
+ * @returns 中心清单；无**有效**中心标注时返回 null（调用方回退 layoutMindmap +
+ *          LayoutCache 旧路径——不能退化成「只含根岛」的森林绕开缓存全量重算）
+ */
+export function buildCenterSpecs(
+  root: EditableNode,
+  centers: readonly ValidatedCenterSpec[],
+): CenterSpec[] | null {
+  return buildIslandView(root, centers).specs;
 }

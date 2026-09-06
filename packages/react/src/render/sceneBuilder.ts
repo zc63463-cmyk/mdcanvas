@@ -13,6 +13,22 @@ import type { Box, } from '@mindcanvas/kernel';
 /** 自动切 Canvas 的节点数阈值（T8 降级策略 L3：>50K） */
 export const CANVAS_AUTO_NODES = 50000;
 
+/**
+ * A6/T23 Canvas 门禁：后端裁决。
+ * - 显式 forceBackend='canvas' → Canvas（既有行为）
+ * - 显式 forceBackend='svg' → **压过**自动降级：含跨岛父子连接/自由边的文档仅 SVG
+ *   后端完整渲染（Canvas scene 只有树线+节点卡），宁可 SVG 慢也不静默丢岛/边
+ * - 未指定 → >CANVAS_AUTO_NODES 自动降级（既有行为）
+ */
+export function resolveBackend(
+  forceBackend: 'svg' | 'canvas' | undefined,
+  nodeCount: number,
+): 'svg' | 'canvas' {
+  if (forceBackend === 'canvas') return 'canvas';
+  if (forceBackend === 'svg') return 'svg';
+  return nodeCount > CANVAS_AUTO_NODES ? 'canvas' : 'svg';
+}
+
 /** 场景构建输入（调用方从 MapView 渲染循环的既有量装配） */
 export interface SceneInput {
   nodes: Array<{

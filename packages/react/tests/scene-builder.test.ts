@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   buildSceneFromLayout,
   CANVAS_AUTO_NODES,
+  resolveBackend,
   type SceneInput,
 } from '../src/render/sceneBuilder.js';
 import { glassToken } from '../src/theme/tokens.js';
@@ -118,5 +119,18 @@ describe('场景构建器（C1：Canvas 主循环接入第一块）', () => {
 
   it('CANVAS_AUTO_NODES = 50000（T8 L3 阈值）', () => {
     expect(CANVAS_AUTO_NODES).toBe(50000);
+  });
+
+  describe('resolveBackend（A6/T23 Canvas 门禁）', () => {
+    it('显式 canvas → canvas（既有行为）', () => {
+      expect(resolveBackend('canvas', 0)).toBe('canvas');
+    });
+    it('显式 svg 压过自动降级（>50K 也保持 SVG——岛/自由边文档不静默丢内容）', () => {
+      expect(resolveBackend('svg', CANVAS_AUTO_NODES + 1)).toBe('svg');
+    });
+    it('未指定：≤50K → SVG，>50K → 自动降级 Canvas（既有行为回归）', () => {
+      expect(resolveBackend(undefined, CANVAS_AUTO_NODES)).toBe('svg');
+      expect(resolveBackend(undefined, CANVAS_AUTO_NODES + 1)).toBe('canvas');
+    });
   });
 });

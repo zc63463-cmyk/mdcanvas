@@ -44,6 +44,71 @@ describe('layout/layouts：org 组织架构（自顶向下行式）', () => {
   });
 });
 
+describe('layout/layouts：org 向上生长（G6′ 四向；direction = -1）', () => {
+  const down = layoutOrg(fixture(), measure, new Set(), 1);
+  const up = layoutOrg(fixture(), measure, new Set(), -1);
+
+  it('缺省 direction=1 —— 与既有行为逐位一致（子行在根下方）', () => {
+    const r = layoutOrg(fixture(), measure, new Set());
+    const root = boxById(r.nodes, 'r');
+    const a = boxById(r.nodes, 'a');
+    expect(a && root ? a.y > root.y : false).toBe(true);
+  });
+
+  it('direction=-1：一级子位于根上方，且同层同行', () => {
+    const root = boxById(up.nodes, 'r');
+    const a = boxById(up.nodes, 'a');
+    const b = boxById(up.nodes, 'b');
+    expect(a && root ? a.y < root.y : false).toBe(true);
+    expect(a && b ? a.y === b.y : false).toBe(true);
+  });
+
+  it('direction=-1：孙节点继续向上（越深越上）', () => {
+    const a = boxById(up.nodes, 'a');
+    const a1 = boxById(up.nodes, 'a1');
+    expect(a1 && a ? a1.y < a.y : false).toBe(true);
+  });
+
+  it('上下互为镜像：父子间距相等（一个量根底、一个量根顶）', () => {
+    const dRoot = boxById(down.nodes, 'r');
+    const dA = boxById(down.nodes, 'a');
+    const uRoot = boxById(up.nodes, 'r');
+    const uA = boxById(up.nodes, 'a');
+    const dGap = dA && dRoot ? dA.y - (dRoot.y + dRoot.h) : NaN;
+    const uGap = uA && uRoot ? uRoot.y - (uA.y + uA.h) : NaN;
+    expect(uGap).toBeCloseTo(dGap, 6);
+  });
+
+  it('节点数与连线数在两个方向下一致', () => {
+    expect(up.nodes).toHaveLength(down.nodes.length);
+    expect(up.links).toHaveLength(down.links.length);
+  });
+
+  it('org-up 注册表项可用，且等价于 direction=-1', () => {
+    expect(isLayoutKind('org-up')).toBe(true);
+    const viaRegistry = getLayout('org-up')(fixture(), measure, new Set());
+    const a1 = boxById(viaRegistry.nodes, 'a1');
+    const expect1 = boxById(up.nodes, 'a1');
+    expect(a1 && expect1 ? a1.y === expect1.y : false).toBe(true);
+  });
+
+  it('向上时连线自父顶边出发（起点 y = parent.box.y，而非底边）', () => {
+    const root = boxById(up.nodes, 'r');
+    const link = up.links.find((l) => l.fromId === 'r' && l.toId === 'a');
+    expect(link && root ? link.path.startsWith(`M ${root.x + root.w / 2} ${root.y} `) : false).toBe(
+      true,
+    );
+  });
+
+  it('向下时连线仍自父底边出发（既有行为不变）', () => {
+    const root = boxById(down.nodes, 'r');
+    const link = down.links.find((l) => l.fromId === 'r' && l.toId === 'a');
+    expect(
+      link && root ? link.path.startsWith(`M ${root.x + root.w / 2} ${root.y + root.h} `) : false,
+    ).toBe(true);
+  });
+});
+
 describe('layout/layouts：timeline 横向时间轴（深度列）', () => {
   const r = layoutTimeline(fixture(), measure, new Set());
 

@@ -17,6 +17,12 @@ export interface RelationTypeConfig {
   color: string;
   /** false = 被动反向类型（系统维护，选择器不展示） */
   isActive: boolean;
+  /**
+   * 虚线语义（P2-2 · schema 化；缺省 false = 实线）。
+   * 强语义（动态/论证/阐释/应用）实线；弱/结构/引用类（relates-to/supplements/
+   * duplicates/references）虚线——passive 反向须与正向同态。
+   */
+  dashed?: boolean;
 }
 
 /** 语义分组（选择器/面板分组渲染） */
@@ -118,6 +124,7 @@ export const DEFAULT_RELATION_TYPES: readonly RelationTypeConfig[] = [
     isSymmetric: false,
     color: '#0891b2',
     isActive: true,
+    dashed: true,
   },
   {
     id: 'applies',
@@ -135,6 +142,7 @@ export const DEFAULT_RELATION_TYPES: readonly RelationTypeConfig[] = [
     isSymmetric: true,
     color: '#78716c',
     isActive: true,
+    dashed: true,
   },
   {
     id: 'supplements',
@@ -143,6 +151,7 @@ export const DEFAULT_RELATION_TYPES: readonly RelationTypeConfig[] = [
     isSymmetric: true,
     color: '#10b981',
     isActive: true,
+    dashed: true,
   },
   {
     id: 'duplicates',
@@ -151,6 +160,7 @@ export const DEFAULT_RELATION_TYPES: readonly RelationTypeConfig[] = [
     isSymmetric: true,
     color: '#ef9f27',
     isActive: true,
+    dashed: true,
   },
   // ── Passive 被动反向（系统维护，选择器不展示）──
   {
@@ -232,6 +242,7 @@ export const DEFAULT_RELATION_TYPES: readonly RelationTypeConfig[] = [
     isSymmetric: false,
     color: '#0891b2',
     isActive: false,
+    dashed: true,
   },
   {
     id: 'isAppliedBy',

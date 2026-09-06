@@ -12,7 +12,26 @@ set -e
 echo "▶ [pre-push] 全量门禁：typecheck + test + depcruise + lint + budget"
 echo "  （约 2-3 分钟，可用 --no-verify 绕过）"
 
-if ! pnpm gate; then
+# pnpm 可用时走原命令；不可用时（受管 Node 沙箱无 pnpm shim，如 WorkBuddy/CI 受限环境）
+# 回退到等价的直接二进制调用——门禁项目一项不少，只换 invocation。
+run_gate() {
+  if command -v pnpm >/dev/null 2>&1; then
+    pnpm gate
+    return $?
+  fi
+  echo "  （pnpm 不可用，使用等价直调回退）"
+  node packages/react/node_modules/typescript/bin/tsc -b \
+    packages/kernel/tsconfig.json packages/react/tsconfig.json apps/canvas/tsconfig.json \
+    --pretty false || return 1
+  node packages/kernel/node_modules/vitest/vitest.mjs run --root packages/kernel || return 1
+  node packages/react/node_modules/vitest/vitest.mjs run --root packages/react || return 1
+  node apps/canvas/node_modules/vitest/vitest.mjs run --root apps/canvas || return 1
+  ./node_modules/.bin/depcruise packages apps --config .dependency-cruiser.js || return 1
+  node node_modules/@biomejs/biome/bin/biome lint packages apps || return 1
+  node scripts/check-code-budget.mjs || return 1
+}
+
+if ! run_gate; then
   echo ""
   echo "✗ 全量门禁未通过，推送已中止。"
   echo "  逐项排查："

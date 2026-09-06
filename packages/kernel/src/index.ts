@@ -79,6 +79,30 @@ export type {
   LayoutKind,
 } from './layout/layouts.js';
 
+// G6′ 森林布局：多中心各自局部布局 → 平移 → 合并
+export {
+  GROW_DIR_LABEL,
+  layoutForest,
+  LAYOUT_KIND_BY_DIR,
+} from './layout/forest.js';
+export type { CenterSpec, GrowDir } from './layout/forest.js';
+
+export {
+  layoutIslands,
+  projectIslands,
+} from './layout/islands.js';
+export type {
+  Bounds,
+  BoundaryLink,
+  IslandDiagnostic,
+  IslandLayoutOptions,
+  IslandLayoutResult,
+  IslandProjection,
+  IslandSourceKind,
+  LayoutIsland,
+  ValidatedCenterSpec,
+} from './layout/islands.js';
+
 export {
   defaultCharMeasure,
   defaultMeasure,
@@ -206,6 +230,15 @@ export type {
   ResolvedLink,
 } from './registry/note-anchor.js';
 
+export { planReferenceMigration } from './registry/anchor-migrate.js';
+export type {
+  AnchorRef,
+  AnchorUpdate,
+  ReferenceConflict,
+  ReferenceDiagnostic,
+  ReferenceMigrationPlan,
+} from './registry/anchor-migrate.js';
+
 export { NoteKeyRegistry } from './registry/note-key.js';
 export type { NoteKeyHandler } from './registry/note-key.js';
 
@@ -230,6 +263,7 @@ export type {
   RecordedOp,
   TreeOp,
 } from './tree/tree-op.js';
+export type { RecordedBatch, TransactionResult } from './tree/tree-op.js';
 
 export {
   addChild,

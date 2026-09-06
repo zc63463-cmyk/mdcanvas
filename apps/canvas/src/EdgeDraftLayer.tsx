@@ -37,6 +37,8 @@ export interface EdgeDraftLayerProps {
   linkDraft: { sourceId: string; x: number; y: number } | null;
   onCloseTreeEdge: () => void;
   onCloseLinkDraft: () => void;
+  /** A5（G2）：切断并独立（子端 id）——命令编排由 Stage 负责 */
+  onCutTreeEdge?: (childId: string) => void;
 }
 
 export function EdgeDraftLayer({
@@ -46,6 +48,7 @@ export function EdgeDraftLayer({
   linkDraft,
   onCloseTreeEdge,
   onCloseLinkDraft,
+  onCutTreeEdge,
 }: EdgeDraftLayerProps) {
   // 取局部 const：TS 无法对 obj.prop 跨表达式收窄类型，不取局部变量守卫生效不了
   const selEdgeOpen = edgeActions.selEdge;
@@ -70,6 +73,7 @@ export function EdgeDraftLayer({
           onChange={(ann) =>
             controller.updateNote(treeEdgeEdit.childId, ann ? { edge: ann } : { edge: undefined })
           }
+          onCut={onCutTreeEdge}
           onClose={onCloseTreeEdge}
         />
       )}

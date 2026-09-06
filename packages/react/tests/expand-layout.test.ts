@@ -5,7 +5,12 @@
 import { describe, expect, it } from 'vitest';
 import { astToEditable, layoutMindmap, makeTextNode } from '@mindcanvas/kernel';
 import { createCharMeasure } from '../src/render/domMeasure.js';
-import { createExpandMeasure, createDescMeasure, layoutDemo } from '../src/demo/pipeline.js';
+import {
+  createExpandMeasure,
+  createDescMeasure,
+  createFixedNoteMeasure,
+  layoutDemo,
+} from '../src/demo/pipeline.js';
 import { estimateCommentAreaHeight, GROW_EXPAND_W } from '../src/chrome/GrowthCommentPanel.js';
 import {
   estimateDescHeight,
@@ -24,6 +29,45 @@ function baseMeasure() {
 const FAKE_CHAR = (() => (_s: string) => 8) as never;
 
 import { DESC_EDIT_MIN_W } from '../src/chrome/DescBlock.js';
+import { estimateNoteAreaHeight } from '../src/chrome/NoteGrowthPanel.js';
+
+describe('createFixedNoteMeasure：固定 note 笔记参与布局', () => {
+  it('每个固定节点都向下生长，未固定节点保持原尺寸', () => {
+    const base = baseMeasure();
+    const measure = createFixedNoteMeasure(base, new Set(['a', 'b']), estimateNoteAreaHeight());
+    const node = (id: string) => ({ id, type: 'text' as const, text: id, children: [] as never[] });
+
+    expect(measure(node('a') as never)).toEqual({ w: 120, h: 36 + estimateNoteAreaHeight() });
+    expect(measure(node('b') as never)).toEqual({ w: 120, h: 36 + estimateNoteAreaHeight() });
+    expect(measure(node('c') as never)).toEqual({ w: 120, h: 36 });
+  });
+
+  it('layoutDemo 会为多个固定节点重排，子节点不会与其向下生长区重叠', () => {
+    const a = makeTextNode('A', [makeTextNode('A1')]);
+    const b = makeTextNode('B');
+    const editable = astToEditable(makeTextNode('root', [a, b]))!;
+    const aId = editable.children![0]!.id;
+    const a1Id = editable.children![0]!.children![0]!.id;
+    const bId = editable.children![1]!.id;
+    const char = (() => (_s: string) => 8)() as never;
+
+    const before = layoutDemo(editable, new Map(), char, new Set());
+    const after = layoutDemo(editable, new Map(), char, new Set(), null, undefined, undefined, null, new Set([aId, bId]));
+    const aBefore = before.layout.nodes.find((n) => n.node.id === aId)!;
+    const aAfter = after.layout.nodes.find((n) => n.node.id === aId)!;
+    const bAfter = after.layout.nodes.find((n) => n.node.id === bId)!;
+    const a1After = after.layout.nodes.find((n) => n.node.id === a1Id)!;
+
+    expect(aAfter.box.h).toBe(aBefore.box.h + estimateNoteAreaHeight());
+    expect(bAfter.box.h).toBeGreaterThan(36);
+    const separated =
+      a1After.box.x >= aAfter.box.x + aAfter.box.w ||
+      aAfter.box.x >= a1After.box.x + a1After.box.w ||
+      a1After.box.y >= aAfter.box.y + aAfter.box.h ||
+      aAfter.box.y >= a1After.box.y + a1After.box.h;
+    expect(separated).toBe(true);
+  });
+});
 
 describe('createExpandMeasure：展开节点加宽注入', () => {
   it('展开节点 → 宽=定值、高=本体+注释区高', () => {

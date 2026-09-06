@@ -396,6 +396,107 @@ export function tangentSBezier(
   };
 }
 
+/** 归一化落点（0–1，相对盒）→ 进出方向（该落点所在边的主轴方向；中心回落量水平右向）。
+ *  P1-3：手动端点方向沿「落点所在边」推断——与语义锚的边中点语义同族，不再回退到
+ *  对角交点式漂移。 */
+export function sideDirOf(norm: { x: number; y: number }): { x: number; y: number } {
+  const px = norm.x - 0.5;
+  const py = norm.y - 0.5;
+  if (px === 0 && py === 0) return { x: 1, y: 0 };
+  if (Math.abs(px) >= Math.abs(py)) return px >= 0 ? { x: 1, y: 0 } : { x: -1, y: 0 };
+  return py >= 0 ? { x: 0, y: 1 } : { x: 0, y: -1 };
+}
+
+/**
+ * 手动锁定路径的锚点组装（P1-3 · 手动形状语言与自动路由统一）。
+ *
+ * 契约（对标自动路由 semanticAnchorPair + tangentSBezier 同款）：
+ * - 未拖端点（manual.from/to 缺省）→ 落点 + 进出方向 = 语义锚（贴边中点，而非旧实现
+ *   的「盒中心拉线」——首次拖 bend 不会让曲线从卡片中心起跳）；
+ * - manual.from/to 覆盖落点（归一化归一坐标），进出方向随落点所在边推断（sideDirOf）；
+ * - 返回的 p0/d0/p3/d3 供 manualBezier 生成相切基形。
+ */
+export function manualAnchors(
+  from: Box,
+  to: Box,
+  mf?: { x: number; y: number },
+  mt?: { x: number; y: number },
+): {
+  p0: { x: number; y: number };
+  dir0: { x: number; y: number };
+  p3: { x: number; y: number };
+  dir3: { x: number; y: number };
+} {
+  const sem = semanticAnchorPair(from, to);
+  const p0 = mf ? { x: from.x + from.w * mf.x, y: from.y + from.h * mf.y } : sem.p0;
+  const p3 = mt ? { x: to.x + to.w * mt.x, y: to.y + to.h * mt.y } : sem.p3;
+  const dir0 = mf ? sideDirOf(mf) : sem.dir0;
+  const dir3 = mt ? sideDirOf(mt) : sem.dir3;
+  return { p0, dir0, p3, dir3 };
+}
+
+/**
+ * 带侧向弓的相切三次贝塞尔（P1-3 · 手动锁定专用形状）。
+ *
+ * 与 tangentSBezier 的关系：curvature=0 时输出与其逐位一致（相切基形）；
+ * curvature ≠ 0 时两个控制点沿**弦法向** (-dy, dx) 平移 `chord × curvature`——
+ * 曲线整体侧弓而端点仍相切。弯度量级与原「法向弓」（bezierFromAnchors）一致：
+ * mid 侧移 = 0.75 × chord × curvature，因此 bend 拖拽映射（c = 垂距/(0.75×chord)）
+ * 与 EdgeHandles 的 bend 点显示公式无需改动。
+ */
+export function manualBezier(
+  p0: { x: number; y: number },
+  dir0: { x: number; y: number },
+  p3: { x: number; y: number },
+  dir3: { x: number; y: number },
+  curvature = 0,
+  beta = 0.4,
+): {
+  c1: { x: number; y: number };
+  c2: { x: number; y: number };
+  d: string;
+  mid: { x: number; y: number };
+  nx: number;
+  ny: number;
+} {
+  const dx = p3.x - p0.x;
+  const dy = p3.y - p0.y;
+  const len = Math.hypot(dx, dy) || 1;
+  const ext = Math.max(len * beta, 20);
+  let c1 = { x: p0.x + dir0.x * ext, y: p0.y + dir0.y * ext };
+  let c2 = { x: p3.x - dir3.x * ext, y: p3.y - dir3.y * ext };
+  if (curvature !== 0) {
+    const off = len * curvature;
+    // 弦法向 (-dy, dx)：正 curvature → 控制点向 (-dy, dx) 侧平移（与旧法向弓同向）
+    const sx = -dy / len;
+    const sy = dx / len;
+    c1 = { x: c1.x + sx * off, y: c1.y + sy * off };
+    c2 = { x: c2.x + sx * off, y: c2.y + sy * off };
+  }
+  const mid = {
+    x: 0.125 * p0.x + 0.375 * c1.x + 0.375 * c2.x + 0.125 * p3.x,
+    y: 0.125 * p0.y + 0.375 * c1.y + 0.375 * c2.y + 0.125 * p3.y,
+  };
+  // 与 tangentSBezier 同款法向（归一：优先朝上，次优先朝右）
+  const tx = p3.x + c2.x - c1.x - p0.x;
+  const ty = p3.y + c2.y - c1.y - p0.y;
+  const tl = Math.hypot(tx, ty) || 1;
+  let nx = -ty / tl;
+  let ny = tx / tl;
+  if (ny > 0 || (Math.abs(ny) < 0.15 && nx < 0)) {
+    nx = -nx;
+    ny = -ny;
+  }
+  return {
+    c1,
+    c2,
+    d: `M ${p0.x} ${p0.y} C ${c1.x} ${c1.y}, ${c2.x} ${c2.y}, ${p3.x} ${p3.y}`,
+    mid,
+    nx,
+    ny,
+  };
+}
+
 /**
  * 从 path d 推断连线当前鼓向：'left' / 'right' / 'auto'（无法判断时）。
  *
@@ -452,6 +553,41 @@ function segmentsCross(
 // 明确「哪条在上、哪条在下」。参照 Miro 的 Line jumps；
 // 但因 Miro 仅支持 straight / orthogonal 线型，曲线需自绘（此处实现）。
 // ═══════════════════════════════════════════════════════════════════
+
+/**
+ * 跳线应用纯函数（P2-1 · 从 FreeEdgeLayer useMemo 抽出，供 fastRouting 门控）。
+ *
+ * - 单条边 / 无交叉（crossings 为空）→ 返回原 map（零拷贝，fast 路径零开销）
+ * - 有交叉 → under 边（先路由）的 route.d 经 pathWithJumps 注入拱弧，其余边原样
+ * 交叉仅由 route.points（p0–mid–p3 三点折线）求交——精度足够且成本远低于全曲线采样。
+ */
+export function applyLineJumps<T extends { route: RouteResult }>(
+  routes: ReadonlyMap<string, T>,
+): ReadonlyMap<string, T> {
+  if (routes.size < 2) return routes;
+  const orderedKeys = [...routes.keys()];
+  const polys = orderedKeys.map((k) => routes.get(k)!.route.points);
+  const crossings = findCrossings(polys);
+  if (crossings.length === 0) return routes;
+  // 按「被跨越的边」归组跳线点
+  const jumpsByKey = new Map<string, { x: number; y: number }[]>();
+  for (const c of crossings) {
+    const key = orderedKeys[c.under];
+    if (!key) continue;
+    const arr = jumpsByKey.get(key) ?? [];
+    arr.push({ x: c.x, y: c.y });
+    jumpsByKey.set(key, arr);
+  }
+  const out = new Map(routes);
+  for (const [key, jps] of jumpsByKey) {
+    const entry = out.get(key)!;
+    out.set(key, {
+      ...entry,
+      route: { ...entry.route, d: pathWithJumps(entry.route.points, jps) },
+    });
+  }
+  return out;
+}
 
 /** 一条边与另一条边的交叉点（含上下关系） */
 export interface EdgeCrossing {

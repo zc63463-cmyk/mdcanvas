@@ -64,7 +64,7 @@ export function QaEditor({
       </div>
       {items.map((q, i) => (
         <div
-          key={i}
+          key={`${i}:${q}`}
           style={{
             display: 'flex',
             alignItems: 'flex-start',
@@ -78,7 +78,41 @@ export function QaEditor({
             color: CHROME.text,
           }}
         >
-          <span style={{ flex: 1 }}>{q}</span>
+          <input
+            aria-label="编辑注释"
+            defaultValue={q}
+            onBlur={(e) => {
+              const next = e.currentTarget.value.trim();
+              if (next === q) return;
+              onChange(
+                next === ''
+                  ? items.filter((_, j) => j !== i)
+                  : items.map((item, j) => (j === i ? next : item)),
+              );
+            }}
+            onKeyDown={(e) => {
+              e.stopPropagation();
+              if (e.key === 'Enter') {
+                e.preventDefault();
+                e.currentTarget.blur();
+              } else if (e.key === 'Escape') {
+                e.currentTarget.value = q;
+                e.currentTarget.blur();
+              }
+            }}
+            style={{
+              flex: 1,
+              minWidth: 0,
+              border: 'none',
+              background: 'transparent',
+              color: CHROME.text,
+              fontSize: CHROME.fontSizeSmall,
+              lineHeight: 1.5,
+              fontFamily: CHROME.fontFamily,
+              outline: 'none',
+              padding: 0,
+            }}
+          />
           <button
             aria-label="删除注释"
             onClick={() => onChange(items.filter((_, j) => j !== i))}

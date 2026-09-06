@@ -89,3 +89,21 @@ describe('relVisualOf 接 schema 语义色', () => {
     expect(v.dashed).toBe(true);
   });
 });
+
+describe('relVisualOf dashed 语义（P2-2 · 从 schema 取，不再 default 一刀切）', () => {
+  const token = glassToken;
+  it('强语义（动态/论证/阐释）→ 实线', () => {
+    for (const rel of ['blocks', 'causes', 'enables', 'precedes', 'proves', 'refutes', 'applies']) {
+      expect(relVisualOf(rel, token).dashed).toBe(false);
+    }
+  });
+  it('弱/结构关联 → 虚线', () => {
+    for (const rel of ['relates-to', 'duplicates', 'supplements', 'references']) {
+      expect(relVisualOf(rel, token).dashed).toBe(true);
+    }
+  });
+  it('passive 反向跟正向同态（isBlockedBy 实线 / isReferencedBy 虚线）', () => {
+    expect(relVisualOf('isBlockedBy', token).dashed).toBe(false);
+    expect(relVisualOf('isReferencedBy', token).dashed).toBe(true);
+  });
+});

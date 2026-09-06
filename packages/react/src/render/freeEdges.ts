@@ -4,7 +4,10 @@
  *   在不同画布可有不同关系与连线；节点数据保持纯净
  * - 锚存路径/实体锚（跨会话稳定——运行时 nodeId 每次解析都变），会话内经内核
  *   note-anchor 三态判定解析为 nodeId
- * - note.links 契约保留为 B 线语义层（跟着节点走的知识），画布 UI 不读写它
+ * - 数据面边界（ADR-0008 定型，禁止开辟第四面）：
+ *   · root.note.edges —— 画布自由边唯一数据面（本模块）；写路径收敛到 connectEdge
+ *   · note.links —— B 线语义层（跟着节点走的知识），冻结契约不读写、不扩展（ADR-0004）
+ *   · note.edge / note.via —— 树自然线标注（TreeEdgeEditor；via 只读兼容）
  * - relVisualOf 提供语义默认视觉；edge.style（color/dashed/width）用户自定义覆盖
  * 纯函数无 DOM；渲染组装在 MapView 的 FreeEdgeLayer。
  */
@@ -156,22 +159,44 @@ export function splitEntityAnchor(anchor: string): { base: string; occurrence: n
   return { base: s, occurrence: null };
 }
 
-/** 解析单个锚 → nodeId。
- *  节点锚 → 内核路径解析；实体锚 → 按出现列表定位（带 `#N` 取第 N 个；无 `#N` 仅在
- *  唯一出现时解析——多命中按 spec「宁可不写也不错写」返回 null，由渲染层呈现为悬空边）。 */
+/** 锚解析结果：nodeId（成功）或 null（dangling/stale）+ 三态判定（P0-1：与内核 spec §5.5 对齐） */
+export interface AnchorResolveResult {
+  nodeId: string | null;
+  state: AnchorResolutionState;
+}
+
+/** 解析单个锚 → nodeId + 三态。
+ *
+ * P0-1 契约修正（此前只返回 `string | null`，把歧义也压成 null → collectFreeEdges
+ * 无法区分 dangling 与 stale，渲染层 stale 分支成为死代码）：
+ * - 节点锚 → 内核 parse/resolve 原生三态（多命中 = stale，路径失效 = dangling）
+ * - 实体锚 → 按出现列表定位，带 `#N` 精确取第 N 个；无 `#N` 且唯一出现 = well-formed；
+ *   无 `#N` 且多命中 = stale（spec「宁可不写也不错写」）；`#N` 越界 = stale（不可寻址）；
+ *   实体未在画布 = dangling。
+ */
 function resolveAnchorToId(
   root: EditableNode,
   anchor: string,
   entityOccurrences: Map<string, string[]>,
-): string | null {
+): AnchorResolveResult {
   const parsed = parseLinkAnchor(anchor);
-  if (!parsed) return null;
-  if (parsed.kind === 'node') return resolveLinkAnchor(root, parsed).nodeId ?? null;
+  if (!parsed) return { nodeId: null, state: 'stale' };
+  if (parsed.kind === 'node') {
+    const res = resolveLinkAnchor(root, parsed);
+    return { nodeId: res.nodeId ?? null, state: res.state };
+  }
   const { base, occurrence } = splitEntityAnchor(anchor);
   const list = entityOccurrences.get(base);
-  if (list === undefined || list.length === 0) return null;
-  if (occurrence !== null) return list[occurrence - 1] ?? null;
-  return list.length === 1 ? list[0]! : null;
+  if (list === undefined || list.length === 0) return { nodeId: null, state: 'dangling' };
+  if (occurrence !== null) {
+    const hit = list[occurrence - 1];
+    return hit !== undefined
+      ? { nodeId: hit, state: 'well-formed' }
+      : { nodeId: null, state: 'stale' };
+  }
+  return list.length === 1
+    ? { nodeId: list[0]!, state: 'well-formed' }
+    : { nodeId: null, state: 'stale' };
 }
 
 /** 收集树中全部实体锚的出现顺序（先序；同名多次出现 → 数组多项） */
@@ -200,15 +225,21 @@ export function collectFreeEdges(root: EditableNode): FreeEdge[] {
     if (typeof item !== 'object' || item === null) return;
     const e = item as DocEdge;
     if (typeof e.from !== 'string' || typeof e.to !== 'string') return;
-    const sourceId = resolveAnchorToId(root, e.from, entityOccurrences);
-    const targetId = resolveAnchorToId(root, e.to, entityOccurrences);
+    const src = resolveAnchorToId(root, e.from, entityOccurrences);
+    const tgt = resolveAnchorToId(root, e.to, entityOccurrences);
+    // 组级三态合并（与内核 resolveGroups 同规则）：任一 stale → stale；
+    // 否则任一 dangling → dangling；否则 well-formed。
     const state: AnchorResolutionState =
-      sourceId !== null && targetId !== null ? 'well-formed' : 'dangling';
+      src.state === 'stale' || tgt.state === 'stale'
+        ? 'stale'
+        : src.state === 'dangling' || tgt.state === 'dangling'
+          ? 'dangling'
+          : 'well-formed';
     out.push({
       key: `e${index}`,
       index,
-      sourceId,
-      targetId,
+      sourceId: src.nodeId,
+      targetId: tgt.nodeId,
       from: e.from,
       to: e.to,
       rel: String(e.rel ?? ''),
@@ -227,21 +258,13 @@ export function collectFreeEdges(root: EditableNode): FreeEdge[] {
   return out;
 }
 
-/** rel → 视觉：schema 注册词汇取语义色（E6.1）；未注册 → 中性灰虚线 */
+/** rel → 视觉：schema 注册词汇取语义色 + 线型（P2-2：dashed 语义从 schema 取，见
+ *  RelationTypeConfig.dashed——强语义实线、弱/结构/引用类虚线）；未注册 → 中性灰虚线。
+ *  E6.1：schema 注册词汇取语义色；未注册 → 中性灰虚线。 */
 export function relVisualOf(rel: string, token: TokenSet): { stroke: string; dashed: boolean } {
-  const schemaColor = defaultRelationSchema.getConfig(rel)?.color;
-  switch (rel) {
-    case 'blocks':
-      return { stroke: schemaColor ?? token.color.warn, dashed: false };
-    case 'causes':
-      return { stroke: schemaColor ?? token.color.accent ?? token.color.selection, dashed: false };
-    case 'duplicates':
-      return { stroke: schemaColor ?? token.color.annotationAccent, dashed: true };
-    case 'relates-to':
-      return { stroke: schemaColor ?? token.color.linkStroke, dashed: true };
-    default:
-      return { stroke: schemaColor ?? token.color.textMuted, dashed: true };
-  }
+  const cfg = defaultRelationSchema.getConfig(rel);
+  if (!cfg) return { stroke: token.color.textMuted, dashed: true }; // 未知 rel：中性虚线
+  return { stroke: cfg.color, dashed: cfg.dashed ?? false };
 }
 
 /** 边最终视觉：style 用户自定义覆盖 rel 语义默认 */
@@ -351,6 +374,19 @@ export function freeEdgeEndpoints(
       to: synth(s.box),
       ghost: true,
       renderable: true,
+    };
+  }
+  // P0-2：源/靶折叠后塌陷到同一可视祖先（祖孙边同塌一祖先），或数据本身是自关联边
+  // → fromId === toId 产生零长度退化线（borderPoint 退化回中心，视觉是把一个点埋进卡片）。
+  // 折叠态是瞬时的，展开即恢复；此处跳过绘制，由关系面板兜底呈现。
+  if (s.id === t.id) {
+    return {
+      fromId: s.id,
+      toId: t.id,
+      from: VOID,
+      to: VOID,
+      ghost: false,
+      renderable: false,
     };
   }
   // dir 语义：fwd 源→目标；back 画布上反向绘制（箭头落在源端）；both 两端箭头（方向同 fwd）

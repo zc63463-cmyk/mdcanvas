@@ -7,6 +7,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import { render, fireEvent } from '@testing-library/react';
 import {
+  layoutForest,
   layoutMindmap,
   makeEntityNode,
   makeTextNode,
@@ -237,6 +238,118 @@ describe('MapView 画布边渲染冒烟', () => {
   });
 });
 
+describe('G6′复审：几何根 ≠ 文档根（森林布局下自由边必须取完整文档树）', () => {
+  /** 根 + 两个一级子节点；root.note.edges 连接两个一级节点（文档级标注边） */
+  function forestFixture(): EditableNode {
+    const root = makeTextNode('根', [makeTextNode('A'), makeTextNode('B')]);
+    root.note = { edges: [{ from: 'node:根/A', to: 'node:根/B', rel: 'relates-to' }] };
+    return root;
+  }
+
+  /** 全部一级节点升格 → layoutForest：A、B 均为几何根（depth===0），文档根不在 layout.nodes */
+  function forestLayoutOf(root: EditableNode) {
+    return layoutForest(
+      [
+        { node: root.children[0]!, dir: 'right' as const, pos: { x: 0, y: 0 } },
+        { node: root.children[1]!, dir: 'right' as const, pos: { x: 100, y: 0 } },
+      ],
+      createNodeMeasure(char, new Map()),
+      new Set(),
+    );
+  }
+
+  it('★ 传 documentRoot → root.note.edges 仍从完整文档树解析并渲染（全部一级升格不丢边）', () => {
+    const root = forestFixture();
+    const { container } = render(
+      <ThemeProvider>
+        <MapView
+          layout={forestLayoutOf(root)}
+          entities={new Map()}
+          char={char}
+          documentRoot={root}
+          relationMode
+        />
+      </ThemeProvider>,
+    );
+    // 修复前：rootNode 取首个几何根 A → collectFreeEdges(A) 无 note.edges → 边层消失
+    expect(container.querySelectorAll('[data-free-edge]')).toHaveLength(1);
+  });
+
+  it('未传 documentRoot（旧调用方）→ 回退首个几何根：森林下文档级边不可见（记录兼容边界）', () => {
+    const root = forestFixture();
+    const { container } = render(
+      <ThemeProvider>
+        <MapView layout={forestLayoutOf(root)} entities={new Map()} char={char} relationMode />
+      </ThemeProvider>,
+    );
+    // A、B 自身无 note.edges → 边层不渲染。这是缺省回退的已知边界——
+    // 产品壳（MindmapStage）必须显式传 documentRoot；未来所有调用方迁移后可将 prop 收紧为必填。
+    expect(container.querySelector('[data-free-edge-layer]')).toBeNull();
+  });
+});
+
+describe('G6″ A3-2：跨岛父子连接渲染（G3 parent_link: show）', () => {
+  /** 两个独立岛（父岛 A + 升格岛 B）的森林布局；boundaryLinks 连接两者 */
+  function twoIslandLayout() {
+    const a = makeTextNode('A');
+    const b = makeTextNode('B');
+    const layout = layoutForest(
+      [
+        { node: a, dir: 'right' as const, pos: { x: 0, y: 0 } },
+        { node: b, dir: 'right' as const, pos: { x: 300, y: 0 } },
+      ],
+      createNodeMeasure(char, new Map()),
+      new Set(),
+    );
+    return { layout, aId: a.id, bId: b.id };
+  }
+
+  it('boundaryLinks 传入 → 渲染虚线 path（data-boundary-link）', () => {
+    const { layout, aId, bId } = twoIslandLayout();
+    const { container } = render(
+      <ThemeProvider>
+        <MapView
+          layout={layout}
+          entities={new Map()}
+          char={char}
+          boundaryLinks={[{ fromId: aId, toId: bId }]}
+          relationMode
+        />
+      </ThemeProvider>,
+    );
+    const p = container.querySelector('[data-boundary-link]');
+    expect(p).not.toBeNull();
+    expect(p!.getAttribute('stroke-dasharray')).toBe('6 4');
+    expect(p!.getAttribute('d')).toContain('M');
+  });
+
+  it('不传 boundaryLinks（缺省 hide 语义）→ 不渲染跨岛线', () => {
+    const { layout } = twoIslandLayout();
+    const { container } = render(
+      <ThemeProvider>
+        <MapView layout={layout} entities={new Map()} char={char} relationMode />
+      </ThemeProvider>,
+    );
+    expect(container.querySelector('[data-boundary-link]')).toBeNull();
+  });
+
+  it('端点不在布局中（折叠隐藏等）→ 该边跳过，不误连原点', () => {
+    const { layout, aId } = twoIslandLayout();
+    const { container } = render(
+      <ThemeProvider>
+        <MapView
+          layout={layout}
+          entities={new Map()}
+          char={char}
+          boundaryLinks={[{ fromId: aId, toId: 'ghost-id' }]}
+          relationMode
+        />
+      </ThemeProvider>,
+    );
+    expect(container.querySelector('[data-boundary-link]')).toBeNull();
+  });
+});
+
 describe('E6：树自然线交互 + 连接手柄', () => {
   function viaFixture(): EditableNode {
     const root = makeTextNode('根', [makeTextNode('任务A', [makeTextNode('子1')])]);
@@ -398,7 +511,8 @@ describe('E8：实体锚解析回归（P0：anchorOfNode 产出带 @ 前缀）',
     root.note = { edges: [{ from: 'node:根/分支A', to: '@issue:8', rel: 'relates-to' }] };
     const e = collectFreeEdges(root)[0]!;
     expect(e.targetId).toBeNull();
-    expect(e.state).toBe('dangling');
+    // P0-1 契约修正：歧义（多命中）标 stale 而非 dangling（宁可不写也不错写）
+    expect(e.state).toBe('stale');
   });
   it('唯一出现的实体 → 裸锚不加 #（向后兼容既有文档），可正常解析', () => {
     const root = makeTextNode('根', [

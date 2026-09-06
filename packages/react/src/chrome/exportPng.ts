@@ -25,9 +25,14 @@ export function readSvgSize(svg: string): { width: number; height: number } | nu
 export async function exportPng(
   layout: LayoutResult,
   token: TokenSet,
-  opts: { scale?: number; title?: string } = {},
+  opts: {
+    scale?: number;
+    title?: string;
+    /** G6″（A6/T23）：跨岛父子连接补线（透传 exportSvg） */
+    boundaryLinks?: ReadonlyArray<{ fromId: string; toId: string }>;
+  } = {},
 ): Promise<ExportPngResult> {
-  const svg = exportSvg(layout, token, { title: opts.title });
+  const svg = exportSvg(layout, token, { title: opts.title, boundaryLinks: opts.boundaryLinks });
   const size = readSvgSize(svg);
   if (!size) return { ok: false, reason: 'unsupported' };
   return renderPng(svg, size.width, size.height, opts.scale ?? 2);

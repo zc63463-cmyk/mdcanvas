@@ -112,6 +112,14 @@ export interface UseMapGesturesParams {
   onNodeHover?: (id: string | null, at: { x: number; y: number }) => void;
   /** 点击空白处（未命中任何节点）：用于取消选中 / 收起放大展开 */
   onBlankClick?: () => void;
+  /**
+   * G6′：该节点是否为「中心」。
+   * 中心拖拽 = **移动坐标**（带动整棵子树），而非改树结构 ——
+   * 因此拖拽期间不做落点/成环判定，也不显示落点指示器。
+   */
+  isCenter?: (id: string) => boolean;
+  /** G6′：中心拖拽结束 —— 世界坐标位移（已除以缩放 k） */
+  onCenterMove?: (id: string, worldDx: number, worldDy: number) => void;
 }
 
 export function useMapGestures({
@@ -125,6 +133,8 @@ export function useMapGestures({
   onNodeClick,
   onBlankClick,
   onNodeHover,
+  isCenter,
+  onCenterMove,
 }: UseMapGesturesParams) {
   /** R2：多指 pinch 跟踪（≥2 指 → 缩放模式，抑制 pan / 节点拖拽） */
   const pinch = useRef(new PinchTracker());
@@ -141,8 +151,13 @@ export function useMapGestures({
       return;
     }
     const w = worldPointOf(e, e.currentTarget, viewport);
-    // 命中节点（根不可拖拽）→ 节点拖拽重排；空白 → 画布平移
-    const hitId = hitNodeAt(visibleNodes, w, (ln) => ln.depth === 0)?.node.id ?? null;
+    // 命中节点 → 节点拖拽重排；空白 → 画布平移。
+    // 「根不可拖」排除的是**文档根**；森林布局下升格岛根同为 depth===0，
+    // 但它们是中心（拖拽 = 移动坐标）——不得被排除，否则中心岛永远拖不动
+    // （A4 修复：此前中心岛根被跳过后落入 pan 分支，拖动变成平移画布）。
+    const hitId =
+      hitNodeAt(visibleNodes, w, (ln) => ln.depth === 0 && !isCenter?.(ln.node.id))?.node.id ??
+      null;
     if (hitId !== null) {
       setNodeDrag({
         nodeId: hitId,
@@ -185,6 +200,12 @@ export function useMapGestures({
       const dx = e.clientX - nd.startX;
       const dy = e.clientY - nd.startY;
       if (!nd.moved && Math.hypot(dx, dy) <= 4) return; // 未过拖拽阈值
+      // G6′：中心拖拽 = 移动坐标，不做落点/成环判定（否则会出现
+      // 「拖到别的节点上就变成改结构」的歧义行为）
+      if (isCenter?.(nd.nodeId)) {
+        setNodeDrag({ ...nd, dx, dy, moved: true, targetId: null, mode: 'child', valid: true });
+        return;
+      }
       // 悬停目标：命中可见节点（排除自身子树）→ 按悬停带判定插入模式
       const w = worldPointOf(e, e.currentTarget, viewport);
       let targetId: string | null = null;
@@ -236,9 +257,15 @@ export function useMapGestures({
     const nd = nodeDrag;
     if (nd && nd.pointerId === e.pointerId) {
       if (nd.moved) {
-        const plan = nd.targetId ? planDrop(layout, nd.nodeId, nd.targetId, nd.mode) : null;
-        if (plan?.valid && plan.op) onNodeMove?.(plan.op);
-        // 非法（成环/自拖/根目标）→ 不执行任何 op
+        if (isCenter?.(nd.nodeId)) {
+          // G6′：屏幕位移 → 世界位移（除以缩放）
+          const k = viewport.transform.k > 0 ? viewport.transform.k : 1;
+          if (onCenterMove) onCenterMove(nd.nodeId, nd.dx / k, nd.dy / k);
+        } else {
+          const plan = nd.targetId ? planDrop(layout, nd.nodeId, nd.targetId, nd.mode) : null;
+          if (plan?.valid && plan.op) onNodeMove?.(plan.op);
+          // 非法（成环/自拖/根目标）→ 不执行任何 op
+        }
       } else {
         const ln = layout.nodes.find((n) => n.node.id === nd.nodeId);
         if (ln) onNodeClick?.(ln, { shift: e.shiftKey, sx: e.clientX, sy: e.clientY });

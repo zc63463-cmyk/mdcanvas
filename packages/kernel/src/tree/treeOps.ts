@@ -221,7 +221,18 @@ export function updateNode(
   patch: Partial<Pick<EditableNode, 'text' | 'url' | 'ref' | 'note' | 'type'>>,
 ): EditableNode {
   const walk = (n: EditableNode): EditableNode => {
-    if (n.id === id) return { ...n, ...patch };
+    if (n.id === id) {
+      const next: EditableNode = { ...n, ...patch };
+      // 显式字段删除语义（T15 修复）：patch 置 undefined 的字段从节点上删除属性。
+      // 此前纯 spread 会残留 `note: undefined` 属性——undo「无 note → 写 note」时
+      // `'note' in n` 为 true，与初始「无 note」的可观察行为不一致（结构共享与序列化
+      // 不受影响：editableToAst 本就以 `!== undefined` 判定；此修复仅消除属性残留）。
+      if (next.text === undefined) delete next.text;
+      if (next.url === undefined) delete next.url;
+      if (next.ref === undefined) delete next.ref;
+      if (next.note === undefined) delete next.note;
+      return next;
+    }
     if (n.children.length === 0) return n;
     const children = n.children.map(walk);
     // 无变化：保持引用（避免全树克隆——语义不变，仅对象身份优化）

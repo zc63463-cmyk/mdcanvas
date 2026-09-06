@@ -2,6 +2,7 @@
  * OverlayEditor —— 节点文本内联编辑（F2 进入 / Enter 提交 / Esc 取消 / blur 提交）。
  * 绝对定位在节点盒上方（屏幕坐标由 MapView 计算）；输入框事件 stopPropagation
  * 防止冒泡到全局快捷键（避免输入时误触 Tab/Enter 新建）。
+ * G10：注入 onTabGrow 后，编辑态 Tab = 提交 + 建子节点（连续录入），不再只是拦截。
  *
  * 视觉口径（K4 后补）：与 NodeG 保持一致
  * - 字号 / 字重：随 depth 走（叶 sizeLeaf / 分支 size；根 weightRoot）
@@ -32,6 +33,13 @@ export interface OverlayEditorProps {
    * 未注入时 Shift+Enter 退化为普通提交（向后兼容既有行为）。
    */
   onRequestDesc?: () => void;
+  /**
+   * G10：编辑态 Tab = 提交当前文本 + 建子节点（连续录入不打断）。
+   * 由上层统一完成「提交 → 建子 → 进入新节点编辑」——本组件不自行 commit，
+   * 避免与上层重复调用 updateText 而在 undo 栈里留下两条记录。
+   * 未注入时 Tab 退化为浏览器默认焦点跳转（向后兼容）。
+   */
+  onTabGrow?: (text: string) => void;
 }
 
 export function OverlayEditor({
@@ -47,6 +55,7 @@ export function OverlayEditor({
   onCommit,
   onCancel,
   onRequestDesc,
+  onTabGrow,
 }: OverlayEditorProps) {
   const [value, setValue] = useState(initial);
   const escapedRef = useRef(false);
@@ -99,6 +108,14 @@ export function OverlayEditor({
         e.stopPropagation(); // 关键：拦截全局快捷键（Tab/Enter 不新建）
         // v1.3.0：Shift+Enter = 切换「主题 → 描述」编辑（幕布语义），优先于提交。
         // 原实现把 Shift+Enter 也当 Enter 提交，"切换主题与描述" 快捷键因此在编辑态失效。
+        if (e.key === 'Tab' && onTabGrow) {
+          // G10：提交 + 建子节点。单行 input 不需要 Tab 缩进，原本拦掉它只换来
+          // 浏览器默认焦点跳转。置 committedRef 防止随后卸载触发 onBlur 二次提交。
+          e.preventDefault();
+          committedRef.current = true;
+          onTabGrow(value);
+          return;
+        }
         if (e.key === 'Enter' && e.shiftKey && onRequestDesc) {
           e.preventDefault();
           commit(value); // 先落盘主题文本（防丢失），再切到描述编辑

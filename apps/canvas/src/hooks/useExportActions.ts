@@ -20,6 +20,8 @@ export interface ExportActionsOptions {
   layout: Layout | null;
   token: TokenSet;
   docName: string;
+  /** G6″（A6/T23）：跨岛父子连接补线（islandView.boundaryLinks；端点盒缺失自动跳过） */
+  boundaryLinks?: ReadonlyArray<{ fromId: string; toId: string }>;
 }
 
 export interface ExportActions {
@@ -27,10 +29,15 @@ export interface ExportActions {
   handleExportPng: () => Promise<void>;
 }
 
-export function useExportActions({ layout, token, docName }: ExportActionsOptions): ExportActions {
+export function useExportActions({
+  layout,
+  token,
+  docName,
+  boundaryLinks,
+}: ExportActionsOptions): ExportActions {
   const handleExport = useCallback((): void => {
     if (!layout) return;
-    const svg = exportSvg(layout, token, { title: docName });
+    const svg = exportSvg(layout, token, { title: docName, boundaryLinks });
     const blob = new Blob([svg], { type: 'image/svg+xml' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
@@ -52,7 +59,7 @@ export function useExportActions({ layout, token, docName }: ExportActionsOption
       a.click();
       URL.revokeObjectURL(url);
     };
-    const r = await exportPng(layout, token, { title: docName });
+    const r = await exportPng(layout, token, { title: docName, boundaryLinks });
     if (r.ok) {
       download(r.blob, '.png');
       return;

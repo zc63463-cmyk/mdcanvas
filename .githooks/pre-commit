@@ -10,9 +10,27 @@
 
 set -e
 
+# pnpm 可用时走原命令；不可用时（受管 Node 沙箱无 pnpm shim，如 WorkBuddy/CI 受限环境）
+# 回退到等价的直接二进制调用——门禁项目一项不少，只换 invocation。
+# 回退需要 node 在 PATH（受管运行时或系统 Node 均可）。
+run_depcruise() {
+  if command -v pnpm >/dev/null 2>&1; then
+    pnpm depcruise
+  else
+    ./node_modules/.bin/depcruise packages apps --config .dependency-cruiser.js
+  fi
+}
+run_lint() {
+  if command -v pnpm >/dev/null 2>&1; then
+    pnpm lint
+  else
+    node node_modules/@biomejs/biome/bin/biome lint packages apps
+  fi
+}
+
 echo "▶ [pre-commit] 架构依赖守护 (dependency-cruiser)..."
 
-if ! pnpm depcruise; then
+if ! run_depcruise; then
   echo ""
   echo "✗ 架构依赖守护未通过 —— 依赖方向违反了 .dependency-cruiser.js 的规则。"
   echo "  常见原因："
@@ -30,7 +48,7 @@ echo "✔ 架构依赖守护通过"
 
 echo "▶ [pre-commit] 代码检查 (biome lint)..."
 
-if ! pnpm lint; then
+if ! run_lint; then
   echo ""
   echo "✗ 代码检查未通过 —— biome lint 报告了 error 级问题。"
   echo "  说明：warning 级（如 any / console）不阻塞，只有 error 会中断提交。"

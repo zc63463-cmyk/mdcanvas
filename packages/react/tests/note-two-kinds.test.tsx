@@ -111,16 +111,19 @@ describe('两种注释：渲染层都能看到', () => {
   });
 });
 
-describe('注释浮窗：固定态可新建（内容为空也要能打开）', () => {
-  it('pinnedNoteId 指向无注释的节点 → 仍显示浮窗（用户正要新建）', () => {
+describe('note 笔记：固定态保留预览卡片', () => {
+  it('pinnedNoteId 固定后仍渲染独立卡片，不吞入节点背景', () => {
     const fixture = build();
-    const plainId = idOf(fixture.layout, '啥都没有');
-    const { container } = renderMap({ pinnedNoteId: plainId }, fixture);
-    const pop = container.querySelector('[data-note-popover]');
-    expect(pop).not.toBeNull();
-    // 固定态 = 可编辑
-    expect(pop!.getAttribute('data-note-pinned')).toBe('true');
-    expect(container.querySelector('textarea')).not.toBeNull();
+    const noteId = idOf(fixture.layout, '有注释');
+    const { container } = renderMap({ pinnedNoteId: noteId }, fixture);
+    const panel = container.querySelector('[data-note-popover]') as HTMLElement | null;
+    expect(panel).not.toBeNull();
+    expect(panel!.getAttribute('data-note-pinned')).toBe('true');
+    expect(panel!.style.background).not.toBe('');
+    expect(container.querySelector('[data-note-growth-panel]')).toBeNull();
+    expect(container.querySelector('textarea')).toBeNull();
+    const node = container.querySelector(`[data-node-id="${noteId}"]`);
+    expect(node?.querySelector('path[stroke]')).toBeNull();
   });
 
   it('未固定时不会给空节点弹浮窗（避免鼠标扫过就弹）', () => {

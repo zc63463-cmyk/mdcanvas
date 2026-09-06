@@ -31,12 +31,20 @@ export interface NotePopoverProps {
   /** 屏幕坐标（浮窗左上角） */
   x: number;
   y: number;
-  /** 是否固定（固定后才可编辑） */
+  /** 与节点盒一致的屏幕宽度 */
+  width?: number;
+  /** 固定态卡片的稳定屏幕高度；悬停预览不传则按内容自适应 */
+  height?: number;
+  /** 是否固定显示（固定不等于编辑） */
   pinned: boolean;
+  /** 是否进入编辑态（仅右键「编辑 note笔记」进入） */
+  editing?: boolean;
   token: TokenSet;
   onChangeSeq: (seq: string[]) => void;
   onChangeText: (text: string) => void;
   onClose: () => void;
+  /** 预览态点击浮窗后固定 */
+  onPin?: () => void;
 }
 
 export function NotePopover({
@@ -44,11 +52,15 @@ export function NotePopover({
   text,
   x,
   y,
+  width = 260,
+  height,
   pinned,
+  editing = false,
   token,
   onChangeSeq,
   onChangeText,
   onClose,
+  onPin,
 }: NotePopoverProps) {
   const taRef = useRef<HTMLTextAreaElement | null>(null);
 
@@ -69,12 +81,27 @@ export function NotePopover({
     <div
       data-note-popover
       data-note-pinned={pinned ? 'true' : 'false'}
-      onClick={(e) => e.stopPropagation()}
+      // 画布手势监听 pointerdown/up；只拦 click 会让点击输入框仍触发画布空白点击，
+      // 进而清掉 pinnedNoteId，浮窗立即消失。
+      onPointerDown={(e) => {
+        e.stopPropagation();
+        // 固定必须走 pointerdown：画布本身以 pointer 手势处理点击，不能依赖随后
+        // 才可能触发的 click，否则预览浮窗会在状态写回前被悬停逻辑收走。
+        if (!pinned) onPin?.();
+      }}
+      onPointerMove={(e) => e.stopPropagation()}
+      onPointerUp={(e) => e.stopPropagation()}
+      onPointerCancel={(e) => e.stopPropagation()}
+      onClick={(e) => {
+        e.stopPropagation();
+      }}
       style={{
         position: 'absolute',
         left: x,
         top: y,
-        width: 260,
+        width,
+        ...(height === undefined ? {} : { height }),
+        boxSizing: 'border-box',
         background: CHROME.panelBg,
         border: `1px solid ${CHROME.panelBorder}`,
         borderRadius: CHROME.radius,
@@ -108,7 +135,7 @@ export function NotePopover({
         )}
         <button
           type="button"
-          aria-label="关闭注释"
+          aria-label="关闭 note笔记"
           onClick={onClose}
           style={{
             border: 'none',
@@ -126,7 +153,7 @@ export function NotePopover({
 
       {/* ① 序列区域 */}
       <div data-note-seq style={{ ...sectionStyle, marginBottom: 8 }}>
-        {pinned ? (
+        {editing ? (
           <QaEditor
             items={seq}
             onChange={onChangeSeq}
@@ -176,7 +203,7 @@ export function NotePopover({
         >
           正文
         </div>
-        {pinned ? (
+        {editing ? (
           <textarea
             ref={taRef}
             defaultValue={text}
