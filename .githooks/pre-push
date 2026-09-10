@@ -9,6 +9,9 @@
 
 set -e
 
+# 注意：`timeout ... || true` 的写法很关键 —— set -e 下 `timeout` 返回 124 会让
+# 脚本当场退出，后面的判定逻辑根本执行不到（2026-09-10 实测踩坑）。
+
 echo "▶ [pre-push] 全量门禁：typecheck + test + depcruise + lint + budget"
 echo "  （约 2-3 分钟，可用 --no-verify 绕过）"
 
@@ -25,32 +28,33 @@ echo "  （约 2-3 分钟，可用 --no-verify 绕过）"
 #   · 其他非零                                        → 失败
 # 绝不静默挂起：timeout 仍在，最长等 480s。
 run_vitest() {
-  _out="$(mktemp)"
-  timeout 480 node "$1" run --root "$2" > "$_out" 2>&1
-  _code=$?
-  cat "$_out"
-  if [ "$_code" -eq 0 ]; then
-    rm -f "$_out"
-    return 0
-  fi
-  # 被 timeout 杀死：区分「测试全通过但进程不退出」与「真有失败/挂起」
-  if [ "$_code" -eq 124 ]; then
-    if grep -qE "Tests +[0-9]+ failed" "$_out" || grep -qE "FAIL |Unhandled Error|Test Files +[0-9]+ failed" "$_out"; then
-      echo "  ✗ vitest 超时且输出含失败标记 —— 判失败" >&2
-      rm -f "$_out"
-      return 1
-    fi
-    if grep -qE "Tests +[0-9]+ passed" "$_out"; then
-      echo "  ⚠ vitest 超时退出（exit 124），但全部用例已通过 —— 判为沙箱进程不退出，放行"
-      rm -f "$_out"
-      return 0
-    fi
-    # 既无通过也无失败标记：可能真挂起在启动阶段
-    echo "  ✗ vitest 超时且无结果输出 —— 判失败" >&2
-    rm -f "$_out"
+  # 日志落仓库内固定路径（不用 mktemp）：MSYS 的 mktemp 返回 E:/DevTemp/... 这类
+  # Windows 路径，套在 timeout 里时 node 的输出重定向会落空，导致「明明全通过
+  # 却 grep 不到结果」的误判（2026-09-10 实测）。
+  _log=".git/pre-push-vitest.log"
+  _code=0
+  : > "$_log"
+  timeout 480 node "$1" run --root "$2" > "$_log" 2>&1 || _code=$?
+  cat "$_log"
+  # 结论以输出为准（退出码仅作辅助）：沙箱下进程不退出会得到 124，但用例其实已全跑完
+  if grep -qE "Tests +[0-9]+ failed" "$_log" \
+    || grep -qE "^ *FAIL |Unhandled Error|Test Files +[0-9]+ failed" "$_log"; then
+    echo "  ✗ vitest 有失败用例 —— 判失败" >&2
     return 1
   fi
-  rm -f "$_out"
+  if grep -qE "Tests +[0-9]+ passed" "$_log"; then
+    if [ "$_code" -eq 0 ]; then
+      return 0
+    fi
+    if [ "$_code" -eq 124 ]; then
+      echo "  ⚠ vitest 超时退出（exit 124），但全部用例已通过 —— 判为沙箱进程不退出，放行"
+      return 0
+    fi
+    echo "  ✗ vitest 非零退出（exit $_code）—— 判失败" >&2
+    return 1
+  fi
+  # 既无通过也无失败标记：可能真挂起在启动阶段
+  echo "  ✗ vitest 无结果输出（exit $_code）—— 判失败" >&2
   return 1
 }
 run_gate() {
