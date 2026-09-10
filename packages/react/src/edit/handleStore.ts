@@ -175,14 +175,14 @@ export async function verifyPermission(
   request = false,
 ): Promise<boolean> {
   const mode = readWrite ? 'readwrite' : 'read';
-  // 文件句柄与目录句柄都有这两个可选方法：这里只取权限面，不需要收窄具体类型
-  const aware = handle as Partial<PermissionAware>;
-  // 老浏览器没有权限 API：假定可写，错误留到 createWritable 时兜底
-  if (typeof aware.queryPermission !== 'function') return true;
+  // 文件句柄与目录句柄都有这两个可选方法：运行时用 `in` 探测，不做类型断言。
+  // 老浏览器 / jsdom 替身没有权限 API：假定可写，错误留到 createWritable 时兜底
+  if (!('queryPermission' in handle) || typeof handle.queryPermission !== 'function') return true;
   try {
-    if ((await aware.queryPermission({ mode })) === 'granted') return true;
-    if (!request || typeof aware.requestPermission !== 'function') return false;
-    return (await aware.requestPermission({ mode })) === 'granted';
+    if ((await handle.queryPermission({ mode })) === 'granted') return true;
+    if (!request || !('requestPermission' in handle)) return false;
+    if (typeof handle.requestPermission !== 'function') return false;
+    return (await handle.requestPermission({ mode })) === 'granted';
   } catch {
     return false;
   }

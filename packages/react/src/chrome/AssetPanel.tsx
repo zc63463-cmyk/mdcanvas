@@ -14,24 +14,19 @@
  */
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { CHROME } from '../theme/tokens.js';
-import { BUILTIN_ICONS, matchBuiltinIcons, type BuiltinIcon } from './assetIcons.js';
+import { BUILTIN_ICONS, type BuiltinIcon } from './assetIcons.js';
+import { AssetCard, AssetRow } from './assetViews.js';
+import type { AssetInsertAction, AssetItem } from './assetTypes.js';
 
-export interface AssetItem {
-  kind: 'img' | 'draw';
-  id: string;
-  name: string;
-  type: string;
-  /**
-   * 来源（FA1-T4/T5）：'upload' = 用户上传（缺省），'builtin' = 内置矢量图标。
-   * 内置项直接带 `svg` 源码，不依赖资产宿主解析。
-   */
-  source?: 'upload' | 'builtin';
-  /** 内联 SVG 源码（内置图标 / <15KB 上传的 SVG）；有值即可脱离宿主自包含分发 */
-  svg?: string;
-}
+export type { AssetInsertAction, AssetItem } from './assetTypes.js';
+export { searchBuiltinIcons, svgDataUrlWithColor } from './assetViews.js';
 
-/** 素材的三种插入语义（FA1-T3） */
-export type AssetInsertAction = 'icon' | 'media' | 'child';
+/** 语义顺序（UI 渲染次序的唯一事实源；Record 键序不可依赖） */
+export const ASSET_ACTION_ORDER = [
+  'icon',
+  'media',
+  'child',
+] as const satisfies readonly AssetInsertAction[];
 
 export const ASSET_ACTION_LABEL: Record<AssetInsertAction, string> = {
   icon: '节点图标',
@@ -326,7 +321,7 @@ export function AssetPanel({
           }}
         >
           <span>插入为</span>
-          {(Object.keys(ASSET_ACTION_LABEL) as AssetInsertAction[]).map((a) => (
+          {ASSET_ACTION_ORDER.map((a) => (
             <span
               key={a}
               data-asset-action={a}
@@ -383,6 +378,7 @@ export function AssetPanel({
                 item={a}
                 resolve={resolve}
                 top={(range.start + i) * ROW_H}
+                rowHeight={ROW_H}
                 missing={isMissing?.(a) ?? false}
                 onInsert={() => insert(a)}
               />
@@ -490,197 +486,4 @@ function ViewToggle({ view, onChange }: { view: 'grid' | 'list'; onChange: (v: '
       ))}
     </span>
   );
-}
-
-/** 网格卡片：图标 48×48 居中矢量；图片 80×60 保宽高比缩略 */
-function AssetCard({
-  item,
-  resolve,
-  missing,
-  fav,
-  onToggleFav,
-  onInsert,
-}: {
-  item: AssetItem;
-  resolve?: (item: AssetItem) => string;
-  missing: boolean;
-  fav: boolean;
-  onToggleFav: () => void;
-  onInsert: () => void;
-}) {
-  const isIcon = item.type === 'svg' || item.kind === 'draw';
-  const [failed, setFailed] = useState(false);
-  const src = useMemo(() => {
-    if (item.svg) return svgDataUrlWithColor(item.svg, CHROME.text);
-    return resolve?.(item) ?? null;
-  }, [item, resolve]);
-
-  return (
-    <div
-      data-asset-item
-      data-missing={missing || undefined}
-      onClick={() => {
-        if (missing) return; // 失效项禁止插入
-        onInsert();
-      }}
-      title={item.name}
-      style={{
-        width: 80,
-        borderRadius: 10,
-        border: `1px solid ${CHROME.panelBorder}`,
-        background: CHROME.panelBgStrong,
-        padding: 6,
-        cursor: missing ? 'not-allowed' : 'pointer',
-        opacity: missing ? 0.55 : 1,
-        display: 'flex',
-        flexDirection: 'column',
-        alignItems: 'center',
-        gap: 4,
-        position: 'relative',
-      }}
-    >
-      <span
-        data-asset-fav={fav ? 'true' : 'false'}
-        onClick={(e) => {
-          e.stopPropagation();
-          onToggleFav();
-        }}
-        style={{ position: 'absolute', top: 3, right: 5, fontSize: 10, color: fav ? CHROME.neon : CHROME.textMuted }}
-      >
-        {fav ? '★' : '☆'}
-      </span>
-      {src !== null && !failed ? (
-        <img
-          src={src}
-          alt={item.name}
-          width={isIcon ? 48 : 68}
-          height={isIcon ? 48 : 48}
-          style={{ objectFit: 'contain', display: 'block' }}
-          onError={() => setFailed(true)}
-        />
-      ) : (
-        <span
-          style={{
-            width: 48,
-            height: 48,
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            color: missing ? CHROME.warn : CHROME.neon,
-            fontSize: 16,
-          }}
-        >
-          {missing ? '✕' : isIcon ? '◆' : '🖼'}
-        </span>
-      )}
-      <span
-        style={{
-          fontSize: CHROME.fontSizeSmall,
-          color: missing ? CHROME.warn : CHROME.textMuted,
-          maxWidth: '100%',
-          overflow: 'hidden',
-          textOverflow: 'ellipsis',
-          whiteSpace: 'nowrap',
-        }}
-      >
-        {item.name}
-        {missing ? '（失效）' : ''}
-      </span>
-    </div>
-  );
-}
-
-/** 列表行（沿用固定行高，配合虚拟滚动） */
-function AssetRow({
-  item,
-  resolve,
-  top,
-  missing,
-  onInsert,
-}: {
-  item: AssetItem;
-  resolve?: (item: AssetItem) => string;
-  top: number;
-  missing: boolean;
-  onInsert: () => void;
-}) {
-  const [failed, setFailed] = useState(false);
-  const src = item.svg ? svgDataUrlWithColor(item.svg, CHROME.text) : (resolve?.(item) ?? null);
-  return (
-    <div
-      data-asset-item
-      data-missing={missing || undefined}
-      onClick={() => {
-        if (missing) return;
-        onInsert();
-      }}
-      style={{
-        position: 'absolute',
-        top,
-        left: 0,
-        right: 0,
-        height: ROW_H - 2,
-        display: 'flex',
-        alignItems: 'center',
-        gap: 6,
-        padding: '0 6px',
-        borderRadius: 6,
-        cursor: missing ? 'not-allowed' : 'pointer',
-        opacity: missing ? 0.55 : 1,
-      }}
-    >
-      {src !== null && !failed ? (
-        <img
-          src={src}
-          alt={item.name}
-          width={22}
-          height={22}
-          style={{ objectFit: 'contain', flex: 'none', display: 'block' }}
-          onError={() => setFailed(true)}
-        />
-      ) : (
-        <span style={{ width: 22, flex: 'none', textAlign: 'center', color: CHROME.neon }}>◆</span>
-      )}
-      <span
-        style={{
-          fontSize: CHROME.fontSizeSmall,
-          color: missing ? CHROME.warn : item.kind === 'img' ? CHROME.neon : CHROME.textMuted,
-          fontWeight: 600,
-          width: 34,
-          flex: 'none',
-        }}
-      >
-        {item.source === 'builtin' ? '内置' : item.kind}
-      </span>
-      <span
-        style={{
-          fontSize: CHROME.fontSizeSmall,
-          color: missing ? CHROME.warn : undefined,
-          overflow: 'hidden',
-          textOverflow: 'ellipsis',
-          whiteSpace: 'nowrap',
-          flex: 1,
-        }}
-      >
-        {item.name}
-        {missing ? '（失效）' : ''}
-      </span>
-    </div>
-  );
-}
-
-/**
- * 内置图标 → 面板可用的 data URL。
- *
- * 内置图标用 `currentColor`，但 `<img>` 里的 SVG 是独立文档、拿不到宿主 color，
- * currentColor 会解析成默认黑 → 深色面板上完全看不见。因此这里把 currentColor
- * 替换成面板文字色；写进 note.icon 时仍保留 currentColor 版本（渲染层内联后随主题变色）。
- */
-function svgDataUrlWithColor(svg: string, color: string): string {
-  return `data:image/svg+xml;utf8,${encodeURIComponent(svg.replace(/currentColor/g, color))}`;
-}
-
-/** 内置图标按关键字命中（供宿主构造「内置图标」Tab 的候选项） */
-export function searchBuiltinIcons(query: string): readonly BuiltinIcon[] {
-  return matchBuiltinIcons(query);
 }

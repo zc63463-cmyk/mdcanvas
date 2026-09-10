@@ -14,7 +14,7 @@
  */
 import { kindOfFileName, mimeOfFileName, type AssetHost } from './assetHost.js';
 import { INLINE_SVG_LIMIT } from './assetIcons.js';
-import type { AssetItem } from './AssetPanel.js';
+import type { AssetItem } from './assetTypes.js';
 
 /** 工作区落盘能力的最小面（结构化类型，`DirectoryWorkspaceHost` 天然满足） */
 export interface WorkspaceWriter {

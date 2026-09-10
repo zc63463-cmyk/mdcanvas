@@ -3,6 +3,8 @@
  * - saveMarkdown：File System Access API 优先（支持则「保存到文件」），不支持/失败 → 下载 .mm.md
  * - installBeforeUnload：有未保存变更时拦截页面离开
  */
+import { isAbortError } from './fsError.js';
+
 export type SaveResult = 'fs' | 'download' | 'cancelled';
 
 /**
@@ -93,7 +95,7 @@ export async function saveMarkdown(
       return { result: 'fs', handle };
     } catch (e) {
       // AbortError = 用户取消对话框 → 静默；其他错误 → 兜底下载
-      if ((e as Error).name === 'AbortError') return { result: 'cancelled' };
+      if (isAbortError(e)) return { result: 'cancelled' };
     }
   }
   // 下载兜底（FS Access 不可用/失败）

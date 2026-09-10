@@ -34,6 +34,26 @@ function asOptString(v: unknown): string | undefined {
 }
 
 /**
+ * 读取侧的 color：**原样保留未知 token**（前向兼容）。
+ *
+ * 与渲染侧 `sectionColorOf` 分工明确：
+ *  - 此处只做「是不是非空字符串」的形态校验，未知 token 如 `neon-future` 照收——
+ *    这样存量文件的未来配色在「解析 → 序列化」往返中不会丢值；
+ *  - `sectionColorOf` 才把未知值归一化到 slate 供渲染。
+ *
+ * 这里的一处断言是**有意为之的唯一收敛点**：`SectionSpec.color` 的静态类型是封闭联合，
+ * 而读侧要开放接收任意字符串。断言被限制在本函数内，不扩散到调用方。
+ */
+function readSectionColor(v: unknown): SectionColor | undefined {
+  return typeof v === 'string' && v !== '' ? (v as SectionColor) : undefined;
+}
+
+/** 收窄为已知配色 token（渲染侧归一化的判定依据） */
+export function isKnownSectionColor(v: unknown): v is SectionColor {
+  return typeof v === 'string' && (SECTION_COLORS as readonly string[]).includes(v);
+}
+
+/**
  * 读取 note 的 Section 清单（仅形态合法的条目：id/root 为非空字符串）。
  * 非数组、非对象项、缺 id/root 的条目一律跳过（原值仍在 note 中，不丢）。
  */
@@ -49,8 +69,8 @@ export function sectionsOf(note: Note | undefined | null): SectionSpec[] {
     const spec: SectionSpec = { id, root };
     const title = asOptString(item.title);
     if (title !== undefined) spec.title = title;
-    const color = asOptString(item.color);
-    if (color !== undefined) spec.color = color as SectionColor;
+    const color = readSectionColor(item.color);
+    if (color !== undefined) spec.color = color;
     const members = asOptString(item.members);
     if (members !== undefined) spec.members = members;
     // YAML 标量不强制布尔：手写 `collapsed: true` 解析为字符串 'true'，两种形态都认
@@ -63,10 +83,7 @@ export function sectionsOf(note: Note | undefined | null): SectionSpec[] {
 
 /** 渲染用配色：已知 token 原样，未知/缺省回退 slate（原始值在 note 中透传不丢） */
 export function sectionColorOf(spec: SectionSpec): SectionColor {
-  const c = spec.color;
-  return c !== undefined && (SECTION_COLORS as readonly string[]).includes(c)
-    ? c
-    : DEFAULT_SECTION_COLOR;
+  return isKnownSectionColor(spec.color) ? spec.color : DEFAULT_SECTION_COLOR;
 }
 
 /** 生成一个 Section id（纯函数，无副作用；调用方决定是否使用） */

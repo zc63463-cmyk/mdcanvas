@@ -13,6 +13,7 @@
  * 降级：不支持 `showDirectoryPicker`（Safari/Firefox）或用户拒绝授权时，
  * 宿主保持 `null` 状态，调用方回落既有的 `LocalDocHost`（单文件句柄闭环）。
  */
+import { isAbortError } from './fsError.js';
 import {
   deleteDirectoryHandle,
   getDirectoryHandle,
@@ -158,7 +159,7 @@ export class DirectoryWorkspaceHost {
       return handle;
     } catch (e) {
       // AbortError = 用户取消；其他错误也一律降级，不打断主流程
-      if ((e as Error).name !== 'AbortError') this.root = null;
+      if (!isAbortError(e)) this.root = null;
       return null;
     }
   }

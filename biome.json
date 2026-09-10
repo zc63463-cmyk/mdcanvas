@@ -17,6 +17,8 @@
       "!**/dogfood-output",
       "!**/llm",
       "!**/scripts",
+      "!**/docs",
+      "!**/outputs",
       "!**/pnpm-lock.yaml"
     ]
   },

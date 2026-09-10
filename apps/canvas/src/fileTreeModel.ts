@@ -147,7 +147,7 @@ export function sortTree(nodes: TreeNode[]): TreeNode[] {
  */
 export function filterTree(nodes: readonly TreeNode[], query: string): TreeNode[] {
   const q = query.trim().toLowerCase();
-  if (q === '') return nodes as TreeNode[];
+  if (q === '') return [...nodes];
   const walk = (list: readonly TreeNode[]): TreeNode[] => {
     const out: TreeNode[] = [];
     for (const n of list) {

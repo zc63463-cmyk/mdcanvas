@@ -12,7 +12,7 @@
  */
 import { mimeOfFileName, kindOfFileName } from './assetHost.js';
 import { INLINE_SVG_LIMIT } from './assetIcons.js';
-import type { AssetItem } from './AssetPanel.js';
+import type { AssetItem } from './assetTypes.js';
 import type { AssetHost } from './assetHost.js';
 
 /** IDB 库名/store 名（每导图一个资产空间 = 每库一份；当前单文档应用共用一库） */

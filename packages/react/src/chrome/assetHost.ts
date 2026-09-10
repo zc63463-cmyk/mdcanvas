@@ -4,7 +4,7 @@
  * 渲染层经 host.resolveAsset 拼成可加载 URL；上传持久化由宿主实现（真实 FS/HTTP 属宿主职责）。
  * 当前实现：DemoAssetHost（打包 demo 资产 + objectURL 会话级上传——浏览器沙箱无法落盘，持久化留给真实宿主）。
  */
-import type { AssetItem } from './AssetPanel.js';
+import type { AssetItem } from './assetTypes.js';
 import { INLINE_SVG_LIMIT } from './assetIcons.js';
 
 /** 文件扩展名 → 资产 kind（未知 → img） */

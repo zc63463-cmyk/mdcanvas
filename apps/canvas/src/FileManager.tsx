@@ -32,6 +32,19 @@ import {
   treeFromWorkspace,
   type TreeNode,
 } from './fileTreeModel.js';
+import { ContextMenu } from './FileManagerContextMenu.js';
+import { FlatDocRow, StorageBar, ViewTabs, type FileManagerTab } from './FileManagerChrome.js';
+import {
+  NEW_DOC_TEMPLATE,
+  SEP,
+  btnBase,
+  collectDocs,
+  formatRelative,
+  inputStyle,
+  rowBtn,
+  useStarredKeys,
+  type MenuState,
+} from './fileManagerShared.js';
 
 /**
  * 工作区能力的最小面（结构化类型，`DirectoryWorkspaceHost` 天然满足）。
@@ -71,95 +84,6 @@ export interface FileManagerProps {
   variant?: 'drawer' | 'wide';
 }
 
-const SEP = '/';
-const NEW_DOC_TEMPLATE = '# 未命名\n';
-
-const rowBtn: React.CSSProperties = {
-  display: 'flex',
-  alignItems: 'center',
-  gap: 6,
-  width: '100%',
-  textAlign: 'left',
-  background: 'none',
-  border: 'none',
-  color: CHROME.text,
-  cursor: 'pointer',
-  fontFamily: CHROME.fontFamily,
-  fontSize: CHROME.fontSize,
-  padding: 0,
-};
-
-const menuItem: React.CSSProperties = {
-  display: 'block',
-  width: '100%',
-  textAlign: 'left',
-  background: 'none',
-  border: 'none',
-  color: CHROME.text,
-  cursor: 'pointer',
-  fontFamily: CHROME.fontFamily,
-  fontSize: CHROME.fontSizeSmall,
-  padding: '5px 10px',
-};
-
-const btnBase: React.CSSProperties = {
-  display: 'inline-flex',
-  alignItems: 'center',
-  justifyContent: 'center',
-  gap: 4,
-  background: 'none',
-  border: `1px solid ${CHROME.panelBorder}`,
-  borderRadius: CHROME.radiusSmall,
-  color: CHROME.text,
-  cursor: 'pointer',
-  fontFamily: CHROME.fontFamily,
-  fontSize: CHROME.fontSizeSmall,
-  padding: '4px 10px',
-  whiteSpace: 'nowrap',
-};
-
-function collectDocs(nodes: readonly TreeNode[]): TreeNode[] {
-  const result: TreeNode[] = [];
-  for (const n of nodes) {
-    if (n.type === 'doc') result.push(n);
-    if (n.children && n.children.length > 0) result.push(...collectDocs(n.children));
-  }
-  return result;
-}
-
-function inputStyle(flex = 1): React.CSSProperties {
-  return {
-    flex,
-    background: CHROME.panelBg,
-    border: `1px solid ${CHROME.panelBorderStrong}`,
-    borderRadius: 6,
-    color: CHROME.text,
-    padding: '4px 8px',
-    fontFamily: CHROME.fontFamily,
-    fontSize: CHROME.fontSizeSmall,
-  };
-}
-
-function formatRelative(ts: number): string {
-  if (ts <= 0) return '—';
-  const diff = Date.now() - ts;
-  const min = 60_000;
-  const hour = 60 * min;
-  const day = 24 * hour;
-  if (diff < min) return '刚刚';
-  if (diff < hour) return `${Math.floor(diff / min)} 分钟前`;
-  if (diff < day) return `${Math.floor(diff / hour)} 小时前`;
-  if (diff < 30 * day) return `${Math.floor(diff / day)} 天前`;
-  return new Date(ts).toLocaleDateString('zh-CN');
-}
-
-/** 右键菜单状态 */
-interface MenuState {
-  key: string;
-  x: number;
-  y: number;
-}
-
 export function FileManager({
   library,
   workspace,
@@ -182,30 +106,8 @@ export function FileManager({
   const [menu, setMenu] = useState<MenuState | null>(null);
   const [dropTarget, setDropTarget] = useState<string | null>(null);
   const [dragKey, setDragKey] = useState<string | null>(null);
-  const [tab, setTab] = useState<'tree' | 'recent' | 'starred'>('tree');
-  const [starredKeys, setStarredKeys] = useState<Set<string>>(() => {
-    try {
-      const raw = localStorage.getItem('mindcanvas.starred.v1');
-      return raw ? new Set(JSON.parse(raw)) : new Set<string>();
-    } catch {
-      return new Set<string>();
-    }
-  });
-
-  const toggleStar = useCallback((key: string, e: React.MouseEvent) => {
-    e.stopPropagation();
-    setStarredKeys((prev) => {
-      const next = new Set(prev);
-      if (next.has(key)) next.delete(key);
-      else next.add(key);
-      try {
-        localStorage.setItem('mindcanvas.starred.v1', JSON.stringify([...next]));
-      } catch {
-        // ignore
-      }
-      return next;
-    });
-  }, []);
+  const [tab, setTab] = useState<FileManagerTab>('tree');
+  const { starredKeys, toggleStar } = useStarredKeys();
 
   const [, forceRender] = useState(0);
   const refresh = useCallback((): void => forceRender((n) => n + 1), []);
@@ -471,71 +373,6 @@ export function FileManager({
     return list.filter((d) => d.name.toLowerCase().includes(q) || d.fullPath.toLowerCase().includes(q));
   }, [allDocs, starredKeys, query]);
 
-  const renderFlatRow = (doc: TreeNode) => {
-    const isStarred = starredKeys.has(doc.fullPath) || starredKeys.has(doc.key);
-    return (
-      <div
-        key={doc.key}
-        data-flat-doc
-        data-doc-name={doc.name}
-        style={{
-          display: 'flex',
-          alignItems: 'center',
-          gap: 8,
-          padding: '6px 12px',
-          borderBottom: `1px solid rgba(255,255,255,0.03)`,
-          cursor: 'pointer',
-        }}
-        onClick={() => (doc.wsFile ? onOpenFile(doc.wsFile) : doc.entry ? onOpenEntry(doc.entry) : undefined)}
-      >
-        <button
-          type="button"
-          onClick={(e) => toggleStar(doc.fullPath || doc.key, e)}
-          style={{
-            background: 'none',
-            border: 'none',
-            color: isStarred ? '#eab308' : CHROME.textMuted,
-            cursor: 'pointer',
-            padding: 0,
-            fontSize: 14,
-          }}
-          title={isStarred ? '取消收藏' : '加为星标'}
-        >
-          {isStarred ? '★' : '☆'}
-        </button>
-        <span>📄</span>
-        <span
-          style={{
-            flex: 1,
-            color: CHROME.text,
-            fontWeight: 500,
-            overflow: 'hidden',
-            textOverflow: 'ellipsis',
-            whiteSpace: 'nowrap',
-          }}
-        >
-          {doc.name}
-        </span>
-        {doc.path && (
-          <span
-            style={{
-              fontSize: 11,
-              color: CHROME.textMuted,
-              background: 'rgba(255,255,255,0.06)',
-              padding: '2px 6px',
-              borderRadius: 4,
-            }}
-          >
-            📁 {doc.path}
-          </span>
-        )}
-        <span style={{ fontSize: CHROME.fontSizeSmall, color: CHROME.textMuted, flex: 'none' }}>
-          {formatRelative(doc.ts)}
-        </span>
-      </div>
-    );
-  };
-
   return (
     <div
       data-file-manager
@@ -603,105 +440,14 @@ export function FileManager({
         </button>
       </div>
 
-      {/* 存储位置条：平稳切换，消除未连接工作区的突兀警报 */}
-      <div
-        style={{
-          display: 'flex',
-          alignItems: 'center',
-          gap: 8,
-          padding: '8px 12px',
-          borderBottom: `1px solid ${CHROME.panelBorder}`,
-          fontSize: CHROME.fontSizeSmall,
-          background: 'rgba(255,255,255,0.02)',
-        }}
-      >
-        {useWorkspace ? (
-          <span
-            data-ws-mounted
-            style={{
-              color: CHROME.neon,
-              display: 'inline-flex',
-              alignItems: 'center',
-              gap: 4,
-              fontWeight: 500,
-            }}
-          >
-            🟢 工作区已连接 · 📁 {workspace?.name}
-          </span>
-        ) : (
-          <span
-            style={{
-              color: CHROME.text,
-              display: 'inline-flex',
-              alignItems: 'center',
-              gap: 4,
-              fontWeight: 500,
-            }}
-          >
-            💾 浏览器本地存储
-          </span>
-        )}
-        <span style={{ flex: 1 }} />
-        {onPickWorkspace && (
-          <button
-            type="button"
-            data-pick-workspace
-            style={{
-              ...btnBase,
-              borderColor: useWorkspace ? CHROME.panelBorder : CHROME.neon,
-              color: useWorkspace ? CHROME.text : CHROME.neon,
-            }}
-            onClick={onPickWorkspace}
-          >
-            {useWorkspace ? '切换本地目录…' : '打开本地文件夹…'}
-          </button>
-        )}
-        {useWorkspace && onDetachWorkspace && (
-          <button type="button" style={btnBase} onClick={onDetachWorkspace}>
-            断开
-          </button>
-        )}
-      </div>
+      <StorageBar
+        mounted={useWorkspace}
+        name={workspace?.name ?? null}
+        onPick={onPickWorkspace}
+        onDetach={onDetachWorkspace}
+      />
 
-      {/* 视图分类筛选 Tab */}
-      <div
-        data-fm-tabs
-        style={{
-          display: 'flex',
-          gap: 6,
-          padding: '4px 12px 0',
-          borderBottom: `1px solid ${CHROME.panelBorder}`,
-        }}
-      >
-        {[
-          { key: 'tree', label: '📂 全部目录' },
-          { key: 'recent', label: '🕒 最近修改' },
-          { key: 'starred', label: `⭐ 收藏星标${starredKeys.size > 0 ? ` (${starredKeys.size})` : ''}` },
-        ].map((t) => {
-          const active = tab === t.key;
-          return (
-            <button
-              key={t.key}
-              type="button"
-              data-tab={t.key}
-              onClick={() => setTab(t.key as 'tree' | 'recent' | 'starred')}
-              style={{
-                background: 'none',
-                border: 'none',
-                borderBottom: active ? `2px solid ${CHROME.neon}` : '2px solid transparent',
-                color: active ? CHROME.text : CHROME.textMuted,
-                cursor: 'pointer',
-                padding: '6px 10px',
-                fontSize: CHROME.fontSizeSmall,
-                fontFamily: CHROME.fontFamily,
-                fontWeight: active ? 600 : 400,
-              }}
-            >
-              {t.label}
-            </button>
-          );
-        })}
-      </div>
+      <ViewTabs tab={tab} starredCount={starredKeys.size} onChange={setTab} />
 
       {/* 搜索：文件名 / 路径实时过滤 */}
       <div style={{ padding: '8px 12px' }}>
@@ -773,14 +519,38 @@ export function FileManager({
               {query !== '' ? `没有匹配「${query}」的文件。` : '暂无最近打开的文档。'}
             </div>
           ) : (
-            recentDocs.map((d) => renderFlatRow(d))
+            recentDocs.map((d) => (
+              <FlatDocRow
+                key={d.key}
+                name={d.name}
+                path={d.path}
+                ts={d.ts}
+                starred={starredKeys.has(d.fullPath) || starredKeys.has(d.key)}
+                onToggleStar={(e) => toggleStar(d.fullPath || d.key, e)}
+                onOpen={() =>
+                  d.wsFile ? onOpenFile(d.wsFile) : d.entry ? onOpenEntry(d.entry) : undefined
+                }
+              />
+            ))
           )
         ) : starredDocs.length === 0 ? (
           <div style={{ padding: '28px 12px', textAlign: 'center', color: CHROME.textMuted }}>
             {query !== '' ? `没有匹配「${query}」的收藏。` : '暂无收藏导图。在文档条目上点击 ☆ 即可加入收藏。'}
           </div>
         ) : (
-          starredDocs.map((d) => renderFlatRow(d))
+          starredDocs.map((d) => (
+            <FlatDocRow
+              key={d.key}
+              name={d.name}
+              path={d.path}
+              ts={d.ts}
+              starred
+              onToggleStar={(e) => toggleStar(d.fullPath || d.key, e)}
+              onOpen={() =>
+                d.wsFile ? onOpenFile(d.wsFile) : d.entry ? onOpenEntry(d.entry) : undefined
+              }
+            />
+          ))
         )}
       </div>
 
@@ -822,68 +592,7 @@ export function FileManager({
   );
 }
 
-/** 右键菜单（点击空白关闭；定位在光标处） */
-function ContextMenu({
-  x,
-  y,
-  isDir,
-  onClose,
-  onNewDoc,
-  onNewDir,
-  onRename,
-  onDelete,
-}: {
-  x: number;
-  y: number;
-  isDir: boolean;
-  onClose: () => void;
-  onNewDoc: () => void;
-  onNewDir: () => void;
-  onRename: () => void;
-  onDelete: () => void;
-}) {
-  useEffect(() => {
-    const close = (): void => onClose();
-    window.addEventListener('click', close);
-    return () => window.removeEventListener('click', close);
-  }, [onClose]);
-
-  return (
-    <div
-      data-context-menu
-      style={{
-        position: 'fixed',
-        left: x,
-        top: y,
-        zIndex: 200,
-        minWidth: 140,
-        background: CHROME.panelBgStrong,
-        border: `1px solid ${CHROME.panelBorder}`,
-        borderRadius: CHROME.radiusSmall,
-        boxShadow: CHROME.shadow,
-        backdropFilter: 'blur(14px)',
-        padding: '4px 0',
-      }}
-      onClick={(e) => e.stopPropagation()}
-    >
-      <button type="button" data-menu-new-doc style={menuItem} onClick={onNewDoc}>
-        新建导图
-      </button>
-      {isDir && (
-        <button type="button" data-menu-new-dir style={menuItem} onClick={onNewDir}>
-          新建文件夹
-        </button>
-      )}
-      <button type="button" data-menu-rename style={menuItem} onClick={onRename}>
-        重命名
-      </button>
-      <button type="button" data-menu-delete style={{ ...menuItem, color: CHROME.warn }} onClick={onDelete}>
-        删除
-      </button>
-    </div>
-  );
-}
-
 /** 供外部（MindmapStage）计算「移动到」候选目录 */
 export { allDirs };
 export { SEP };
+export { NEW_DOC_TEMPLATE, formatRelative };

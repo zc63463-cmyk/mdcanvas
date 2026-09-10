@@ -7,6 +7,7 @@
  * 资产持久化说明：资产 id 仍为「导图相对路径」；物理落盘依赖宿主写能力（FS 目录句柄 / Forgejo），本期保持宿主契约不变。
  */
 import { DocLibrary } from './docLibrary.js';
+import { isAbortError } from './fsError.js';
 import { getFileHandle, setFileHandle, verifyPermission } from './handleStore.js';
 import {
   MM_FILE_TYPES,
@@ -95,7 +96,7 @@ export class LocalDocHost implements DocumentHost {
       void setFileHandle(file.name, handle);
       return { id: file.name, name: file.name, source, handle, saved: true, ts: Date.now() };
     } catch (e) {
-      if ((e as Error).name === 'AbortError') return null; // 用户取消
+      if (isAbortError(e)) return null; // 用户取消
       return null;
     }
   }

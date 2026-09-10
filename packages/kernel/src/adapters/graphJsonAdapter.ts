@@ -91,7 +91,8 @@ export function graphJsonToMindmap(graph: GraphJsonPayload): AdapterResult {
 
   if (rootIds.length === 0 && graph.nodes.length > 0) {
     // 若存在全图强连通环导致无入度为 0 节点，按拓扑序或首节点兜底
-    rootIds = [graph.indices.topological_order?.[0] ?? graph.nodes[0]!.id];
+    const fallback = graph.indices.topological_order?.[0] ?? graph.nodes[0]?.id;
+    rootIds = fallback === undefined ? [] : [fallback];
   }
 
   const visited = new Set<string>();
@@ -133,6 +134,7 @@ export function graphJsonToMindmap(graph: GraphJsonPayload): AdapterResult {
   // 3. 构建多中心 (CenterSpec[])
   const centers: CenterSpec[] = [];
   const primaryRoots: EditableNode[] = [];
+  const DEFAULT_CENTER_DIR: GrowDir = 'right';
 
   for (const rootId of rootIds) {
     const tree = buildTreeNode(rootId);
@@ -140,7 +142,7 @@ export function graphJsonToMindmap(graph: GraphJsonPayload): AdapterResult {
       primaryRoots.push(tree);
       centers.push({
         node: tree,
-        dir: 'right' as GrowDir,
+        dir: DEFAULT_CENTER_DIR,
       });
     }
   }
@@ -153,7 +155,7 @@ export function graphJsonToMindmap(graph: GraphJsonPayload): AdapterResult {
         primaryRoots.push(remainingTree);
         centers.push({
           node: remainingTree,
-          dir: 'right' as GrowDir,
+          dir: DEFAULT_CENTER_DIR,
         });
       }
     }

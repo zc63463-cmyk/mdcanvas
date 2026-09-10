@@ -4,7 +4,7 @@
  * 纯函数：清单数组即判定依据（上传后清单更新 → 诊断消失），不依赖宿主实例，便于测试。
  */
 import type { Diagnostic, EntityRef } from '@mindcanvas/kernel';
-import type { AssetItem } from './AssetPanel.js';
+import type { AssetItem } from './assetTypes.js';
 
 /** 资产引用是否存在于清单（kind + id 精确匹配） */
 export function hasAssetIn(assetList: readonly AssetItem[], ref: EntityRef): boolean {
