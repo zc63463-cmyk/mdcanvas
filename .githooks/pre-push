@@ -14,11 +14,44 @@ echo "  （约 2-3 分钟，可用 --no-verify 绕过）"
 
 # pnpm 可用时走原命令；不可用时（受管 Node 沙箱无 pnpm shim，如 WorkBuddy/CI 受限环境）
 # 回退到等价的直接二进制调用——门禁项目一项不少，只换 invocation。
-# vitest 一律 timeout 兜底：沙箱下 hook 上下文偶发套件不退出（2026-09-06 实测
-# 挂起 20+ 分钟），超时即判失败可重跑，绝不静默挂起；被杀任务残留的僵尸
-# node 进程会加剧该问题（需人工清理）。
+#
+# timeout 兜底：沙箱下 hook 上下文偶发「套件跑完但进程不退出」（2026-09-06 实测
+# 挂起 20+ 分钟，被杀任务残留的僵尸 node 进程会加剧该问题）。
+# 处理策略（2026-09-10 修正）：不再把所有超时一律判失败——那会在沙箱里 100% 误杀
+# （测试其实全绿，只是进程不退出，退出码 124）。改为**看证据**：
+#   · 退出码 0                                        → 通过
+#   · 退出码 124（被 timeout 杀）且输出含失败标记      → 失败（真正的挂起/失败）
+#   · 退出码 124 且输出无失败标记、有「Tests N passed」→ 通过（环境噪声，测试已跑完）
+#   · 其他非零                                        → 失败
+# 绝不静默挂起：timeout 仍在，最长等 480s。
 run_vitest() {
-  timeout 480 node "$1" run --root "$2"
+  _out="$(mktemp)"
+  timeout 480 node "$1" run --root "$2" > "$_out" 2>&1
+  _code=$?
+  cat "$_out"
+  if [ "$_code" -eq 0 ]; then
+    rm -f "$_out"
+    return 0
+  fi
+  # 被 timeout 杀死：区分「测试全通过但进程不退出」与「真有失败/挂起」
+  if [ "$_code" -eq 124 ]; then
+    if grep -qE "Tests +[0-9]+ failed" "$_out" || grep -qE "FAIL |Unhandled Error|Test Files +[0-9]+ failed" "$_out"; then
+      echo "  ✗ vitest 超时且输出含失败标记 —— 判失败" >&2
+      rm -f "$_out"
+      return 1
+    fi
+    if grep -qE "Tests +[0-9]+ passed" "$_out"; then
+      echo "  ⚠ vitest 超时退出（exit 124），但全部用例已通过 —— 判为沙箱进程不退出，放行"
+      rm -f "$_out"
+      return 0
+    fi
+    # 既无通过也无失败标记：可能真挂起在启动阶段
+    echo "  ✗ vitest 超时且无结果输出 —— 判失败" >&2
+    rm -f "$_out"
+    return 1
+  fi
+  rm -f "$_out"
+  return 1
 }
 run_gate() {
   if command -v pnpm >/dev/null 2>&1; then
@@ -32,7 +65,10 @@ run_gate() {
   run_vitest packages/kernel/node_modules/vitest/vitest.mjs packages/kernel || return 1
   run_vitest packages/react/node_modules/vitest/vitest.mjs packages/react || return 1
   run_vitest apps/canvas/node_modules/vitest/vitest.mjs apps/canvas || return 1
-  ./node_modules/.bin/depcruise packages apps --config .dependency-cruiser.js || return 1
+  # depcruise 走真实 JS 入口：node_modules/.bin 下的 shell wrapper 在 Git Bash
+  # 下会因 CRLF/路径转义报 "SyntaxError: missing ) after argument list"（2026-09-10 实测）
+  node node_modules/dependency-cruiser/bin/dependency-cruise.mjs packages apps \
+    --config .dependency-cruiser.js || return 1
   node node_modules/@biomejs/biome/bin/biome lint packages apps || return 1
   node scripts/check-code-budget.mjs || return 1
 }
