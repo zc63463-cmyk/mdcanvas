@@ -13,7 +13,7 @@
  * 不是什么：不含菜单项的渲染与键盘交互（`ContextMenu` 自己管）。
  */
 import { pathOfNode } from '@mindcanvas/kernel';
-import { anchorOfNode, collectCenters, contextMenuItemsFor, ContextMenu, planAttachIsland, readGrowDir, removeCenter, upsertCenter, type EditorController } from '@mindcanvas/react';
+import { anchorOfNode, collectCenters, contextMenuItemsFor, ContextMenu, planAttachIsland, readGrowDir, removeCenter, upsertCenter, type EditorController, type SectionMenuActions } from '@mindcanvas/react';
 import { nodeById } from './hooks/useEdgeActions.js';
 
 /** 侧面板标识（与 MindmapStage 的 panel 状态一致；null = 全部关闭） */
@@ -49,6 +49,8 @@ export interface NodeContextMenuProps {
   setPinnedNotePath: (path: number[], editing?: boolean) => void;
   /** A5：接回/事务失败的告警回调（命令层结构化拒绝 → 用户可见提示） */
   onAttachError?: (message: string) => void;
+  /** v1.5.0 Section 三态菜单动作（D1：Section ⇒ center；写入走 controller 事务通道） */
+  sectionActions?: SectionMenuActions;
   onClose: () => void;
 }
 
@@ -63,6 +65,7 @@ export function NodeContextMenu({
   setDescEditingId,
   setPinnedNotePath,
   onAttachError,
+  sectionActions,
   onClose,
 }: NodeContextMenuProps) {
   return (
@@ -168,6 +171,8 @@ export function NodeContextMenu({
             controller.updateNote(id, { dir: dir ?? undefined });
           },
         },
+        // v1.5.0 Section 三态入口（D1：Section ⇒ center，故依赖中心块提供 isCenter）
+        sectionActions,
       )}
       onClose={onClose}
     />

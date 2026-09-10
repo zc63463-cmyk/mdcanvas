@@ -8,8 +8,9 @@
  * v1.4.0 扩展：可选 noteActions —— 追加「编辑 note笔记」，打开节点下方的固定笔记。
  * 两种内容不同：desc 常驻节点盒内，固定 note 笔记在节点下方向下生长并参与布局。
  */
-import { getNode, type EditableNode, type GrowDir } from '@mindcanvas/kernel';
+import { findNode, getNode, type EditableNode, type GrowDir, type Note } from '@mindcanvas/kernel';
 import type { ContextMenuItem } from '../chrome/ContextMenu.js';
+import { inferChildDir } from '../render/growDir.js';
 import type { EditorController } from './controller.js';
 
 /** 实体菜单的画布侧动作（picker / 关系面板由调用方持有） */
@@ -77,6 +78,21 @@ export interface GrowDirMenuActions {
   onSetGrowDir: (id: string, dir: GrowDir | null) => void;
 }
 
+/**
+ * v1.5.0 Section 菜单动作（Phase 1：Section = 带装饰的 Center Island，D1 裁决）。
+ * 三态入口：已是 center → 标记；非 center → 升格并标记（合并单条 undo）；已是 Section → 取消。
+ */
+export interface SectionMenuActions {
+  /** 该节点是否是某 Section 的 root（返回 sectionId；否 undefined） */
+  sectionOf: (id: string) => string | undefined;
+  /** 已是 center → 标记为 Section（写 cid 锚元数据，单条 undo） */
+  onMark: (id: string) => void;
+  /** 非 center → 升格为中心并标记为 Section（合并单条 undo） */
+  onPromoteAndMark: (id: string) => void;
+  /** 取消 Section（仅删元数据，不动树、不动 center） */
+  onUnmark: (id: string) => void;
+}
+
 export function contextMenuItemsFor(
   controller: EditorController,
   id: string,
@@ -86,13 +102,25 @@ export function contextMenuItemsFor(
   noteActions?: NoteMenuActions,
   centerActions?: CenterMenuActions,
   growDirActions?: GrowDirMenuActions,
+  sectionActions?: SectionMenuActions,
 ): ContextMenuItem[] {
   const isRoot = id === controller.root.id;
+  // G6′ 触发一致性：菜单生长与 Tab 生长共用 inferChildDir（兄弟多数 → 父方向 → 继承）
+  const inferDirNoteOf = (nid: string): Note | undefined => {
+    const n = getNode(controller.root, nid);
+    const d = n ? inferChildDir(n) : null;
+    return d ? { dir: d } : undefined;
+  };
+  const inferSiblingDirNoteOf = (nid: string): Note | undefined => {
+    const loc = findNode(controller.root, nid);
+    const d = loc ? inferChildDir(loc.parent) : null;
+    return d ? { dir: d } : undefined;
+  };
   const items: ContextMenuItem[] = [
     {
       label: '新建子节点',
       onSelect: () => {
-        const cid = controller.addChild(id);
+        const cid = controller.addChild(id, undefined, inferDirNoteOf(id));
         controller.select(cid);
         controller.startEdit(cid);
       },
@@ -116,7 +144,7 @@ export function contextMenuItemsFor(
     items.push({
       label: '新建同级节点',
       onSelect: () => {
-        const sid = controller.addSibling(id);
+        const sid = controller.addSibling(id, undefined, inferSiblingDirNoteOf(id));
         if (sid !== null) {
           controller.select(sid);
           controller.startEdit(sid);
@@ -194,6 +222,26 @@ export function contextMenuItemsFor(
           onSelect: () => centerActions.onPromote(id, dir),
         });
       }
+    }
+  }
+  // v1.5.0：Section 三态入口（紧随中心块之后；D1：Section ⇒ center，不存在非 center 的 Section）
+  if (sectionActions && centerActions && !isRoot) {
+    const secId = sectionActions.sectionOf(id);
+    if (secId !== undefined) {
+      items.push({
+        label: '取消 Section',
+        onSelect: () => sectionActions.onUnmark(id),
+      });
+    } else if (centerActions.isCenter(id)) {
+      items.push({
+        label: '标记为 Section',
+        onSelect: () => sectionActions.onMark(id),
+      });
+    } else {
+      items.push({
+        label: '设为 Section（升为中心）',
+        onSelect: () => sectionActions.onPromoteAndMark(id),
+      });
     }
   }
   // D3′：生长方向（思想分叉；note.dir 语义意图随子树迁移，四向 + 继承。

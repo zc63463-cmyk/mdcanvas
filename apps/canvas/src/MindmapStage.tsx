@@ -11,17 +11,26 @@ import {
   pathOfNode,
   type NodePath,
 } from '@mindcanvas/kernel';
-import type { EditableNode, Entity } from '@mindcanvas/kernel';
-import { LayoutCache, REGISTERED_KINDS, refKey } from '@mindcanvas/kernel';
+import type { EditableNode, Entity, GrowDir, Note, TreeOp } from '@mindcanvas/kernel';
+import {
+  DEFAULT_SECTION_COLOR,
+  makeSectionId,
+  removeSection,
+  upsertSection,
+} from '@mindcanvas/kernel';
+import { findNode, getNode, LayoutCache, REGISTERED_KINDS, refKey } from '@mindcanvas/kernel';
 import type {
   AssetHost,
   AssetItem,
+  Center,
   DocumentHost,
   EdgeManual,
   EdgeRouteEntry,
   FreeEdge,
   MapStats,
   MindDoc,
+  ResolvedSection,
+  WorkspaceFile,
 } from '@mindcanvas/react';
 import {
   AssetPanel,
@@ -52,15 +61,21 @@ import {
   isEscapedEntityInput,
   isImageFileName,
   isMindDocFile,
+  DirectoryWorkspaceHost,
+  WorkspaceAssetHost,
   idsMeasureKey,
   LocalDocHost,
   LocalEntityStore,
   layoutDemo,
   buildIslandView,
   collectCenters,
+  ensureNodeCid,
+  planPromoteCenter,
+  resolveSections,
   upsertCenter,
   MapView,
   matchEditorKey,
+  matchPreDirKey,
   OutlinePanel,
   PluginHost,
   QaEditor,
@@ -68,6 +83,7 @@ import {
   SearchPanel,
   ShortcutHelpPanel,
   scaleNoticeFor,
+  inferChildDir,
   searchMind,
   ThemeProvider,
   ThemeSwitcher,
@@ -367,6 +383,8 @@ function StageContent({
 
   // GH-T3：自动保存（debounce 300ms；仅已落盘文档；手动 Ctrl+S 取消 pending；失败静默由手动保存兜底）
   const autoSaveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // FA1-T1：落盘中转瞬态（驱动「保存中...」指示）；saving 期间不重复触发
+  const [saving, setSaving] = useState(false);
 
   // 文档操作（打开/新建/保存/另存为）—— 依赖 autoSaveTimer，故在其定义之后调用
   const { applyDoc, handleOpen, handleNew, handleSave, handleSaveAs } = useDocumentActions({
@@ -376,21 +394,31 @@ function StageContent({
     setDoc,
     fileInputRef,
     autoSaveTimer,
+    onSavingChange: setSaving,
   });
 
   useEffect(() => {
     if (!controller.dirty || !doc.saved || !doc.handle) return;
     if (autoSaveTimer.current) clearTimeout(autoSaveTimer.current);
-    autoSaveTimer.current = setTimeout(() => {
-      autoSaveTimer.current = null;
-      const source = controller.serialize();
-      void docHost.save({ ...doc, source }).then((r) => {
-        if (r !== 'cancelled') {
-          setDoc((d) => ({ ...d, source, ts: Date.now() }));
-          controller.markSaved();
-        }
-      });
-    }, 300);
+      autoSaveTimer.current = setTimeout(() => {
+        autoSaveTimer.current = null;
+        const source = controller.serialize();
+        setSaving(true);
+        void docHost
+          .save({ ...doc, source })
+          .then((outcome) => {
+            if (outcome.result !== 'cancelled') {
+              setDoc((d) => ({
+                ...d,
+                source,
+                handle: outcome.handle ?? d.handle,
+                ts: Date.now(),
+              }));
+              controller.markSaved();
+            }
+          })
+          .finally(() => setSaving(false));
+      }, 300);
     return () => {
       if (autoSaveTimer.current) clearTimeout(autoSaveTimer.current);
     };
@@ -454,6 +482,19 @@ function StageContent({
   // 文件管理器（文档库 UI）：独立于 `panel` 单态——它是模态浮层，不是侧面板
   const [fileManagerOpen, setFileManagerOpen] = useState(false);
   const [ctxMenu, setCtxMenu] = useState<{ nodeId: string; x: number; y: number } | null>(null);
+  /**
+   * PG 式预方向（会话级易失：不落文档，刷新即失；Tab/Enter 生长时才固化进 note.dir）。
+   * 用 ref 持有：keydown 的 effect 依赖只有 controller，若用 state 会因闭包陷阱
+   * 永远读到首次渲染的空 Map（实测「设了方向但 Tab 不生效」的根因）。
+   * 另存一份 state 仅用于触发重渲染以显示提示徽标。
+   */
+  const preDirsRef = useRef<ReadonlyMap<string, GrowDir>>(new Map());
+  const [preDirHint, setPreDirHint] = useState<{ id: string; dir: GrowDir } | null>(null);
+  useEffect(() => {
+    if (preDirHint === null) return;
+    const timer = setTimeout(() => setPreDirHint(null), 2500);
+    return () => clearTimeout(timer);
+  }, [preDirHint]);
 
   // v1.3.0 幕布描述（note.desc）：正在编辑描述的节点 id + 已展开全文的节点集合
   const [descEditingId, setDescEditingId] = useState<string | null>(null);
@@ -536,22 +577,93 @@ function StageContent({
   const searchOpen = panel === 'search';
   const outlineOpen = panel === 'outline';
 
+  // FA2-T1：本地目录工作区（Obsidian 式「打开一个文件夹」）。
+  // 挂载后文档读写直接走磁盘句柄，摆脱 localStorage 的 8 篇源码快照上限。
+  const workspaceRef = useRef<DirectoryWorkspaceHost | null>(null);
+  if (workspaceRef.current === null) workspaceRef.current = new DirectoryWorkspaceHost();
+  const workspace = workspaceRef.current;
+  const [workspaceReady, setWorkspaceReady] = useState(false);
+  /** 当前文档在工作区内的相对路径（面包屑用；非工作区文档为 null） */
+  const [workspacePath, setWorkspacePath] = useState<string | null>(null);
+
+  // 刷新页面后自动恢复上次的工作区（仅限已授权 granted 的句柄）
+  useEffect(() => {
+    let alive = true;
+    void workspace.restore().then((ok) => {
+      if (alive) setWorkspaceReady(ok);
+    });
+    return () => {
+      alive = false;
+    };
+  }, [workspace]);
+
+  /** 打开工作区里的真实文件：读磁盘内容 → 经 applyDoc 切换（带未保存守卫） */
+  const openWorkspaceFile = useCallback(
+    async (file: WorkspaceFile): Promise<boolean> => {
+      const source = await workspace.readFile(file);
+      setWorkspacePath(file.path);
+      // handle 直接带上：后续 Ctrl+S / 自动保存走 createWritable() 静默写回磁盘
+      return applyDoc({
+        id: file.path,
+        name: file.name,
+        source,
+        handle: file.handle,
+        saved: true,
+        ts: file.ts || Date.now(),
+      });
+    },
+    [workspace, applyDoc],
+  );
+
+  /** 「打开本地文件夹」：唤起选择器（此处必有用户手势）并挂载 */
+  const pickWorkspace = useCallback((): void => {
+    void workspace.pick().then((ok) => {
+      setWorkspaceReady(ok !== null);
+    });
+  }, [workspace]);
+
+  /** 断开工作区：回到 localStorage 兼容模式 */
+  const detachWorkspace = useCallback((): void => {
+    void workspace.detach().then(() => {
+      setWorkspaceReady(false);
+      setWorkspacePath(null);
+    });
+  }, [workspace]);
+
   // 批次 4：Ctrl+Shift+A 图库面板（资产实体化；点资产 → 插入 @img/@draw 引用到选中节点下）
   // 图库资产宿主（P0）：清单/解析/上传全部经宿主注入；demo 宿主 = 打包资产 + objectURL 会话上传
   const assetHostRef = useRef<AssetHost | null>(null);
-  if (assetHostRef.current === null) assetHostRef.current = new IdbAssetHost(DEMO_ASSETS, '/');
+  // FA2-T4：包一层工作区宿主 —— 挂载工作区后大资产写进磁盘 ./assets/（相对路径引用），
+  // 未挂载时完全退回 IndexedDB（行为不变）。用 getter 传工作区：挂载发生在宿主创建之后。
+  if (assetHostRef.current === null) {
+    assetHostRef.current = new WorkspaceAssetHost(
+      new IdbAssetHost(DEMO_ASSETS, '/'),
+      () => workspace,
+    );
+  }
   const assetHost = assetHostRef.current;
 
   // 文档库（文件管理的索引层）：只登记已落盘的文档，
   // 新建未保存的不进库（否则关掉就留下一堆空条目）。
   const libraryRef = useRef<DocLibrary | null>(null);
-  if (libraryRef.current === null) libraryRef.current = new DocLibrary();
+  if (libraryRef.current === null) {
+    const lib = new DocLibrary();
+    lib.ensurePresetFolders();
+    libraryRef.current = lib;
+  }
   const library = libraryRef.current;
 
   // 文档落盘 → 登记进文档库（文件管理的索引来源）。
   // 只在 saved 时登记：新建未保存的文档不进库，否则关掉就留下一堆空条目。
   useEffect(() => {
-    if (doc.saved) library.upsert({ id: doc.id, name: doc.name, source: doc.source });
+    if (doc.saved) {
+      library.upsert({
+        id: doc.id,
+        name: doc.name,
+        source: doc.source,
+        folder: doc.id === 'gateway.mm.md' ? '示例导图' : undefined,
+      });
+    }
   }, [doc.id, doc.name, doc.source, doc.saved, library]);
   // 异步清单（宿主可换 HTTP/FS 实现）；插入/上传后由 Stage 更新本地副本
   const [assetList, setAssetList] = useState<AssetItem[]>([]);
@@ -719,6 +831,93 @@ function StageContent({
     return () => clearTimeout(timer);
   }, [commandNotice]);
 
+  /**
+   * v1.5.0 Section 写入管线（T4）。
+   *
+   * D1 裁决：Section ⇒ center（不变量）。三条路径统一保证「root 锚落 cid + center 条目存在」：
+   * - onMark（已是 center）：复用 center 条目既有 cid → 只写 sections，单条 undo；
+   *   退化情形（手写 YAML 的 center 无 cid）补分配并同批写回节点 note（仍单条 undo）；
+   * - onPromoteAndMark（非 center）：复用 planPromoteCenter 的 cid 分配 + center 条目，
+   *   再把 sections 并入**同一批 ops 的 root note patch**（一次 Ctrl+Z 撤回整件事）；
+   * - onUnmark：只删 sections 条目，**不动树、不动 center**（降格是独立动作，仍归「取消中心」）。
+   *
+   * 全程走 controller.applyTransaction / updateNote（TreeOp + OpHistory），与 center 写入通道同构。
+   */
+  const sectionActions = useMemo(() => {
+    return {
+      sectionOf: (id: string): string | undefined => {
+        const at = anchorOfNode(controller.root, id);
+        if (!at) return undefined;
+        return resolveSections(controller.root).find((s: ResolvedSection) => s.rootId === id)?.spec
+          .id;
+      },
+      onMark: (id: string): void => {
+        const at = anchorOfNode(controller.root, id);
+        if (!at) return;
+        // D1 守卫：非 center 不得直接标记（手写 YAML 可能造出这种态，此处不放大）
+        const center = collectCenters(controller.root).find((c: Center) => c.at === at);
+        if (!center) return;
+        const root = controller.root;
+        const node = getNode(root, id);
+        let rootNote: Note = root.note ?? {};
+        let nodeNote: Note | undefined = node?.note;
+        let cid = center.cid;
+        if (cid === undefined) {
+          const ensured = ensureNodeCid(rootNote, nodeNote);
+          rootNote = ensured.rootNote;
+          nodeNote = ensured.nodeNote;
+          cid = ensured.cid;
+        }
+        const labeled = upsertSection(rootNote, {
+          id: makeSectionId(),
+          root: `cid:${cid}`,
+          color: DEFAULT_SECTION_COLOR,
+          ...(node ? { title: getNodeLabel(root, id) } : {}),
+        });
+        // cid 是新分配的 → 节点 note 也要落库（两条 update-node 同批，单条 undo）
+        if (nodeNote !== node?.note) {
+          const ops: TreeOp[] = [
+            { type: 'update-node', id: root.id, patch: { note: labeled } },
+            { type: 'update-node', id, patch: { note: nodeNote } },
+          ];
+          const result = controller.applyTransaction(ops);
+          if (!result.ok) setCommandNotice(`Section 未提交：${result.error.message}`);
+          return;
+        }
+        controller.updateNote(root.id, { sections: labeled.sections ?? undefined });
+      },
+      onPromoteAndMark: (id: string): void => {
+        const plan = planPromoteCenter(controller.root, id, { dir: 'right' });
+        if (!plan.ok) {
+          setCommandNotice(plan.error.message);
+          return;
+        }
+        // 合并：把 sections 并入 plan 中已存在的 root update-node patch（单条 undo）
+        const ops: TreeOp[] = plan.ops.map((op: TreeOp): TreeOp => {
+          if (op.type !== 'update-node' || op.id !== controller.root.id) return op;
+          const note = op.patch.note ?? {};
+          const labeled = upsertSection(note, {
+            id: makeSectionId(),
+            root: `cid:${plan.cid}`,
+            color: DEFAULT_SECTION_COLOR,
+            title: getNodeLabel(controller.root, id),
+          });
+          return { ...op, patch: { ...op.patch, note: labeled } };
+        });
+        const result = controller.applyTransaction(ops);
+        if (!result.ok) setCommandNotice(`Section 未提交：${result.error.message}`);
+      },
+      onUnmark: (id: string): void => {
+        const sec = resolveSections(controller.root).find(
+          (s: ResolvedSection) => s.rootId === id,
+        );
+        if (!sec) return;
+        const next = removeSection(controller.root.note, sec.spec.id);
+        controller.updateNote(controller.root.id, { sections: next.sections ?? undefined });
+      },
+    };
+  }, [controller, setCommandNotice]);
+
   // 导出（SVG / PNG）—— 依赖 layout，故在其定义之后调用
     // A6/T23：boundaryLinks 补线随导出（islandView.boundaryLinks 已按 parent_link 过滤）
     const { handleExport, handleExportPng } = useExportActions({
@@ -742,15 +941,28 @@ function StageContent({
     const onKey = (e: KeyboardEvent): void => {
       if (controller.editingId !== null) return; // 输入框内：stopPropagation 已在 OverlayEditor
       if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return; // 搜索/批注输入框内不触发画布快捷键
+      const sel = controller.selectedId;
+      // PG 式预方向：W W / S S / A A / D D（会话级易失，不落文档）
+      // 生长时（Tab/Enter）才把方向固化进新节点 note.dir。
+      const preDir = matchPreDirKey(e);
+      if (preDir !== null) {
+        if (!sel) return;
+        e.preventDefault();
+        preDirsRef.current = new Map(preDirsRef.current).set(sel, preDir);
+        setPreDirHint({ id: sel, dir: preDir }); // 视觉反馈：让用户看见「已设方向」
+        return;
+      }
       const act = matchEditorKey(e);
       if (!act) return;
-      const sel = controller.selectedId;
       switch (act.type) {
         case 'add-child':
           if (!sel) return;
           e.preventDefault();
           {
-            const id = controller.addChild(sel);
+            // 生长固化：预方向 → 否则按兄弟多数/父方向推断 → 都没有则不写（走继承）
+            const parent = getNode(controller.root, sel);
+            const dir = preDirsRef.current.get(sel) ?? (parent ? inferChildDir(parent) : null);
+            const id = controller.addChild(sel, undefined, dir ? { dir } : undefined);
             controller.select(id);
             controller.startEdit(id);
           }
@@ -758,7 +970,10 @@ function StageContent({
         case 'add-sibling': {
           if (!sel) return;
           e.preventDefault();
-          const id = controller.addSibling(sel);
+          // G6′ 触发一致性：同级生长也走推断（参照兄弟的显式方向参与多数票）
+          const loc = findNode(controller.root, sel);
+          const sibDir = loc ? inferChildDir(loc.parent) : null;
+          const id = controller.addSibling(sel, undefined, sibDir ? { dir: sibDir } : undefined);
           if (id !== null) {
             controller.select(id);
             controller.startEdit(id);
@@ -934,14 +1149,24 @@ function StageContent({
           {pluginActive ? '◆ 插件已载' : '◆ 纯文本版'}
         </span>
         <span
+          data-save-state
           style={{
-            color: controller.dirty ? CHROME.warn : CHROME.textMuted,
+            color: saving ? CHROME.neon : controller.dirty ? CHROME.warn : CHROME.textMuted,
             fontSize: CHROME.fontSizeSmall,
             minWidth: 34,
+            transition: 'color .18s ease',
           }}
-          title={controller.dirty ? '有未保存变更' : '已保存'}
+          title={
+            saving
+              ? '正在写入磁盘'
+              : controller.dirty
+                ? '有未保存变更（300ms 后自动落盘）'
+                : doc.handle
+                  ? `已保存到 ${doc.name}`
+                  : '已保存（尚未绑定文件）'
+          }
         >
-          {controller.dirty ? '● 未保存' : '已保存'}
+          {saving ? '保存中…' : controller.dirty ? '● 未保存' : '✓ 已保存'}
         </span>
         <button
           onClick={() => apiRef.current?.fit()}
@@ -1160,13 +1385,22 @@ function StageContent({
         onEditTabGrow={(id, text) => {
           // 输入 @ 已转入实体 picker —— 此时不应再建子节点
           if (commitNodeText(id, text)) return;
-          const newId = controller.addChild(id);
+          // G6′ 触发一致性：与键盘 Tab 生长同一套方向固化（预方向 → 兄弟多数/父方向）
+          const pre = preDirsRef.current.get(id);
+          const n = getNode(controller.root, id);
+          const d = pre ?? (n ? inferChildDir(n) : null);
+          const newId = controller.addChild(id, undefined, d ? { dir: d } : undefined);
           controller.select(newId);
           controller.startEdit(newId);
         }}
         // G6′：中心拖拽 = 移动坐标（带动整棵子树），其余节点仍是改树结构
         centerIds={centerIds}
         onCenterMove={handleCenterMove}
+        // v1.5.0 Section 幽灵态（dangling）一键清理——从根 note.sections 移除该条目（数据无损前提下的显式动作）
+        onRemoveSection={(sectionId) => {
+          const next = removeSection(controller.root.note, sectionId);
+          controller.updateNote(controller.root.id, { sections: next.sections ?? undefined });
+        }}
         onEditStart={(id) => {
           controller.select(id);
           // M1：实体节点 → 直接开 picker 改引用（而非文本编辑）
@@ -1288,6 +1522,33 @@ function StageContent({
         </div>
       )}
 
+      {/* 预方向提示（PG 式「预设-固化」的可见反馈）：设了方向必须看得见，
+          否则用户无法判断快捷键是否生效（实测无反馈 = 等于没实现）。 */}
+      {preDirHint !== null && (
+        <div
+          data-testid="pre-dir-hint"
+          style={{
+            position: 'absolute',
+            left: '50%',
+            top: 16,
+            transform: 'translateX(-50%)',
+            padding: '8px 14px',
+            borderRadius: 8,
+            background: 'rgba(64, 128, 255, 0.14)',
+            border: '1px solid rgba(64, 128, 255, 0.5)',
+            color: '#2f6fed',
+            fontFamily: 'inherit',
+            fontSize: 12,
+            lineHeight: 1.6,
+            zIndex: 6,
+            pointerEvents: 'none',
+            userSelect: 'none',
+          }}
+        >
+          预方向：{PRE_DIR_LABEL_CN[preDirHint.dir]} —— 按 Tab 生长即固化到该节点
+        </div>
+      )}
+
       {/* G6″（A3-2）：中心诊断警示条（宁可不写也不错写——坏锚/重复中心的原因在此可见）。
           自适应高度随条目数增长；不做交互（定位/跳转归后续工作包）。 */}
       {islandView.diagnostics.length > 0 && (
@@ -1358,11 +1619,18 @@ function StageContent({
         >
           {doc.name}
         </span>
-        {controller.dirty && (
-          <span data-doc-dirty style={{ color: CHROME.warn }} title="未保存修改">
-            ●
-          </span>
-        )}
+        <span
+          data-doc-dirty={saving ? undefined : controller.dirty || undefined}
+          style={{
+            color: saving ? CHROME.neon : CHROME.warn,
+            fontSize: CHROME.fontSizeSmall,
+            opacity: saving || controller.dirty ? 1 : 0,
+            transition: 'opacity .18s ease',
+          }}
+          title={saving ? '正在写入磁盘' : '未保存修改'}
+        >
+          {saving ? '⟳' : '●'}
+        </span>
         <DocBtn label="新建" onClick={handleNew} />
         <DocBtn label="打开" onClick={() => void handleOpen()} />
         <DocBtn label="最近" onClick={() => setDocMenuOpen((v) => !v)} />
@@ -1603,6 +1871,7 @@ function StageContent({
           setDescEditingId={setDescEditingId}
           setPinnedNotePath={setPinnedNotePath}
           onAttachError={(message) => setCommandNotice(message)}
+          sectionActions={sectionActions}
           onClose={() => setCtxMenu(null)}
         />
       )}
@@ -1625,9 +1894,15 @@ function StageContent({
       {fileManagerOpen && (
         <FileManagerModal
           library={library}
+          workspace={workspaceReady ? workspace : null}
           applyDoc={applyDoc}
           handleOpen={handleOpen}
           handleNew={handleNew}
+          openWorkspaceFile={openWorkspaceFile}
+          onPickWorkspace={pickWorkspace}
+          onDetachWorkspace={detachWorkspace}
+          currentPath={workspacePath}
+          dirty={controller.dirty}
           onClose={() => setFileManagerOpen(false)}
         />
       )}
@@ -1754,6 +2029,14 @@ function btnStyle(enabled: boolean): CSSProperties {
     padding: '0 4px',
   };
 }
+
+/** 预方向中文名（提示条用） */
+const PRE_DIR_LABEL_CN: Readonly<Record<GrowDir, string>> = {
+  up: '向上',
+  down: '向下',
+  left: '向左',
+  right: '向右',
+};
 
 export default function MindmapStage() {
   return (
