@@ -1,20 +1,43 @@
 /**
- * AssetPanel —— 笔记图库侧栏（右侧玻璃浮层，与 OutlinePanel 同构）。
- * 资产清单经宿主注入（P0）；大图集窗口化渲染（P3：虚拟滚动，固定行高 + 可视区间裁剪）；
- * 缩略图可选（resolve prop，宿主解析 URL）；失效项 warn 标识 + 禁插（P2）。
- * 点击资产 → onInsert（宿主负责插入 @img/@draw 引用）；空态引导。
- * 上传入口（P1-1）：「+ 上传」按钮（file input）+ 面板拖拽 → onUpload(files)；
- * 未传 onUpload 时按钮不渲染（既有只读用法零破坏）。
+ * AssetPanel —— 素材中心侧栏（右侧玻璃浮层）。
+ *
+ * FA1-T4 重构：从 230px 单列文本列表升级为 360px 现代素材抽屉：
+ *  - **双视图**：网格（图标 48×48 / 图片 80×60 缩略卡） / 列表（沿用虚拟滚动，大图集友好）
+ *  - **搜索**：顶部常驻 input，实时过滤名称与类型
+ *  - **分类 Tabs**：全部 / ⭐ 常用 / 🎨 内置矢量图标 / 📁 本地上传
+ *  - **插入语义**：顶部「插入为」三选一（节点图标 / 节点插图 / 子分支）——
+ *    纠正此前「点击素材 = 无差别新建子节点」的反直觉逻辑
+ *  - **上传**：底部虚线 Dropzone + 剪贴板 Paste（图片文件或 <svg> 纯文本均可入库）
+ *
+ * 向后兼容：`onInsert` 仍是主操作（点击卡片触发），未传 `onInsertAs` 的老调用方
+ * 行为完全不变（= 插入为子分支）。
  */
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { CHROME } from '../theme/tokens.js';
+import { BUILTIN_ICONS, matchBuiltinIcons, type BuiltinIcon } from './assetIcons.js';
 
 export interface AssetItem {
   kind: 'img' | 'draw';
   id: string;
   name: string;
   type: string;
+  /**
+   * 来源（FA1-T4/T5）：'upload' = 用户上传（缺省），'builtin' = 内置矢量图标。
+   * 内置项直接带 `svg` 源码，不依赖资产宿主解析。
+   */
+  source?: 'upload' | 'builtin';
+  /** 内联 SVG 源码（内置图标 / <15KB 上传的 SVG）；有值即可脱离宿主自包含分发 */
+  svg?: string;
 }
+
+/** 素材的三种插入语义（FA1-T3） */
+export type AssetInsertAction = 'icon' | 'media' | 'child';
+
+export const ASSET_ACTION_LABEL: Record<AssetInsertAction, string> = {
+  icon: '节点图标',
+  media: '节点插图',
+  child: '子分支',
+};
 
 export interface AssetPanelProps {
   assets: AssetItem[];
@@ -26,34 +49,194 @@ export interface AssetPanelProps {
   resolve?: (item: AssetItem) => string;
   /** 上传入口（P1-1）：上传按钮 / 面板拖拽 → 文件数组（宿主负责过滤 + uploadAsset） */
   onUpload?: (files: File[]) => void;
+  /**
+   * 三语义插入（FA1-T3）：宿主按 action 决定落到 note.icon / note.media / 新建子节点。
+   * 缺省（老调用方）→ 一切点击都走 onInsert。
+   */
+  onInsertAs?: (item: AssetItem, action: AssetInsertAction) => void;
+  /** 当前插入语义（受控；缺省内部维护，默认 'child'） */
+  action?: AssetInsertAction;
+  onActionChange?: (action: AssetInsertAction) => void;
+  /** 剪贴板粘贴入库（FA1-T4）：收到图片文件；缺省不监听 paste */
+  onPaste?: (files: File[]) => void;
+  /**
+   * 初始视图（FA1-T4）。默认 'list' 以保持既有调用方形态不变；
+   * 产品壳（apps/canvas）传 'grid' 呈现现代网格。
+   */
+  defaultView?: 'grid' | 'list';
 }
 
 /** 虚拟滚动行高（px）：项 + 2px 间距（与渲染样式一致） */
 const ROW_H = 30;
 /** 可视区上下缓冲行数（防快速滚动闪白） */
 const BUFFER = 6;
+/** 面板宽度（FA1-T4：230 → 360） */
+const PANEL_W = 360;
+/** 收藏持久化 key */
+const FAV_KEY = 'mindcanvas.assets.fav';
 
-export function AssetPanel({ assets, onInsert, onClose, isMissing, resolve, onUpload }: AssetPanelProps) {
+type TabId = 'upload' | 'fav' | 'builtin' | 'all';
+/**
+ * 分类 Tabs。
+ *
+ * 默认落在「📁 本地上传」而非「全部」：内置图标有 28 个，混进默认视图会把
+ * 用户自己的素材挤到后面（也更难在测试里断言宿主资产行为）。想看内置图标点对应 Tab。
+ */
+const TABS: ReadonlyArray<{ id: TabId; label: string }> = [
+  { id: 'upload', label: '📁 本地上传' },
+  { id: 'fav', label: '⭐ 常用' },
+  { id: 'builtin', label: '🎨 内置图标' },
+  { id: 'all', label: '全部' },
+];
+
+/** 内置图标 → 面板资产项（与上传资产同构，便于统一检索/插入） */
+export const BUILTIN_ASSET_ITEMS: readonly AssetItem[] = BUILTIN_ICONS.map((i: BuiltinIcon) => ({
+  kind: 'draw' as const,
+  id: `builtin:${i.id}`,
+  name: i.name,
+  type: 'svg',
+  source: 'builtin' as const,
+  svg: i.svg,
+}));
+
+function loadFavs(): Set<string> {
+  try {
+    const raw = localStorage.getItem(FAV_KEY);
+    if (raw === null) return new Set();
+    const parsed: unknown = JSON.parse(raw);
+    if (!Array.isArray(parsed)) return new Set();
+    return new Set(parsed.filter((x): x is string => typeof x === 'string'));
+  } catch {
+    return new Set();
+  }
+}
+
+function saveFavs(favs: Set<string>): void {
+  try {
+    localStorage.setItem(FAV_KEY, JSON.stringify([...favs]));
+  } catch {
+    // 配额/隐私模式：收藏是增强，失败不影响主流程
+  }
+}
+
+export function AssetPanel({
+  assets,
+  onInsert,
+  onClose,
+  isMissing,
+  resolve,
+  onUpload,
+  onInsertAs,
+  action: actionProp,
+  onActionChange,
+  onPaste,
+  defaultView = 'list',
+}: AssetPanelProps) {
   const scrollerRef = useRef<HTMLDivElement | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
-  const [range, setRange] = useState({ start: 0, end: Math.min(assets.length, 30) });
+  const [range, setRange] = useState({ start: 0, end: 30 });
   const viewHRef = useRef(400);
+  const [query, setQuery] = useState('');
+  const [tab, setTab] = useState<TabId>('upload');
+  const [view, setView] = useState<'grid' | 'list'>(defaultView);
+  const [innerAction, setInnerAction] = useState<AssetInsertAction>('child');
+  const [favs, setFavs] = useState<Set<string>>(loadFavs);
+  const action = actionProp ?? innerAction;
 
-  // 虚拟区间：按滚动位置裁剪（窗口化——大图集只渲染可视项，O(可视) DOM）
+  const setAction = (next: AssetInsertAction): void => {
+    if (onActionChange) onActionChange(next);
+    else setInnerAction(next);
+  };
+
+  /** 内置图标 + 宿主资产并集（宿主资产按 id 去重在前） */
+  const allItems = useMemo(() => {
+    const merged = [...assets, ...BUILTIN_ASSET_ITEMS];
+    const seen = new Set<string>();
+    return merged.filter((a) => {
+      const k = `${a.kind}:${a.id}`;
+      if (seen.has(k)) return false;
+      seen.add(k);
+      return true;
+    });
+  }, [assets]);
+
+  const filtered = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    const byTab =
+      tab === 'fav'
+        ? allItems.filter((a) => favs.has(`${a.kind}:${a.id}`))
+        : tab === 'builtin'
+          ? allItems.filter((a) => a.source === 'builtin')
+          : tab === 'upload'
+            ? allItems.filter((a) => a.source !== 'builtin')
+            : allItems;
+    if (q === '') return byTab;
+    return byTab.filter(
+      (a) => a.name.toLowerCase().includes(q) || a.type.toLowerCase().includes(q) || a.id.toLowerCase().includes(q),
+    );
+  }, [allItems, tab, query, favs]);
+
+  // 收藏优先：常用视图里星标项排前面
+  const ordered = useMemo(() => {
+    if (tab !== 'all' && tab !== 'fav') return filtered;
+    return [...filtered].sort((a, b) => {
+      const fa = favs.has(`${a.kind}:${a.id}`) ? 0 : 1;
+      const fb = favs.has(`${b.kind}:${b.id}`) ? 0 : 1;
+      return fa - fb;
+    });
+  }, [filtered, tab, favs]);
+
+  // 虚拟区间：按滚动位置裁剪（列表视图专用；网格视图直接全渲染，量级可控）
   useEffect(() => {
+    if (view !== 'list') return;
     const el = scrollerRef.current;
     if (!el) return;
     const update = (): void => {
       const viewH = el.clientHeight || viewHRef.current;
       viewHRef.current = viewH;
       const start = Math.max(0, Math.floor(el.scrollTop / ROW_H) - BUFFER);
-      const end = Math.min(assets.length, Math.ceil((el.scrollTop + viewH) / ROW_H) + BUFFER);
+      const end = Math.min(ordered.length, Math.ceil((el.scrollTop + viewH) / ROW_H) + BUFFER);
       setRange({ start, end });
     };
     update();
     el.addEventListener('scroll', update, { passive: true });
     return () => el.removeEventListener('scroll', update);
-  }, [assets.length]);
+  }, [ordered.length, view]);
+
+  // FA1-T4 剪贴板入库：复制的图片文件 / <svg>...</svg> 纯文本都能直接进图库
+  useEffect(() => {
+    if (!onPaste) return;
+    const onPasteEvent = (e: ClipboardEvent): void => {
+      const files = Array.from(e.clipboardData?.files ?? []);
+      if (files.length > 0) {
+        e.preventDefault();
+        onPaste(files);
+        return;
+      }
+      const text = e.clipboardData?.getData('text/plain') ?? '';
+      if (!text.trim().toLowerCase().startsWith('<svg')) return;
+      e.preventDefault();
+      const file = new File([text], `pasted-${Date.now()}.svg`, { type: 'image/svg+xml' });
+      onPaste([file]);
+    };
+    window.addEventListener('paste', onPasteEvent);
+    return () => window.removeEventListener('paste', onPasteEvent);
+  }, [onPaste]);
+
+  const toggleFav = (key: string): void => {
+    setFavs((prev) => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      saveFavs(next);
+      return next;
+    });
+  };
+
+  const insert = (item: AssetItem): void => {
+    if (onInsertAs) onInsertAs(item, action);
+    else onInsert(item);
+  };
 
   return (
     <div
@@ -62,8 +245,8 @@ export function AssetPanel({ assets, onInsert, onClose, isMissing, resolve, onUp
         position: 'absolute',
         right: 18,
         top: 76,
-        width: 230,
-        maxHeight: '60vh',
+        width: PANEL_W,
+        maxHeight: '68vh',
         display: 'flex',
         flexDirection: 'column',
         background: CHROME.panelBg,
@@ -73,7 +256,7 @@ export function AssetPanel({ assets, onInsert, onClose, isMissing, resolve, onUp
         backdropFilter: 'blur(14px) saturate(1.3)',
         color: CHROME.text,
         fontFamily: CHROME.fontFamily,
-        padding: 8,
+        padding: 10,
         zIndex: 4,
       }}
       // P1-1 面板拖拽上传：dragover 阻止默认以允许 drop；drop 透传文件列表
@@ -89,33 +272,10 @@ export function AssetPanel({ assets, onInsert, onClose, isMissing, resolve, onUp
         onUpload(files);
       }}
     >
-      <div
-        style={{
-          display: 'flex',
-          alignItems: 'center',
-          gap: 8,
-          padding: '2px 6px 8px',
-          flex: 'none',
-        }}
-      >
-        <span style={{ color: CHROME.neon, fontWeight: 600, fontSize: CHROME.fontSize }}>图库</span>
-        {onUpload && (
-          <span
-            data-asset-upload
-            onClick={() => fileInputRef.current?.click()}
-            style={{
-              color: CHROME.neon,
-              cursor: 'pointer',
-              fontSize: CHROME.fontSizeSmall,
-              padding: '1px 6px',
-              borderRadius: 6,
-              border: `1px solid ${CHROME.panelBorder}`,
-            }}
-          >
-            + 上传
-          </span>
-        )}
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '2px 4px 8px', flex: 'none' }}>
+        <span style={{ color: CHROME.neon, fontWeight: 600, fontSize: CHROME.fontSize }}>素材中心</span>
         <span style={{ flex: 1 }} />
+        <ViewToggle view={view} onChange={setView} />
         <span
           data-asset-close
           onClick={onClose}
@@ -124,115 +284,403 @@ export function AssetPanel({ assets, onInsert, onClose, isMissing, resolve, onUp
           ×
         </span>
       </div>
-      {assets.length === 0 ? (
+
+      {/* 搜索：名称 / 类型 / id 实时过滤 */}
+      <input
+        data-asset-search
+        value={query}
+        onChange={(e) => setQuery(e.target.value)}
+        placeholder="搜索素材名称或类型…"
+        style={{
+          flex: 'none',
+          marginBottom: 8,
+          padding: '5px 8px',
+          borderRadius: 8,
+          border: `1px solid ${CHROME.panelBorder}`,
+          background: CHROME.panelBgStrong,
+          color: CHROME.text,
+          fontFamily: CHROME.fontFamily,
+          fontSize: CHROME.fontSizeSmall,
+          outline: 'none',
+        }}
+      />
+
+      {/* 分类 Tabs */}
+      <div style={{ display: 'flex', gap: 4, flex: 'none', marginBottom: 8, flexWrap: 'wrap' }}>
+        {TABS.map((t) => (
+          <Tab key={t.id} active={tab === t.id} label={t.label} onClick={() => setTab(t.id)} />
+        ))}
+      </div>
+
+      {/* 插入语义：三选一（纠正「点击素材 = 必成子节点」） */}
+      {onInsertAs && (
         <div
-          style={{ color: CHROME.textMuted, fontSize: CHROME.fontSizeSmall, padding: '8px 6px' }}
+          style={{
+            display: 'flex',
+            alignItems: 'center',
+            gap: 6,
+            flex: 'none',
+            marginBottom: 8,
+            fontSize: CHROME.fontSizeSmall,
+            color: CHROME.textMuted,
+          }}
         >
-          {onUpload
-            ? '暂无资产。点击上方「+ 上传」选择图片，或将图片拖到这里 / 画布。'
-            : '暂无资产。'}
+          <span>插入为</span>
+          {(Object.keys(ASSET_ACTION_LABEL) as AssetInsertAction[]).map((a) => (
+            <span
+              key={a}
+              data-asset-action={a}
+              data-active={action === a || undefined}
+              onClick={() => setAction(a)}
+              style={{
+                cursor: 'pointer',
+                padding: '2px 8px',
+                borderRadius: 999,
+                border: `1px solid ${action === a ? CHROME.neon : CHROME.panelBorder}`,
+                background: action === a ? CHROME.neonSoft : 'transparent',
+                color: action === a ? CHROME.neon : CHROME.textMuted,
+              }}
+            >
+              {ASSET_ACTION_LABEL[a]}
+            </span>
+          ))}
+        </div>
+      )}
+
+      {ordered.length === 0 ? (
+        <div style={{ color: CHROME.textMuted, fontSize: CHROME.fontSizeSmall, padding: '10px 6px' }}>
+          {query !== ''
+            ? `没有匹配「${query}」的素材。`
+            : tab === 'fav'
+              ? '还没有常用素材 —— 移到卡片上点 ★ 收藏。'
+              : onUpload
+                ? '暂无素材。拖文件到下方热区，或点击上传。'
+                : '暂无素材。'}
+        </div>
+      ) : view === 'grid' ? (
+        <div
+          data-asset-grid
+          style={{ overflowY: 'auto', flex: 1, display: 'flex', flexWrap: 'wrap', gap: 8, alignContent: 'flex-start' }}
+        >
+          {ordered.map((a) => (
+            <AssetCard
+              key={`${a.kind}:${a.id}`}
+              item={a}
+              resolve={resolve}
+              missing={isMissing?.(a) ?? false}
+              fav={favs.has(`${a.kind}:${a.id}`)}
+              onToggleFav={() => toggleFav(`${a.kind}:${a.id}`)}
+              onInsert={() => insert(a)}
+            />
+          ))}
         </div>
       ) : (
-        <div
-          ref={scrollerRef}
-          data-asset-scroller
-          style={{ overflowY: 'auto', flex: 1, maxHeight: 'calc(60vh - 44px)' }}
-        >
-          <div style={{ height: assets.length * ROW_H, position: 'relative' }}>
-            {assets.slice(range.start, range.end).map((a, i) => {
-              const missing = isMissing?.(a) ?? false;
-              const top = (range.start + i) * ROW_H;
-              return (
-                <div
-                  key={`${a.kind}:${a.id}`}
-                  data-asset-item
-                  data-missing={missing || undefined}
-                  onClick={() => {
-                    if (missing) return; // 失效项禁止插入
-                    onInsert(a);
-                  }}
-                  style={{
-                    position: 'absolute',
-                    top,
-                    left: 0,
-                    right: 0,
-                    height: ROW_H - 2,
-                    display: 'flex',
-                    alignItems: 'center',
-                    gap: 6,
-                    padding: '0 6px',
-                    borderRadius: 6,
-                    cursor: missing ? 'not-allowed' : 'pointer',
-                    opacity: missing ? 0.55 : 1,
-                  }}
-                >
-                  {resolve && !missing && <Thumb src={resolve(a)} name={a.name} />}
-                  <span
-                    style={{
-                      fontSize: CHROME.fontSizeSmall,
-                      color: missing
-                        ? CHROME.warn
-                        : a.kind === 'img'
-                          ? CHROME.neon
-                          : CHROME.textMuted,
-                      fontWeight: 600,
-                      width: 30,
-                      flex: 'none',
-                    }}
-                  >
-                    {a.kind}
-                  </span>
-                  <span
-                    style={{
-                      fontSize: CHROME.fontSizeSmall,
-                      color: missing ? CHROME.warn : undefined,
-                      overflow: 'hidden',
-                      textOverflow: 'ellipsis',
-                      whiteSpace: 'nowrap',
-                      flex: 1,
-                    }}
-                  >
-                    {a.name}
-                    {missing ? '（失效）' : ''}
-                  </span>
-                </div>
-              );
-            })}
+        <div ref={scrollerRef} data-asset-scroller style={{ overflowY: 'auto', flex: 1 }}>
+          <div style={{ height: ordered.length * ROW_H, position: 'relative' }}>
+            {ordered.slice(range.start, range.end).map((a, i) => (
+              <AssetRow
+                key={`${a.kind}:${a.id}`}
+                item={a}
+                resolve={resolve}
+                top={(range.start + i) * ROW_H}
+                missing={isMissing?.(a) ?? false}
+                onInsert={() => insert(a)}
+              />
+            ))}
           </div>
         </div>
       )}
+
+      {/* 现代上传热区（Dropzone） */}
+      {onUpload && (
+        <div
+          data-asset-dropzone
+          onClick={() => fileInputRef.current?.click()}
+          onDragOver={(e) => {
+            if (!e.dataTransfer?.types.includes('Files')) return;
+            e.preventDefault();
+          }}
+          onDrop={(e) => {
+            const files = Array.from(e.dataTransfer?.files ?? []);
+            if (files.length === 0) return;
+            e.preventDefault();
+            onUpload(files);
+          }}
+          style={{
+            flex: 'none',
+            marginTop: 8,
+            padding: '10px 8px',
+            borderRadius: 10,
+            border: `1px dashed ${CHROME.panelBorderStrong}`,
+            color: CHROME.textMuted,
+            fontSize: CHROME.fontSizeSmall,
+            textAlign: 'center',
+            cursor: 'pointer',
+          }}
+        >
+          拖拽 SVG / 图片到此处，或点击上传
+        </div>
+      )}
+
       {/* P1-1 隐藏 file input：上传按钮的唯一数据源；change 后清空 value 以支持重复选同一文件 */}
       {onUpload && (
-        <input
-          ref={fileInputRef}
-          type="file"
-          multiple
-          accept="image/*,.svg"
-          style={{ display: 'none' }}
-          onChange={(e) => {
-            const files = Array.from(e.target.files ?? []);
-            if (files.length > 0) onUpload(files);
-            e.target.value = '';
-          }}
-        />
+        <>
+          <span data-asset-upload style={{ display: 'none' }} onClick={() => fileInputRef.current?.click()} />
+          <input
+            ref={fileInputRef}
+            type="file"
+            multiple
+            accept="image/*,.svg"
+            style={{ display: 'none' }}
+            onChange={(e) => {
+              const files = Array.from(e.target.files ?? []);
+              if (files.length > 0) onUpload(files);
+              e.target.value = '';
+            }}
+          />
+        </>
       )}
     </div>
   );
 }
 
-/** 缩略图（P3）：固定 32×22 裁剪；加载失败自动隐藏 */
-function Thumb({ src, name }: { src: string; name: string }) {
-  const [failed, setFailed] = useState(false);
-  useEffect(() => setFailed(false), [src]);
-  if (failed) return null;
+function Tab({ active, label, onClick }: { active: boolean; label: string; onClick: () => void }) {
   return (
-    <img
-      src={src}
-      alt={name}
-      width={32}
-      height={22}
-      style={{ objectFit: 'cover', borderRadius: 4, flex: 'none', display: 'block' }}
-      onError={() => setFailed(true)}
-    />
+    <span
+      data-asset-tab
+      data-active={active || undefined}
+      onClick={onClick}
+      style={{
+        cursor: 'pointer',
+        padding: '2px 8px',
+        borderRadius: 999,
+        fontSize: CHROME.fontSizeSmall,
+        border: `1px solid ${active ? CHROME.neon : CHROME.panelBorder}`,
+        background: active ? CHROME.neonSoft : 'transparent',
+        color: active ? CHROME.neon : CHROME.textMuted,
+        whiteSpace: 'nowrap',
+      }}
+    >
+      {label}
+    </span>
   );
+}
+
+function ViewToggle({ view, onChange }: { view: 'grid' | 'list'; onChange: (v: 'grid' | 'list') => void }) {
+  return (
+    <span style={{ display: 'flex', gap: 2 }}>
+      {(['grid', 'list'] as const).map((v) => (
+        <span
+          key={v}
+          data-asset-view={v}
+          data-active={view === v || undefined}
+          onClick={() => onChange(v)}
+          title={v === 'grid' ? '网格视图' : '列表视图'}
+          style={{
+            cursor: 'pointer',
+            fontSize: CHROME.fontSizeSmall,
+            padding: '1px 6px',
+            borderRadius: 6,
+            border: `1px solid ${view === v ? CHROME.neon : CHROME.panelBorder}`,
+            color: view === v ? CHROME.neon : CHROME.textMuted,
+          }}
+        >
+          {v === 'grid' ? '▦' : '☰'}
+        </span>
+      ))}
+    </span>
+  );
+}
+
+/** 网格卡片：图标 48×48 居中矢量；图片 80×60 保宽高比缩略 */
+function AssetCard({
+  item,
+  resolve,
+  missing,
+  fav,
+  onToggleFav,
+  onInsert,
+}: {
+  item: AssetItem;
+  resolve?: (item: AssetItem) => string;
+  missing: boolean;
+  fav: boolean;
+  onToggleFav: () => void;
+  onInsert: () => void;
+}) {
+  const isIcon = item.type === 'svg' || item.kind === 'draw';
+  const [failed, setFailed] = useState(false);
+  const src = useMemo(() => {
+    if (item.svg) return svgDataUrlWithColor(item.svg, CHROME.text);
+    return resolve?.(item) ?? null;
+  }, [item, resolve]);
+
+  return (
+    <div
+      data-asset-item
+      data-missing={missing || undefined}
+      onClick={() => {
+        if (missing) return; // 失效项禁止插入
+        onInsert();
+      }}
+      title={item.name}
+      style={{
+        width: 80,
+        borderRadius: 10,
+        border: `1px solid ${CHROME.panelBorder}`,
+        background: CHROME.panelBgStrong,
+        padding: 6,
+        cursor: missing ? 'not-allowed' : 'pointer',
+        opacity: missing ? 0.55 : 1,
+        display: 'flex',
+        flexDirection: 'column',
+        alignItems: 'center',
+        gap: 4,
+        position: 'relative',
+      }}
+    >
+      <span
+        data-asset-fav={fav ? 'true' : 'false'}
+        onClick={(e) => {
+          e.stopPropagation();
+          onToggleFav();
+        }}
+        style={{ position: 'absolute', top: 3, right: 5, fontSize: 10, color: fav ? CHROME.neon : CHROME.textMuted }}
+      >
+        {fav ? '★' : '☆'}
+      </span>
+      {src !== null && !failed ? (
+        <img
+          src={src}
+          alt={item.name}
+          width={isIcon ? 48 : 68}
+          height={isIcon ? 48 : 48}
+          style={{ objectFit: 'contain', display: 'block' }}
+          onError={() => setFailed(true)}
+        />
+      ) : (
+        <span
+          style={{
+            width: 48,
+            height: 48,
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            color: missing ? CHROME.warn : CHROME.neon,
+            fontSize: 16,
+          }}
+        >
+          {missing ? '✕' : isIcon ? '◆' : '🖼'}
+        </span>
+      )}
+      <span
+        style={{
+          fontSize: CHROME.fontSizeSmall,
+          color: missing ? CHROME.warn : CHROME.textMuted,
+          maxWidth: '100%',
+          overflow: 'hidden',
+          textOverflow: 'ellipsis',
+          whiteSpace: 'nowrap',
+        }}
+      >
+        {item.name}
+        {missing ? '（失效）' : ''}
+      </span>
+    </div>
+  );
+}
+
+/** 列表行（沿用固定行高，配合虚拟滚动） */
+function AssetRow({
+  item,
+  resolve,
+  top,
+  missing,
+  onInsert,
+}: {
+  item: AssetItem;
+  resolve?: (item: AssetItem) => string;
+  top: number;
+  missing: boolean;
+  onInsert: () => void;
+}) {
+  const [failed, setFailed] = useState(false);
+  const src = item.svg ? svgDataUrlWithColor(item.svg, CHROME.text) : (resolve?.(item) ?? null);
+  return (
+    <div
+      data-asset-item
+      data-missing={missing || undefined}
+      onClick={() => {
+        if (missing) return;
+        onInsert();
+      }}
+      style={{
+        position: 'absolute',
+        top,
+        left: 0,
+        right: 0,
+        height: ROW_H - 2,
+        display: 'flex',
+        alignItems: 'center',
+        gap: 6,
+        padding: '0 6px',
+        borderRadius: 6,
+        cursor: missing ? 'not-allowed' : 'pointer',
+        opacity: missing ? 0.55 : 1,
+      }}
+    >
+      {src !== null && !failed ? (
+        <img
+          src={src}
+          alt={item.name}
+          width={22}
+          height={22}
+          style={{ objectFit: 'contain', flex: 'none', display: 'block' }}
+          onError={() => setFailed(true)}
+        />
+      ) : (
+        <span style={{ width: 22, flex: 'none', textAlign: 'center', color: CHROME.neon }}>◆</span>
+      )}
+      <span
+        style={{
+          fontSize: CHROME.fontSizeSmall,
+          color: missing ? CHROME.warn : item.kind === 'img' ? CHROME.neon : CHROME.textMuted,
+          fontWeight: 600,
+          width: 34,
+          flex: 'none',
+        }}
+      >
+        {item.source === 'builtin' ? '内置' : item.kind}
+      </span>
+      <span
+        style={{
+          fontSize: CHROME.fontSizeSmall,
+          color: missing ? CHROME.warn : undefined,
+          overflow: 'hidden',
+          textOverflow: 'ellipsis',
+          whiteSpace: 'nowrap',
+          flex: 1,
+        }}
+      >
+        {item.name}
+        {missing ? '（失效）' : ''}
+      </span>
+    </div>
+  );
+}
+
+/**
+ * 内置图标 → 面板可用的 data URL。
+ *
+ * 内置图标用 `currentColor`，但 `<img>` 里的 SVG 是独立文档、拿不到宿主 color，
+ * currentColor 会解析成默认黑 → 深色面板上完全看不见。因此这里把 currentColor
+ * 替换成面板文字色；写进 note.icon 时仍保留 currentColor 版本（渲染层内联后随主题变色）。
+ */
+function svgDataUrlWithColor(svg: string, color: string): string {
+  return `data:image/svg+xml;utf8,${encodeURIComponent(svg.replace(/currentColor/g, color))}`;
+}
+
+/** 内置图标按关键字命中（供宿主构造「内置图标」Tab 的候选项） */
+export function searchBuiltinIcons(query: string): readonly BuiltinIcon[] {
+  return matchBuiltinIcons(query);
 }

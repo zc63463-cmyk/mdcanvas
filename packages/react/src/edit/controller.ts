@@ -111,8 +111,13 @@ export class EditorController {
   }
 
   /** 新建子节点（Tab）；返回新节点 id */
-  addChild(parentId: string, text?: string): string {
+  /**
+   * 新建子节点。note 可选——PG 式「生长时固化方向」用：
+   * 新建即写入 note.dir，与 add-child 同一 op（一次 undo 同时回退节点与方向）。
+   */
+  addChild(parentId: string, text?: string, note?: Note): string {
     const child = makeTextNode(text ?? this.newText);
+    if (note) child.note = { ...(child.note ?? {}), ...note };
     this.apply({ type: 'add-child', parentId, child });
     return child.id;
   }
@@ -124,12 +129,13 @@ export class EditorController {
     return child.id;
   }
 
-  /** 新建同级节点（Enter）；根无同级 → null */
-  addSibling(id: string, text?: string): string | null {
+  /** 新建同级节点（Enter）；根无同级 → null。传 note 时新节点即写入（与 addChild 同语义） */
+  addSibling(id: string, text?: string, note?: Note): string | null {
     if (id === this.root.id) return null;
     const loc = findNode(this.root, id);
     if (!loc) return null;
     const child = makeTextNode(text ?? this.newText);
+    if (note) child.note = { ...(child.note ?? {}), ...note };
     this.apply({ type: 'add-child', parentId: loc.parent.id, child, index: loc.index + 1 });
     return child.id;
   }

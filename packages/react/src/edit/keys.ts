@@ -2,6 +2,29 @@
  * 编辑器快捷键表（T1：先做 6 个 + 保存/折叠；批次 1 补：缩进/导航/折叠展开/重置缩放）。
  * 节点级 + 全局级统一判定：editing 时全局快捷键应被输入框拦截（组件层先于本表）。
  */
+import type { GrowDir } from '@mindcanvas/kernel';
+
+/**
+ * 预方向键位：Alt + 方向键（单键触发、语义直白）。
+ *
+ * 为什么废弃 PG 的双敲（W W / S S / A A / D D）：
+ * 1. 双敲有 400ms 时序窗口，手感不确定、且无中间反馈；
+ * 2. 裸 WASD 在未来可能与文本操作冲突；
+ * 3. Alt+方向键与既有的「裸方向键 = 导航」天然分层，零冲突、可一眼理解。
+ */
+const PRE_DIR_ARROWS: Readonly<Record<string, GrowDir>> = {
+  ArrowUp: 'up',
+  ArrowDown: 'down',
+  ArrowLeft: 'left',
+  ArrowRight: 'right',
+};
+
+/** 预方向快捷键 → 方向（Alt + 方向键；无匹配 → null）。无状态纯函数。 */
+export function matchPreDirKey(e: KeyboardEvent): GrowDir | null {
+  if (e.ctrlKey || e.metaKey || e.shiftKey) return null;
+  if (!e.altKey) return null;
+  return PRE_DIR_ARROWS[e.key] ?? null;
+}
 export type EditorKeyAction =
   | { type: 'add-child' }
   | { type: 'add-sibling' }
@@ -53,6 +76,7 @@ export const EDITOR_KEY_BINDINGS: ReadonlyArray<{
   { key: 'Ctrl+Shift+A', label: '图库', action: 'assets' },
   { key: 'Ctrl+Shift+R', label: '关系图', action: 'relation' },
   { key: '?', label: '快捷键帮助', action: 'help' },
+  { key: 'Alt+↑ / Alt+↓ / Alt+← / Alt+→', label: '预方向（上/下/左/右，Tab 生长时固化）', action: 'help' },
 ];
 
 /** 键盘事件 → 动作（无匹配 → null；组合键优先于裸键，裸键要求无任何修饰） */

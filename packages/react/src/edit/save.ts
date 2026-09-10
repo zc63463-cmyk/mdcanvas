@@ -5,9 +5,28 @@
  */
 export type SaveResult = 'fs' | 'download' | 'cancelled';
 
+/**
+ * 保存结果（FA1-T1）：在 `SaveResult` 之外**回传文件句柄**。
+ *
+ * 为什么必须回传：此前 `saveMarkdown` 拿到 `showSaveFilePicker()` 的 handle 后直接丢弃，
+ * 文档的 `doc.handle` 永远是 undefined → 每次 Ctrl+S 都重新唤起系统另存为窗口，
+ * 触发系统级「是否覆盖」确认（记事本式体验）。把 handle 带回调用方并写回 doc
+ * 之后，后续保存走 `handle.createWritable()` 静默写回，零弹窗。
+ */
+export interface SaveOutcome {
+  result: SaveResult;
+  /** 实际写入的句柄（仅 fs 结果有值；download/cancelled 无意义） */
+  handle?: FsFileHandle;
+}
+
 /** FS 文件句柄（保存复用；B1 文档宿主导出供打开/写回） */
 export interface FsWritable {
-  write(data: string): Promise<void>;
+  /**
+   * 写入。真实 `FileSystemWritableFileStream.write()` 同时接受文本与二进制，
+   * FA2-T4 落盘图片资产需要传 Blob —— 故联合类型。
+   * 方法语法（非属性）在 strict 下参数双变，既有只接受 string 的调用点不受影响。
+   */
+  write(data: string | Blob): Promise<void>;
   close(): Promise<void>;
 }
 export interface FsFileHandle {
@@ -56,8 +75,12 @@ export const MM_FILE_TYPES = [
  * - 浏览器支持 FS Access API → 弹出保存对话框写入文件（用户可指定路径）
  * - 不支持 / 非 fs 场景 → 触发下载兜底
  * - 用户在 FS 对话框取消 → 返回 'cancelled'（不视为错误）
+ * - FA1-T1：成功写入后**回传 handle**，供调用方写回 doc（后续保存静默写回，不再弹框）
  */
-export async function saveMarkdown(text: string, defaultName: string): Promise<SaveResult> {
+export async function saveMarkdown(
+  text: string,
+  defaultName: string,
+): Promise<SaveOutcome> {
   if (typeof window.showSaveFilePicker === 'function') {
     try {
       const handle = await window.showSaveFilePicker({
@@ -67,10 +90,10 @@ export async function saveMarkdown(text: string, defaultName: string): Promise<S
       const writable = await handle.createWritable();
       await writable.write(text);
       await writable.close();
-      return 'fs';
+      return { result: 'fs', handle };
     } catch (e) {
       // AbortError = 用户取消对话框 → 静默；其他错误 → 兜底下载
-      if ((e as Error).name === 'AbortError') return 'cancelled';
+      if ((e as Error).name === 'AbortError') return { result: 'cancelled' };
     }
   }
   // 下载兜底（FS Access 不可用/失败）
@@ -81,7 +104,24 @@ export async function saveMarkdown(text: string, defaultName: string): Promise<S
   a.download = defaultName;
   a.click();
   URL.revokeObjectURL(url);
-  return 'download';
+  return { result: 'download' };
+}
+
+/**
+ * 句柄写回（FA1-T1）：已有句柄时静默覆盖写入，绝不唤起系统对话框。
+ *
+ * 与 `saveMarkdown` 的分工：后者负责「第一次选路径」，本函数负责「之后每次」。
+ * 返回 false = 句柄失效（文件被移走/权限撤销），调用方据此回落选择器。
+ */
+export async function writeToHandle(handle: FsFileHandle, text: string): Promise<boolean> {
+  try {
+    const writable = await handle.createWritable();
+    await writable.write(text);
+    await writable.close();
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 /**

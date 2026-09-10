@@ -15,6 +15,9 @@
  */
 
 const LIB_KEY = 'mindcanvas.library.v1';
+const FOLDERS_KEY = 'mindcanvas.folders.v1';
+/** 默认预置分类目录（开箱自带，空库初始化用） */
+export const DEFAULT_PRESET_FOLDERS: readonly string[] = ['示例导图', '工作项目', '个人笔记', '灵感草稿'];
 /**
  * 保留源码快照的条目数（其余只存元数据）。
  * 导出：UI 需要把这个上限**显式告诉用户**（否则条目上突然出现 ↻ 会不知所措）。
@@ -162,12 +165,78 @@ export class DocLibrary {
     this.save(list);
   }
 
+  private loadCustomFolders(): string[] {
+    try {
+      const raw = localStorage.getItem(FOLDERS_KEY);
+      if (!raw) return [];
+      const parsed: unknown = JSON.parse(raw);
+      return Array.isArray(parsed) ? parsed.filter((s): s is string => typeof s === 'string') : [];
+    } catch {
+      return [];
+    }
+  }
+
+  private saveCustomFolders(folders: string[]): void {
+    try {
+      localStorage.setItem(FOLDERS_KEY, JSON.stringify(folders));
+    } catch {
+      // ignore
+    }
+  }
+
   /**
-   * 全部目录路径（含所有层级的父目录），按字典序。
+   * 确保初始化预置分类目录（开箱自带示例与常用分类）。
+   * 仅在库为空或仅包含 1 篇初始示例且无自定义目录时写入。
+   */
+  ensurePresetFolders(): void {
+    const existing = this.loadCustomFolders();
+    if (existing.length === 0 && this.load().length <= 1) {
+      this.saveCustomFolders([...DEFAULT_PRESET_FOLDERS]);
+    }
+  }
+
+  /**
+   * 增加自定义目录（支持多级，空目录亦会持久化）。
+   */
+  addFolder(folderPath: string): void {
+    const cleaned = cleanFolder(folderPath);
+    if (!cleaned) return;
+    const current = new Set(this.loadCustomFolders());
+    const segs = cleaned.split(SEP);
+    for (let i = 1; i <= segs.length; i++) {
+      current.add(segs.slice(0, i).join(SEP));
+    }
+    this.saveCustomFolders([...current]);
+  }
+
+  /**
+   * 移除自定义目录（连同其子目录从目录表中清理，所含文档退回根目录）。
+   */
+  removeFolder(folderPath: string): void {
+    const cleaned = cleanFolder(folderPath);
+    if (!cleaned) return;
+    const prefix = `${cleaned}${SEP}`;
+    const next = this.loadCustomFolders().filter((f) => f !== cleaned && !f.startsWith(prefix));
+    this.saveCustomFolders(next);
+
+    // 级联处理归属文档：移回根目录
+    const list = this.load();
+    let dirty = false;
+    for (const e of list) {
+      if (e.folder === cleaned || e.folder.startsWith(prefix)) {
+        e.folder = '';
+        dirty = true;
+      }
+    }
+    if (dirty) this.save(list);
+  }
+
+  /**
+   * 全部目录路径（含所有层级的父目录与自定义空目录），按字典序。
    * 例：有 `a/b/c` 一条 → 返回 `['a', 'a/b', 'a/b/c']`，便于 UI 逐级渲染。
    */
   folders(): string[] {
-    const set = new Set<string>();
+    const set = new Set<string>(this.loadCustomFolders());
     for (const e of this.load()) {
       const segs = e.folder.split(SEP).filter((s) => s.length > 0);
       for (let i = 1; i <= segs.length; i++) set.add(segs.slice(0, i).join(SEP));
@@ -183,17 +252,24 @@ export class DocLibrary {
     const prefix = folder === '' ? '' : `${folder}${SEP}`;
     const dirs = new Set<string>();
     const docs: DocEntry[] = [];
+
+    // 从全量 folders() 中提取直属子目录（包含空目录）
+    for (const f of this.folders()) {
+      if (folder === '') {
+        const top = f.split(SEP)[0];
+        if (top) dirs.add(top);
+      } else if (f.startsWith(prefix)) {
+        const rest = f.slice(prefix.length);
+        if (rest.length > 0) dirs.add(rest.split(SEP)[0]!);
+      }
+    }
+
     for (const e of this.list()) {
       // 直属本文档：folder 恰好相等。
-      // ⚠️ 必须单独判等——否则 `folder='工作'` 的文档在查 '工作' 目录时
-      // 会因 startsWith('工作/') 为 false 被漏掉（子目录才带尾部分隔符）。
       if (e.folder === folder) {
         docs.push(e);
         continue;
       }
-      if (!e.folder.startsWith(prefix)) continue;
-      const rest = e.folder.slice(prefix.length);
-      if (rest.length > 0) dirs.add(rest.split(SEP)[0]!); // 下一级子目录名
     }
     return { dirs: [...dirs].sort(cmpTag), docs };
   }

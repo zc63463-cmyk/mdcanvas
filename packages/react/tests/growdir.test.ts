@@ -6,6 +6,7 @@
 import { describe, expect, it } from 'vitest';
 import { makeTextNode, type Note } from '@mindcanvas/kernel';
 import {
+  collectDeclaredGrowDir,
   collectExplicitDir,
   effectiveGrowDir,
   probeDirRoundTrip,
@@ -96,5 +97,42 @@ describe('probeDirRoundTrip：序列化往返探针', () => {
       expect(r.before).toBe(d);
       expect(r.after).toBe(d);
     }
+  });
+});
+
+describe('collectDeclaredGrowDir：全树声明方向（岛默认不得充当声明——中心节点特化）', () => {
+  it('★ 全树无声明 → 映射为空（连线回退几何自适应，不被岛方向顶死左右）', () => {
+    const root = makeTextNode('根', [makeTextNode('A'), makeTextNode('B')]);
+    const m = collectDeclaredGrowDir(root);
+    expect(m.size).toBe(0);
+    expect(m.has(root.id)).toBe(false);
+    expect(m.has(root.children[0]!.id)).toBe(false);
+    expect(m.has(root.children[1]!.id)).toBe(false);
+  });
+
+  it('★ 显式声明入表；其无声明子节点继承父方向（内核 case② 同语义）', () => {
+    const root = makeTextNode('根', [
+      { ...makeTextNode('A', [makeTextNode('A1')]), note: { dir: 'up' } },
+      makeTextNode('B'),
+    ]);
+    const m = collectDeclaredGrowDir(root);
+    const aIn = root.children[0]!;
+    expect(m.get(aIn.id)).toBe('up');
+    expect(m.get(aIn.children[0]!.id)).toBe('up'); // 无声明子节点随显式父
+    expect(m.has(root.id)).toBe(false);
+    expect(m.has(root.children[1]!.id)).toBe(false); // 隔离分支不受染
+  });
+
+  it('最近显式祖先沿链继承；隔离分支保持缺席', () => {
+    const b = makeTextNode('B', [makeTextNode('B1', [makeTextNode('B1a')])]);
+    b.note = { dir: 'left' };
+    const c = makeTextNode('C', [makeTextNode('C1')]);
+    const root = makeTextNode('根', [b, c]);
+    const m = collectDeclaredGrowDir(root);
+    expect(m.get(b.id)).toBe('left');
+    expect(m.get(b.children[0]!.id)).toBe('left');
+    expect(m.get(b.children[0]!.children[0]!.id)).toBe('left');
+    expect(m.has(c.id)).toBe(false);
+    expect(m.has(c.children[0]!.id)).toBe(false);
   });
 });

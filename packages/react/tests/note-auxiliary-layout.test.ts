@@ -51,15 +51,20 @@ describe('fixedNotePanelsOf', () => {
       120,
     );
 
+    // 屏幕锚点不变；尺寸改为**世界基线 + k**（渲染侧用 transform: scale(k) 统一缩放）
     expect(panels).toEqual([
       expect.objectContaining({
         id: 'visible',
         editing: true,
         x: 25,
         y: 123,
-        width: 320,
-        height: 216,
+        worldWidth: 160,
+        worldHeight: 108,
+        k: 2,
       }),
     ]);
+    // 与旧口径（屏幕像素）等价：world × k
+    expect(panels[0]!.worldWidth * panels[0]!.k).toBe(320);
+    expect(panels[0]!.worldHeight * panels[0]!.k).toBe(216);
   });
 });

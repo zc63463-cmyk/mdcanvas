@@ -11,6 +11,7 @@
  * - 静态清单（打包 demo 资产）与 IDB 清单并集，同 id 时 IDB 优先
  */
 import { mimeOfFileName, kindOfFileName } from './assetHost.js';
+import { INLINE_SVG_LIMIT } from './assetIcons.js';
 import type { AssetItem } from './AssetPanel.js';
 import type { AssetHost } from './assetHost.js';
 
@@ -26,6 +27,11 @@ interface AssetRecord {
   type: string;
   mime: string;
   data: ArrayBuffer;
+  /**
+   * 小 SVG 的源码（FA1-T5）：< 15KB 额外存一份文本，
+   * 使「设为节点图标」能把图标内联进 .mm.md（脱离 IndexedDB 也自包含显示）。
+   */
+  svg?: string;
 }
 
 /** 未知协议形状窄化（读侧容错；与 centers.ts isRec 同款谓词模式，零断言） */
@@ -97,7 +103,9 @@ export class IdbAssetHost implements AssetHost {
     const idbItems: AssetItem[] = [];
     try {
       for (const rec of await this.allRecords()) {
-        idbItems.push({ kind: rec.kind, id: rec.id, name: rec.name, type: rec.type });
+        const item: AssetItem = { kind: rec.kind, id: rec.id, name: rec.name, type: rec.type };
+        if (typeof rec.svg === 'string') item.svg = rec.svg;
+        idbItems.push(item);
         // 预热 objectURL：让同步 resolveAsset 在清单加载后立即可用（接口零变更）
         if (!this.objectUrls.has(rec.id)) {
           this.objectUrls.set(
@@ -131,6 +139,10 @@ export class IdbAssetHost implements AssetHost {
     };
     const data = await file.arrayBuffer();
     const mime = mimeOfFileName(file.name, file.type);
+    // FA1-T5：小 SVG 额外留一份源码（内联自包含的前提；大图不塞文本，避免库膨胀）
+    const svg =
+      item.kind === 'draw' && file.size <= INLINE_SVG_LIMIT ? await file.text() : undefined;
+    if (svg !== undefined) item.svg = svg;
     try {
       await this.putRecord({ ...item, mime, data });
     } catch {

@@ -6,16 +6,19 @@
  *   ② 纯文本区域：`note_text`（一整段），textarea 编辑
  * 两者**共存**于同一浮窗，不是二选一的类型；各自内部滚动，都不占节点空间。
  *
- * 交互：悬停节点 → 本组件以预览态浮出；点击 → 由上层置为 pinned，此时可编辑。
- *
- * 不是什么：不参与布局（绝对定位浮在画布上），不改变节点盒高度，
- * 因此不会挤压相邻节点 —— 长内容应该放这里，而不是塞进 `desc`。
+ * 两种呈现模式（缩放适配，2026-09-09）：
+ *   - `floating`（屏幕空间 HUD）：宽度固定为最佳可读宽（260，按视口收窄），
+ *     字号/内边距**恒定屏幕像素**，绝不乘 `transform.k`；空间不足时翻转到节点上方。
+ *     悬停预览、以及小缩放下的编辑态都走这条 —— 保证 k=0.2 也能读、IME 选词框不漂。
+ *   - `embedded`（世界空间卡片）：与节点盒严格贴合。在 **k=1 基线**下排版，
+ *     由外层 `transform: scale(k)` 统一驱动缩放 —— 每帧只变一处 transform（走合成器），
+ *     不再逐像素改嵌套字号，也绕开浏览器最小字号（12px）截断导致的文字撑爆容器。
  *
  * 关于 textarea：使用**非受控**（`defaultValue`），不持 `useState` 草稿。
  * 之前的"受控 + useEffect 同步外部文本"会让 textarea 实例在每次 props 变化时重建、
  * 焦点丢失 → 用户体验是"点击就消失"。
  */
-import { useRef } from 'react';
+import { useEffect, useRef } from 'react';
 import { CHROME } from '../theme/tokens.js';
 import type { TokenSet } from '../theme/types.js';
 import { QaEditor } from './QaEditor.js';
@@ -23,18 +26,87 @@ import { QaEditor } from './QaEditor.js';
 /** 单个区域的最大高度（超出内部滚动，浮窗整体不被撑爆） */
 const REGION_MAX_H = 160;
 
+/** 节点宽度未知时的兜底宽度（屏幕 px） */
+export const FLOATING_NOTE_W = 260;
+/**
+ * 悬浮预览的最小宽度：宽度**对齐节点**，只有节点窄到装不下文字时才兜到这里。
+ * 再窄中文会一字一行，等同于被"压成细条"。
+ */
+export const FLOATING_NOTE_MIN_W = 120;
+/** 悬浮预览与视口边缘的安全间距 */
+export const FLOATING_NOTE_MARGIN = 10;
+/** 悬浮预览与节点之间的间距 */
+export const FLOATING_NOTE_GAP = 8;
+/** 悬浮预览整体高度上限（超出内部滚动，不遮全屏） */
+export const FLOATING_NOTE_MAX_H = 320;
+/** 视口尺寸可信下限：小于它视为"尚未观测"，不做边界钳制/翻转 */
+const MIN_KNOWN_VIEWPORT = 50;
+/** 嵌入卡片的最小基线宽/高（世界 px）—— 极小缩放下防止渲染溃缩成一条线 */
+export const EMBEDDED_NOTE_MIN_W = 120;
+export const EMBEDDED_NOTE_MIN_H = 72;
+/**
+ * note 正文字号上限（= chrome 小字号）—— 笔记是节点的附注，视觉上不能盖过节点正文。
+ */
+export const NOTE_FONT_MAX = CHROME.fontSizeSmall;
+/**
+ * note 正文字号下限（可读底线）。
+ *
+ * 字号取 min(上限, 所属节点字号)；但小缩放下节点自身在屏幕上只有几 px（本来就已不可读），
+ * 此时若严格跟随就没人看得清笔记 —— 兜到这个下限。也就是说：
+ * 只有在「节点字号本身已经小到读不了」时，笔记字号才会反过来大于节点字号。
+ */
+export const NOTE_FONT_MIN = 9;
+/**
+ * 编辑态浮窗最小高度：**先给足空间再键入**（与 DescBlock 的 DESC_EDIT_MIN_LINES
+ * 同一交互纪律）——矮面板里打两行就看不见自己在写什么。
+ */
+export const EDITING_NOTE_MIN_H = 300;
+/** 编辑态浮窗高度上限（视口再大也不遮全屏，超出由区域内部滚动） */
+export const EDITING_NOTE_MAX_H = 460;
+/**
+ * 编辑态浮窗最小宽度：宽度平时对齐节点，但节点太窄时（比如 120px 的叶子）
+ * 编辑框里连半句话都放不下 —— 编辑是可用性优先的场景，兜到这个宽度。
+ */
+export const EDITING_NOTE_MIN_W = 320;
+/** 编辑态正文输入框的最小高度 */
+const EDITING_TEXTAREA_MIN_H = 110;
+
+export type NotePopoverMode = 'floating' | 'embedded';
+
 export interface NotePopoverProps {
   /** 序列区域条目 */
   seq: readonly string[];
   /** 纯文本区域内容 */
   text: string;
-  /** 屏幕坐标（浮窗左上角） */
+  /** 屏幕坐标（floating：节点下方锚点左上角；embedded：卡片左上角） */
   x: number;
   y: number;
-  /** 与节点盒一致的屏幕宽度 */
+  /**
+   * embedded 模式的**世界基线宽**（k=1，非屏幕 px）—— 由外层 scale(k) 缩放。
+   * floating 模式忽略本值，宽度恒为 `floatingNoteWidth(viewportW)`。
+   */
   width?: number;
-  /** 固定态卡片的稳定屏幕高度；悬停预览不传则按内容自适应 */
+  /** embedded 模式的**世界基线高**（k=1）；floating 不传 → 按内容自适应 */
   height?: number;
+  /**
+   * 所属节点在**屏幕**上的宽度（floating 模式据此对齐节点长度）。
+   * 不传时退回兜底宽度 `FLOATING_NOTE_W`。
+   */
+  nodeWidth?: number;
+  /**
+   * 所属节点的字号（floating 传**屏幕**字号 = 世界字号 × k；embedded 传世界字号）。
+   * 笔记字号取 `min(NOTE_FONT_MAX, 该值)` —— 保证**不大于**节点内部字体。
+   */
+  nodeFontSize?: number;
+  /** 呈现模式，缺省 floating（屏幕空间） */
+  mode?: NotePopoverMode;
+  /** 当前视口缩放 k（embedded 用于 transform；editing 用于判定是否升级为浮窗） */
+  scale?: number;
+  /** 节点顶边的屏幕 y（floating 翻转判定用；不传则不翻转） */
+  anchorTop?: number;
+  /** 视口尺寸（floating 边界钳制/翻转用；不传则不做钳制） */
+  viewportW?: number;
+  viewportH?: number;
   /** 是否固定显示（固定不等于编辑） */
   pinned: boolean;
   /** 是否进入编辑态（仅右键「编辑 note笔记」进入） */
@@ -47,6 +119,42 @@ export interface NotePopoverProps {
   onPin?: () => void;
 }
 
+/**
+ * 悬浮预览宽度：**与节点长度对齐**（`nodeWidth` = 节点屏幕宽），
+ * 只有节点窄到装不下内容时才兜到 `FLOATING_NOTE_MIN_W`；最后不超出视口。
+ *
+ * 不固定 260 的原因：固定值会让窄节点的浮窗明显比节点宽一大截，视觉上"飘"在节点外。
+ */
+export function floatingNoteWidth(nodeWidth: number, viewportW: number): number {
+  const base = nodeWidth > 0 ? nodeWidth : FLOATING_NOTE_W;
+  const w = Math.max(base, FLOATING_NOTE_MIN_W);
+  if (viewportW > MIN_KNOWN_VIEWPORT) {
+    return Math.max(FLOATING_NOTE_MIN_W, Math.min(w, viewportW - FLOATING_NOTE_MARGIN * 2));
+  }
+  return w;
+}
+
+/** 笔记字号：不大于所属节点字号，但不低于可读底线 */
+export function noteFontSizeOf(nodeFontSize: number | undefined): number {
+  if (nodeFontSize === undefined || !Number.isFinite(nodeFontSize)) return NOTE_FONT_MAX;
+  return Math.min(NOTE_FONT_MAX, Math.max(NOTE_FONT_MIN, nodeFontSize));
+}
+
+/**
+ * 悬浮浮窗的内容高度估算（翻转判定的输入；不要求精确，够做方向决策即可）。
+ */
+export function estimateFloatingNoteHeight(
+  seq: readonly string[],
+  text: string,
+  width: number,
+): number {
+  const charsPerLine = Math.max(8, Math.floor(width / 12));
+  const textLines = Math.max(1, Math.ceil(text.length / charsPerLine));
+  const seqH = seq.length === 0 ? 0 : Math.min(REGION_MAX_H, 22 + seq.length * 22);
+  const textH = Math.min(REGION_MAX_H, 22 + textLines * 20);
+  return Math.min(FLOATING_NOTE_MAX_H, 40 + seqH + (seqH > 0 ? 8 : 0) + textH);
+}
+
 export function NotePopover({
   seq,
   text,
@@ -54,6 +162,13 @@ export function NotePopover({
   y,
   width = 260,
   height,
+  nodeWidth,
+  nodeFontSize,
+  mode = 'floating',
+  scale = 1,
+  anchorTop,
+  viewportW,
+  viewportH,
   pinned,
   editing = false,
   token,
@@ -63,6 +178,21 @@ export function NotePopover({
   onPin,
 }: NotePopoverProps) {
   const taRef = useRef<HTMLTextAreaElement | null>(null);
+  const rootRef = useRef<HTMLDivElement | null>(null);
+
+  const s = Number.isFinite(scale) && scale > 0 ? scale : 1;
+  // 编辑态一律用屏幕浮窗：嵌入卡片是布局预留的固定矮槽（120 基线），装不下编辑器；
+  // 浮窗位置与字号都稳定（IME 选词框不漂），先给足空间再键入。
+  const floating = mode !== 'embedded' || editing;
+
+  // 编辑态焦点守卫：进入编辑时若焦点还没落在浮窗内，主动聚焦 textarea。
+  // 缩放升级（embedded → floating）会重建浮窗，这一步保证输入框不丢焦点。
+  useEffect(() => {
+    if (!editing) return;
+    const root = rootRef.current;
+    if (root && document.activeElement && root.contains(document.activeElement)) return;
+    taRef.current?.focus();
+  }, [editing, floating]);
 
   // 简化正文编辑：textarea 非受控（defaultValue），失焦时把 DOM 当前值与 prop.text 对比
   // —— 有差异才回传。这样 props 变化不会重建 textarea 实例，焦点不丢，
@@ -72,15 +202,116 @@ export function NotePopover({
     if (cur !== text) onChangeText(cur);
   };
 
-  const sectionStyle = {
-    maxHeight: REGION_MAX_H,
-    overflowY: 'auto',
-  } as const;
+  // ---- 屏幕空间定位（floating）：固定宽 + 边界钳制 + 空间不足时翻转到节点上方 ----
+  // 视口尺寸尚未观测到（首帧 / 容器隐藏，ViewportController 初值 1）时按"未知"处理：
+  // 不做钳制，否则浮窗会被钉在左上角。
+  const vw = viewportW !== undefined && viewportW > MIN_KNOWN_VIEWPORT ? viewportW : Number.POSITIVE_INFINITY;
+  const vh = viewportH !== undefined && viewportH > MIN_KNOWN_VIEWPORT ? viewportH : Number.POSITIVE_INFINITY;
+  // 宽度对齐节点（floating）/ 基线宽（embedded 升级为浮窗时用世界宽 × k）；
+  // 编辑态兜到最小编辑宽度（节点太窄没法打字），最后不超出视口。
+  const alignW = floatingNoteWidth(nodeWidth ?? width * s, vw);
+  const panelW = Math.min(
+    editing ? Math.max(alignW, EDITING_NOTE_MIN_W) : alignW,
+    Number.isFinite(vw)
+      ? Math.max(FLOATING_NOTE_MIN_W, vw - FLOATING_NOTE_MARGIN * 2)
+      : Number.POSITIVE_INFINITY,
+  );
+  // 笔记字号：不大于所属节点字号（下限兜底见 NOTE_FONT_MIN 注释）
+  const fontPx = noteFontSizeOf(nodeFontSize);
+  const fontMutedPx = Math.max(8, fontPx - 1);
+  const floatMaxH = Math.min(
+    editing ? EDITING_NOTE_MAX_H : FLOATING_NOTE_MAX_H,
+    Math.max(160, vh - FLOATING_NOTE_MARGIN * 2),
+  );
+  // 翻转判定要按编辑态的真实高度（minHeight）来，不能只看内容估算
+  const minEditingH = editing ? Math.min(EDITING_NOTE_MIN_H, floatMaxH) : 0;
+  const estimatedH = Math.min(
+    floatMaxH,
+    Math.max(
+      minEditingH,
+      estimateFloatingNoteHeight(seq, text, panelW),
+    ),
+  );
+  const roomBelow = vh - FLOATING_NOTE_MARGIN - y;
+  const roomAbove = anchorTop !== undefined ? anchorTop - FLOATING_NOTE_GAP : -1;
+  const flip = floating && roomBelow < estimatedH && roomAbove > roomBelow;
+  const floatX = Number.isFinite(vw)
+    ? Math.min(
+        Math.max(x, FLOATING_NOTE_MARGIN),
+        Math.max(FLOATING_NOTE_MARGIN, vw - panelW - FLOATING_NOTE_MARGIN),
+      )
+    : x;
+
+  const rootStyle: React.CSSProperties = floating
+    ? {
+        position: 'absolute',
+        left: floatX,
+        top: flip ? (anchorTop ?? y) - FLOATING_NOTE_GAP : y,
+        width: panelW,
+        maxHeight: floatMaxH,
+        // 编辑态先给足高度（"先变大再键入"）；预览态按内容自适应
+        ...(minEditingH > 0 ? { minHeight: minEditingH } : {}),
+        display: 'flex',
+        flexDirection: 'column',
+        // 编辑态内部区域各自滚动，外层不滚（保持输入框位置稳定）
+        overflowY: editing ? 'hidden' : 'auto',
+        // 翻转用 translate3d（-100% = 自身高度上移），同时把浮窗提到合成层
+        transform: `translate3d(0, ${flip ? '-100%' : '0'}, 0)`,
+        boxSizing: 'border-box',
+        background: CHROME.panelBg,
+        border: `1px solid ${CHROME.panelBorder}`,
+        borderRadius: CHROME.radius,
+        boxShadow: CHROME.shadow,
+        backdropFilter: 'blur(12px)',
+        padding: 10,
+        zIndex: 70,
+        fontFamily: CHROME.fontFamily,
+      }
+    : {
+        // 世界空间：left/top 已是屏幕投影坐标，宽高用**世界基线**，
+        // 由一次 transform: scale(k) 统一缩放（合成器驱动，不逐帧重排内部文本）。
+        position: 'absolute',
+        left: x,
+        top: y,
+        width: Math.max(EMBEDDED_NOTE_MIN_W, width),
+        ...(height === undefined
+          ? {}
+          : { height: Math.max(EMBEDDED_NOTE_MIN_H, height) }),
+        transform: `translate3d(0, 0, 0) scale(${s})`,
+        transformOrigin: '0 0',
+        display: 'flex',
+        flexDirection: 'column',
+        boxSizing: 'border-box',
+        background: CHROME.panelBg,
+        border: `1px solid ${CHROME.panelBorder}`,
+        borderRadius: CHROME.radius,
+        boxShadow: CHROME.shadow,
+        backdropFilter: 'blur(12px)',
+        padding: 10,
+        overflow: 'hidden',
+        zIndex: 70,
+        fontFamily: CHROME.fontFamily,
+      };
+
+  // 区域布局：embedded 固定槽内两区平分；floating 预览按内容自适应（各自封顶滚动）；
+  // floating 编辑态给足空间 —— 序列区封顶 240，正文区吃掉剩余高度（textarea 拉伸填充）。
+  const seqStyle: React.CSSProperties = floating
+    ? editing
+      ? { flex: '0 1 auto', minHeight: 0, maxHeight: 190, overflowY: 'auto' }
+      : { maxHeight: REGION_MAX_H, overflowY: 'auto' }
+    : { flex: '1 1 0', minHeight: 0, overflowY: 'auto' };
+  const textStyle: React.CSSProperties = floating
+    ? editing
+      ? { flex: '1 1 0', minHeight: 0, overflowY: 'auto', display: 'flex', flexDirection: 'column' }
+      : { maxHeight: REGION_MAX_H, overflowY: 'auto' }
+    : { flex: '1 1 0', minHeight: 0, overflowY: 'auto' };
 
   return (
     <div
+      ref={rootRef}
       data-note-popover
       data-note-pinned={pinned ? 'true' : 'false'}
+      data-note-mode={floating ? 'floating' : 'embedded'}
       // 画布手势监听 pointerdown/up；只拦 click 会让点击输入框仍触发画布空白点击，
       // 进而清掉 pinnedNoteId，浮窗立即消失。
       onPointerDown={(e) => {
@@ -95,22 +326,7 @@ export function NotePopover({
       onClick={(e) => {
         e.stopPropagation();
       }}
-      style={{
-        position: 'absolute',
-        left: x,
-        top: y,
-        width,
-        ...(height === undefined ? {} : { height }),
-        boxSizing: 'border-box',
-        background: CHROME.panelBg,
-        border: `1px solid ${CHROME.panelBorder}`,
-        borderRadius: CHROME.radius,
-        boxShadow: CHROME.shadow,
-        backdropFilter: 'blur(12px)',
-        padding: 10,
-        zIndex: 70,
-        fontFamily: CHROME.fontFamily,
-      }}
+      style={rootStyle}
     >
       <div
         style={{
@@ -118,20 +334,21 @@ export function NotePopover({
           alignItems: 'center',
           gap: 6,
           marginBottom: 8,
+          flex: 'none',
         }}
       >
         <span
           style={{
             flex: 1,
             color: CHROME.text,
-            fontSize: CHROME.fontSizeSmall,
+            fontSize: fontPx,
             fontWeight: 600,
           }}
         >
           note 笔记
         </span>
         {!pinned && (
-          <span style={{ color: CHROME.textMuted, fontSize: 10 }}>点击固定</span>
+          <span style={{ color: CHROME.textMuted, fontSize: fontMutedPx }}>点击固定</span>
         )}
         <button
           type="button"
@@ -142,7 +359,7 @@ export function NotePopover({
             background: 'transparent',
             color: CHROME.textMuted,
             cursor: 'pointer',
-            fontSize: 12,
+            fontSize: fontPx,
             lineHeight: 1,
             padding: 2,
           }}
@@ -152,7 +369,7 @@ export function NotePopover({
       </div>
 
       {/* ① 序列区域 */}
-      <div data-note-seq style={{ ...sectionStyle, marginBottom: 8 }}>
+      <div data-note-seq style={{ ...seqStyle, marginBottom: 8 }}>
         {editing ? (
           <QaEditor
             items={seq}
@@ -160,13 +377,14 @@ export function NotePopover({
             token={token}
             title="序列"
             placeholder="新增条目…（回车提交）"
+            fontSize={fontPx}
           />
         ) : seq.length === 0 ? null : (
           <>
             <div
               style={{
                 color: token.color.annotationAccent,
-                fontSize: CHROME.fontSizeSmall,
+                fontSize: fontPx,
                 fontWeight: 600,
                 marginBottom: 4,
               }}
@@ -174,16 +392,16 @@ export function NotePopover({
               序列
             </div>
             <ol style={{ margin: 0, paddingLeft: 18 }}>
-              {seq.map((s, i) => (
+              {seq.map((item, i) => (
                 <li
                   key={i}
                   style={{
                     color: CHROME.text,
-                    fontSize: CHROME.fontSizeSmall,
+                    fontSize: fontPx,
                     lineHeight: 1.6,
                   }}
                 >
-                  {s}
+                  {item}
                 </li>
               ))}
             </ol>
@@ -192,11 +410,11 @@ export function NotePopover({
       </div>
 
       {/* ② 纯文本区域 */}
-      <div data-note-textarea style={sectionStyle}>
+      <div data-note-textarea style={textStyle}>
         <div
           style={{
             color: CHROME.textMuted,
-            fontSize: CHROME.fontSizeSmall,
+            fontSize: fontPx,
             fontWeight: 600,
             marginBottom: 4,
           }}
@@ -211,14 +429,15 @@ export function NotePopover({
             onBlur={onTextBlur}
             onKeyDown={(e) => e.stopPropagation()}
             style={{
-              width: '100%',
-              minHeight: 72,
+              // 编辑态吃掉正文区剩余高度（先给足空间再键入），下限 150 保证可见行数
+              flex: 1,
+              minHeight: EDITING_TEXTAREA_MIN_H,
               border: `1px solid ${CHROME.panelBorder}`,
               background: 'transparent',
               color: CHROME.text,
               borderRadius: CHROME.radiusSmall,
               padding: '4px 6px',
-              fontSize: CHROME.fontSizeSmall,
+              fontSize: fontPx,
               fontFamily: CHROME.fontFamily,
               lineHeight: 1.6,
               resize: 'vertical',
@@ -229,7 +448,7 @@ export function NotePopover({
           <div
             style={{
               color: CHROME.text,
-              fontSize: CHROME.fontSizeSmall,
+              fontSize: fontPx,
               lineHeight: 1.6,
               whiteSpace: 'pre-wrap',
               wordBreak: 'break-word',

@@ -2,8 +2,15 @@
  * SVG 导出（GH-T4）：当前文档全图 → 独立 SVG 字符串（保持主题令牌；复用渲染侧 nodeCardStyle/buildLinkPath）。
  * view 缺省 = 布局 bounds 外扩 40px（全图导出）。
  */
-import { filterVisibleLinks, isBoxInView, type LayoutResult } from '@mindcanvas/kernel';
-import { buildLinkPath, computeBranchIndex, nodeCardStyle } from '../render/geometry.js';
+import { filterVisibleLinks, isBoxInView, type GrowDir, type LayoutResult } from '@mindcanvas/kernel';
+import {
+  buildLinkPath,
+  computeBranchIndex,
+  nodeCardStyle,
+  verticalBeamMap,
+  type LinkGeom,
+} from '../render/geometry.js';
+import { collectDeclaredGrowDir } from '../render/growDir.js';
 import type { TokenSet } from '../theme/index.js';
 
 export interface ExportSvgOptions {
@@ -41,12 +48,20 @@ export function exportSvg(
     `<rect x="${r(view.x)}" y="${r(view.y)}" width="${r(view.w)}" height="${r(view.h)}" fill="${esc(token.color.canvas)}"/>`,
   );
 
-  // 连线（复用渲染侧 path 构建；不传分支色 → 默认连线色）
+  // 连线（复用渲染侧 path 构建；不传分支色 → 默认连线色）。
+  // G6′：垂直连线共享梁——与渲染侧同款分组（verticalBeamMap + 声明方向），导出形状与画布一致
+  const docRoot = layout.nodes.find((n) => n.depth === 0)?.node;
+  const growDirOf = docRoot ? collectDeclaredGrowDir(docRoot) : new Map<string, GrowDir>();
+  const linkGeoms: Array<LinkGeom & { dir?: GrowDir }> = [];
   for (const l of visibleLinks) {
     const from = boxes.get(l.fromId);
     const to = boxes.get(l.toId);
     if (!from || !to) continue;
-    const p = buildLinkPath(token, from, to);
+    linkGeoms.push({ fromId: l.fromId, from, to, dir: growDirOf.get(l.toId) });
+  }
+  const beamYs = verticalBeamMap(linkGeoms, (g) => g.dir);
+  for (const g of linkGeoms) {
+    const p = buildLinkPath(token, g.from, g.to, undefined, { beamY: beamYs.get(g), dir: g.dir });
     parts.push(
       `<path d="${esc(p.d)}" fill="none" stroke="${esc(p.stroke)}" stroke-width="${r(p.width)}"/>`,
     );

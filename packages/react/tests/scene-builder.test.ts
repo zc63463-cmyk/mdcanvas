@@ -49,8 +49,8 @@ function input(over: Partial<SceneInput> = {}): SceneInput {
       },
     ],
     links: [
-      { from: box(0, 0), to: box(200, 10), toId: 'a' },
-      { from: box(200, 10), to: box(400, 10), toId: 'a1' },
+      { fromId: 'root', from: box(0, 0), to: box(200, 10), toId: 'a' },
+      { fromId: 'a', from: box(200, 10), to: box(400, 10), toId: 'a1' },
     ],
     branchColorOf: () => undefined,
     token: glassToken,

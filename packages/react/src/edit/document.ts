@@ -7,11 +7,13 @@
  * 资产持久化说明：资产 id 仍为「导图相对路径」；物理落盘依赖宿主写能力（FS 目录句柄 / Forgejo），本期保持宿主契约不变。
  */
 import { DocLibrary } from './docLibrary.js';
+import { getFileHandle, setFileHandle, verifyPermission } from './handleStore.js';
 import {
   MM_FILE_TYPES,
   saveMarkdown,
+  writeToHandle,
   type FsFileHandle,
-  type SaveResult,
+  type SaveOutcome,
 } from './save.js';
 
 /** 文档模型 */
@@ -34,14 +36,23 @@ export interface MindDoc {
 export interface DocumentHost {
   /** 打开本地文档（FS Access；不支持/取消 → null） */
   open(): Promise<MindDoc | null>;
-  /** 保存（有 handle 直接写回；无 → 弹框/下载兜底） */
-  save(doc: MindDoc): Promise<SaveResult>;
+  /** 保存（有 handle 直接写回；无 → 弹框/下载兜底）。返回 result + 新句柄（FA1-T1） */
+  save(doc: MindDoc): Promise<SaveOutcome>;
   /** 新建（未保存） */
   create(name: string, source: string): MindDoc;
-  /** 最近文档（localStorage；上限 8，新在前） */
+  /** 最近文档（localStorage；上限 8，新在前）。FA1-T2：尽力异步补挂 IndexedDB 句柄 */
   recent(): MindDoc[];
   /** 记入最近列表 */
   remember(doc: MindDoc): void;
+  /**
+   * 补挂已持久化的句柄（FA1-T2）：localStorage 恢复的文档没有 handle，
+   * 从 IndexedDB 取回并校验权限后回填（原地改写同一对象，保持引用稳定）。
+   *
+   * 可选：不具备 IndexedDB 能力的宿主（测试替身 / 极简实现）可以不提供，
+   * 调用方降级为「切文档不自动补句柄」，不影响保存主流程。
+   * @returns 带上 handle 的同一文档对象
+   */
+  restoreHandle?(doc: MindDoc): Promise<MindDoc>;
 }
 
 /** 最近列表的显示上限 */
@@ -79,6 +90,9 @@ export class LocalDocHost implements DocumentHost {
       if (!handle) return null;
       const file = (await handle.getFile?.()) ?? new File([], handle.name ?? 'untitled.mm.md');
       const source = await file.text();
+      // FA1-T2：打开即把句柄存进 IndexedDB —— 刷新后从「最近文档」载入时可直接写回，
+      // 无需再选一次路径（权限 prompt 场景下由下一次保存手势补一次 requestPermission）。
+      void setFileHandle(file.name, handle);
       return { id: file.name, name: file.name, source, handle, saved: true, ts: Date.now() };
     } catch (e) {
       if ((e as Error).name === 'AbortError') return null; // 用户取消
@@ -86,16 +100,12 @@ export class LocalDocHost implements DocumentHost {
     }
   }
 
-  async save(doc: MindDoc): Promise<SaveResult> {
+  async save(doc: MindDoc): Promise<SaveOutcome> {
+    // 已有句柄 → 静默写回（零弹窗；这是「第二次 Ctrl+S 不再弹覆盖确认」的关键路径）
     if (doc.handle) {
-      try {
-        const writable = await doc.handle.createWritable();
-        await writable.write(doc.source);
-        await writable.close();
-        return 'fs';
-      } catch {
-        // 句柄失效（文件被移走等）→ 兜底弹框/下载
-      }
+      const ok = await writeToHandle(doc.handle, doc.source);
+      if (ok) return { result: 'fs', handle: doc.handle };
+      // 句柄失效（文件被移走/权限撤销）→ 兜底弹框/下载，由调用方接管新句柄
     }
     return saveMarkdown(doc.source, doc.name);
   }
@@ -119,9 +129,20 @@ export class LocalDocHost implements DocumentHost {
   }
 
   remember(doc: MindDoc): void {
-    // 写单一事实源。handle 不可序列化，DocLibrary 不存（保存时需重新选文件，
-    // 这与 recent() 恢复出的文档行为一致）。
+    // 写单一事实源。handle 不可序列化，DocLibrary 不存 —— 由 handleStore
+    // （IndexedDB，支持结构化克隆）另行持久化，见 restoreHandle()。
     this.library.upsert({ id: doc.id, name: doc.name, source: doc.source });
+  }
+
+  async restoreHandle(doc: MindDoc): Promise<MindDoc> {
+    if (doc.handle) return doc;
+    const handle = await getFileHandle(doc.id);
+    if (!handle) return doc;
+    // 只读校验：此刻多半没有用户手势，requestPermission 会被浏览器直接拒，
+    // 因此只认已授权状态；prompt 的留到用户点「保存」时再补一次请求。
+    if (!(await verifyPermission(handle, true))) return doc;
+    doc.handle = handle;
+    return doc;
   }
 
   /**

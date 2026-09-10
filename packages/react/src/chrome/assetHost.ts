@@ -5,6 +5,7 @@
  * 当前实现：DemoAssetHost（打包 demo 资产 + objectURL 会话级上传——浏览器沙箱无法落盘，持久化留给真实宿主）。
  */
 import type { AssetItem } from './AssetPanel.js';
+import { INLINE_SVG_LIMIT } from './assetIcons.js';
 
 /** 文件扩展名 → 资产 kind（未知 → img） */
 export function kindOfFileName(name: string): 'img' | 'draw' {
@@ -50,7 +51,12 @@ export interface AssetHost {
   baseUrl: string;
 }
 
-/** 会话级 demo 宿主：打包清单 + objectURL 上传（不落盘；真实持久化 = 换宿主实现） */
+/**
+ * 会话级 demo 宿主：打包清单 + objectURL 上传（不落盘；真实持久化 = 换宿主实现）。
+ *
+ * 与 `IdbAssetHost` 的差异只在持久化介质：两者对「小 SVG 留一份源码」的处理一致，
+ * 否则换宿主会让「设为节点图标」的内联能力凭空消失。
+ */
 export class DemoAssetHost implements AssetHost {
   readonly baseUrl: string;
   private items: AssetItem[];
@@ -79,6 +85,10 @@ export class DemoAssetHost implements AssetHost {
       name: file.name,
       type: (file.name.toLowerCase().split('.').pop() ?? 'bin').slice(0, 8),
     };
+    // FA1-T5：小 SVG 留一份源码（与 IdbAssetHost 同口径，换宿主不丢内联能力）
+    if (item.kind === 'draw' && file.size <= INLINE_SVG_LIMIT) {
+      item.svg = await file.text();
+    }
     // 替换语义：同 id 覆盖旧 objectURL（revoke 防泄漏）+ 清单去重（原实现会 push 重复项）
     const prevUrl = this.objectUrls.get(item.id);
     if (prevUrl) URL.revokeObjectURL(prevUrl);

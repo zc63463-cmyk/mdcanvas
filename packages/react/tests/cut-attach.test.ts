@@ -275,4 +275,23 @@ describe('A5 引用收集（collectReferenceAnchors）', () => {
     expect(fields).toContain('groups[0].members[0]');
     expect(fields).toContain('links[0].to');
   });
+
+  it('v1.5.0：sections[].root 进入迁移盘点清单（cid 与 node: 两种锚都覆盖）', () => {
+    const root = makeTree();
+    root.note = {
+      ...(root.note ?? {}),
+      sections: [
+        { id: 'sec_a', root: 'cid:c-work', color: 'blue' },
+        { id: 'sec_b', root: 'node:根/任务' },
+      ],
+    };
+    const refs = collectReferenceAnchors(root);
+    const fields = refs.map((r) => r.field);
+    expect(fields).toContain('sections[0].root');
+    expect(fields).toContain('sections[1].root');
+    const cidRef = refs.find((r) => r.field === 'sections[0].root')!;
+    const pathRef = refs.find((r) => r.field === 'sections[1].root')!;
+    expect(cidRef.anchor).toBe('cid:c-work');
+    expect(pathRef.anchor).toBe('node:根/任务');
+  });
 });

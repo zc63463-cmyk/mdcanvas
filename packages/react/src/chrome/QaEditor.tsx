@@ -21,6 +21,11 @@ export interface QaEditorProps {
   title?: string;
   /** 新增输入框的占位文案 */
   placeholder?: string;
+  /**
+   * 字号（缺省 chrome 小字号）。
+   * 由 note 浮窗传入：笔记字号不得大于所属节点字号，编辑器（编辑态）需同步。
+   */
+  fontSize?: number;
 }
 
 export function QaEditor({
@@ -29,7 +34,9 @@ export function QaEditor({
   token,
   title = '快速注释',
   placeholder = '新增注释…（回车提交）',
+  fontSize,
 }: QaEditorProps) {
+  const fs = fontSize ?? CHROME.fontSizeSmall;
   const [value, setValue] = useState('');
   const add = (): void => {
     const text = value.trim();
@@ -43,7 +50,7 @@ export function QaEditor({
         <span
           style={{
             color: token.color.annotationAccent,
-            fontSize: CHROME.fontSizeSmall,
+            fontSize: fs,
             fontWeight: 600,
           }}
         >
@@ -55,7 +62,7 @@ export function QaEditor({
             color: token.color.annotationAccent,
             borderRadius: 8,
             padding: '0 6px',
-            fontSize: 10,
+            fontSize: Math.max(8, fs - 1),
             lineHeight: '14px',
           }}
         >
@@ -73,7 +80,7 @@ export function QaEditor({
             borderLeft: `2px solid ${token.color.annotationAccent}`,
             borderRadius: 4,
             padding: '4px 6px',
-            fontSize: CHROME.fontSizeSmall,
+            fontSize: fs,
             lineHeight: 1.5,
             color: CHROME.text,
           }}
@@ -106,7 +113,7 @@ export function QaEditor({
               border: 'none',
               background: 'transparent',
               color: CHROME.text,
-              fontSize: CHROME.fontSizeSmall,
+              fontSize: fs,
               lineHeight: 1.5,
               fontFamily: CHROME.fontFamily,
               outline: 'none',
@@ -121,7 +128,7 @@ export function QaEditor({
               background: 'transparent',
               color: token.color.annotationAccent,
               cursor: 'pointer',
-              fontSize: 12,
+              fontSize: fs,
               lineHeight: 1,
               padding: 2,
             }}
@@ -149,7 +156,7 @@ export function QaEditor({
           color: CHROME.text,
           borderRadius: CHROME.radiusSmall,
           padding: '4px 8px',
-          fontSize: CHROME.fontSizeSmall,
+          fontSize: fs,
           fontFamily: CHROME.fontFamily,
           outline: 'none',
         }}
