@@ -176,11 +176,16 @@ one_liner → decisions → status → next → reminder
 | 字段 | 类型 | 说明 |
 |---|---|---|
 | `edges` | 对象列表 | **文档级**标注边（写于文件头，§6.2） |
+| `centers` | 对象列表 | **文档级**中心标注（升格节点，§6.3） |
+| `center_pos` | 对象列表 | **文档级**降格中心的历史坐标暂存（§6.3） |
+| `sections` | 对象列表 | **文档级**空间分区清单（v1.5.0，§6.4） |
 | `one_liner` | string | 一句话摘要 |
 | `status` | string | 状态 |
 | `next` | string 或 string[] | 下一步 |
 | `reminder` | string | 提醒 |
 | `desc` | string | 幕布风格描述（v1.3.0），多行以 `\n` 转义 |
+| `note` | string[] | 节点注释 · 序列区域（v1.4.0，§5.4） |
+| `note_text` | string | 节点注释 · 纯文本区域（v1.4.0，§5.4） |
 | `qa` | string[] | 快速注释，多条目按需展开 |
 | `links` | 对象列表 | 节点级关系（§6.1） |
 | `decisions` | string[] | 决策记录 |
@@ -239,6 +244,30 @@ links:
 > 最后一条是 v1.3.0 的关键修复：裸换行会截断 YAML 行结构，
 > 重解析时第二行不是 `key: value` → `E-INVALID-NOTE-YAML` → **整块笔记丢弃**。
 
+### 5.4 节点注释双区域（v1.4.0）
+
+`note`（序列）与 `note_text`（纯文本）是**同一浮窗内的两个区域**，不是二选一的类型 ——
+两者可同时存在，也可只填其一。
+
+```yaml
+note:
+- 第一条补充
+- 第二条补充
+note_text: |
+  一整段多行文本，浮窗内以段落渲染。
+```
+
+| 字段 | 类型 | 说明 |
+|---|---|---|
+| `note` | string[] | 序列区域（条目列表） |
+| `note_text` | string | 纯文本区域（一整段多行文本） |
+
+与 `desc` 的分工：`desc` 是简短说明、**常驻节点盒内**；`note` / `note_text` 是
+更丰富的补充内容、**浮窗展示、不占节点空间**。
+
+**读取兼容**：旧文件的 `qa` 在**读取时**视为 `note` 的回退值（见 `noteOf()`），
+写入一律写 `note`。
+
 ---
 
 ## 六、关系
@@ -269,6 +298,83 @@ links:
 | `invalidAt` | 软失效时间戳（失效/恢复二段） |
 | `source` | `manual` / `inferred` / `imported` |
 
+### 6.3 文档级 `centers` / `center_pos`（G6′ 中心升格）
+
+写在**文档根节点的笔记块**内，把某棵子树从父岛提出来成为独立中心（自由落位、独立生长方向）。
+
+```yaml
+centers:
+- at: "总览/工作"      # 路径锚（位置提示；cid 存在时仅作提示）
+  cid: c7              # 稳定身份（优先解析依据；改名/移动不失效）
+  dir: right           # 生长方向 right/left/down/up
+  x: 250               # 世界坐标（成对才生效；缺失则由布局自动排开）
+  y: -40
+  parent_link: show    # G3 跨岛父子连线显示（缺省 hide）
+  detached: true       # G2 切断独立标记（缺省删除）
+center_pos:            # 降格后的坐标历史暂存（再升格可吸附回原位）
+- at: "总览/工作"
+  x: 250
+  y: -40
+```
+
+| 字段 | 说明 |
+|---|---|
+| `at` | 路径锚（`node:根/…`）或实体锚（`@kind:id[#N]`）；位置上提示 |
+| `cid` | 稳定子树身份（节点 `note.cid` 一对一关联）；**解析优先级高于 `at`** |
+| `dir` | 生长方向；缺省 `right` |
+| `x` / `y` | 世界坐标；**必须成对**，缺一个则整体交自动排列 |
+| `parent_link` | `show` / `hide`（缺省）；控制跨岛父子边是否绘制 |
+| `detached` | 切断独立标记（缺省删除字段） |
+
+**cid 分配**：`root.note.next_cid` 为单调计数器，分配后 +1 且**永不复用**。
+重复 cid 由读侧 first-wins 拦截并产出 `dup-cid` 诊断。
+
+### 6.4 文档级 `sections`（v1.5.0 Phase 1 子树锚定空间分区）
+
+写在**文档根节点的笔记块**内。每个 Section 锚定一棵子树，渲染层据子树 AABB
+自动算框 —— 树内容增删改后框自动跟随，**零引用同步成本**。
+
+```yaml
+sections:
+- id: sec_9f3a         # 分区身份（必填，非空字符串）
+  title: 摩擦分析       # 标题（缺省回退 root 节点标题）
+  color: blue          # 配色 token：blue/amber/green/violet/rose/slate（缺省 slate）
+  root: cid:c7         # 子树根锚：写入一律 cid:，读取兼容 node: 路径
+  members: "cid:c2|cid:c3"   # Phase 2 预留（当前不参与语义）
+  collapsed: true            # Phase 2 预留（当前折叠走会话态，不读该键）
+```
+
+| 字段 | 类型 | 说明 |
+|---|---|---|
+| `id` | string | 分区身份（必填）；缺失的条目读侧跳过但原值透传 |
+| `title` | string | 标题；缺省回退 root 节点标题 |
+| `color` | string | 配色 token；未知 token 原值透传、渲染回退 `slate` |
+| `root` | string | 子树根锚。**写入一律 `cid:`**；读取兼容 `node:` 路径锚 |
+| `members` | string | **Phase 2 预留**（C-a 管道串形态）；当前不参与语义 |
+| `collapsed` | boolean | **Phase 2 预留**；当前折叠为会话态，不落盘 |
+
+**锚解析三态**（`resolveSections`）：
+
+| 状态 | 含义 | 渲染行为 |
+|---|---|---|
+| `well-formed` | 唯一命中 | 画正常框（AABB + 标题栏 + 折叠钮） |
+| `dangling` | 锚失效（如子树被删/cid 不存在） | 灰虚幽灵 chip + `W-SECTION-DANGLING`；**数据保留** |
+| `stale` | 锚歧义或语法非法 | 同上（措辞区分） |
+
+**数据无损纪律（D3 裁决）**：dangling/stale 的 Section 元数据**绝不静默删除**，
+保留在文档中并产出诊断，由用户显式清理（与 `W-ORPHAN-NOTE` 同一哲学）。
+
+**D1 不变量**：Phase 1 的 Section **必然是** center（升格节点）。
+「标记为 Section」只写 `sections` 元数据；「设为 Section（升为中心）」
+在同一条事务内完成升格 + 标记（单条 undo）。
+
+**锚迁移**：`sections[].root` 已登记进 `ANCHOR_NOTE_KEYS`，改名/移动时走
+`planReferenceMigration` 的 cid 双轨 —— `cid:` 锚原样保留即正确迁移；
+`node:` 路径锚按 nodeId 重建。
+
+**折叠**：复用节点级会话态 `collapsedIds`（不落盘；D2 裁决）。
+折叠后隐藏成员无盒 → AABB 收缩只余 root，徽标转 `+N`。
+
 ---
 
 ## 七、结构装配
@@ -298,6 +404,7 @@ links:
 | `W-ORPHAN-NOTE` | W | 笔记后无节点 | 笔记丢弃 |
 | `W-NOTE-SHADOWED` | W | 前一未绑定笔记被遮蔽 | 前一笔记丢弃 |
 | `W-STRAY-LINE` | W | 杂散行 | 忽略该行 |
+| `W-SECTION-DANGLING` | W | Section 子树根锚失效/歧义（v1.5.0） | **元数据保留**，渲染幽灵态 |
 
 > ⚠️ **级别 ≠ 数据保留**。`E` 与 `W` 都只表示「解析时发生了容错调整」，
 > 上表「后果」列写明「丢弃 / 忽略」的**都会丢失原内容**。
@@ -387,6 +494,8 @@ cd apps/canvas && npx vite-node scripts/diag-roundtrip-real.mts     # 真实文�
 
 | 版本 | 变更 |
 |---|---|
+| v1.5.0 | 文档级 `sections` 空间分区（子树锚定 + `cid:` 锚 + `W-SECTION-DANGLING` 数据无损幽灵态） |
+| v1.4.0 | `Note.note`（序列）/ `Note.note_text`（纯文本）节点注释双区域；读取兼容旧 `qa` |
 | v1.3.1 | canonical 输出保留分支分段空行（格式改进，数据语义等价） |
 | v1.3.0 | 新增 `Note.desc` 幕布描述（多行 `\n` 转义） |
 | v1.2.0 | 文档级 `edges`：`invalidAt` 软失效、`source` 来源溯源 |
