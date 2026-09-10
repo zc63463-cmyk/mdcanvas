@@ -11,6 +11,7 @@ import {
   buildLayoutTree,
   collectLayout,
   H_GAP,
+  isGrowDir,
   layoutMindmap,
   layoutBounds,
   orgBeamLink,
@@ -41,7 +42,7 @@ export type LayoutFunc = (
   collapsedIds: Set<string>,
 ) => LayoutResult;
 
-const SUB_GAP = 28;
+export const SUB_GAP = 28;
 
 // ---------- org：自顶向下行式（同层同行、子行下沉） ----------
 function subtreeWidth(ln: LayoutNode): number {
@@ -248,16 +249,23 @@ export interface BranchLayoutOptions {
   explicitDirByNodeId?: Map<string, GrowDir>;
   /** 岛/根缺省方向（无显式 dir 时的归宿）。缺省 'right'（与 forest.DEFAULT_ROOT_DIR 一致） */
   islandDir?: GrowDir;
+  /**
+   * 无 dir 声明时的回退布局。缺省 layoutMindmap（经典左右平衡，管线无岛路径用）。
+   * 岛内必须传 LAYOUT_BY_DIR[dir]——岛内原语义是「整棵朝该方向生长」，
+   * 与经典 mindmap 的左右平衡不同（接线实测：直接回退 layoutMindmap 会破坏
+   * forest 四向生长测试）。
+   */
+  fallback?: (r: EditableNode, m: MeasureFn, c: Set<string>) => LayoutResult;
   /** 增量缓存（透传 layoutMindmap 回退路径；分支路径为全量，忽略缓存命中） */
   cache?: LayoutCache;
   /** 度量语义键（透传回退路径） */
   measureKey?: string;
 }
 
-type BBox = { minX: number; minY: number; maxX: number; maxY: number };
+export type BBox = { minX: number; minY: number; maxX: number; maxY: number };
 
 /** 子树局部包围盒（含 node 自身盒） */
-function subtreeBBox(ln: LayoutNode): BBox {
+export function subtreeBBox(ln: LayoutNode): BBox {
   const b: BBox = {
     minX: ln.box.x,
     minY: ln.box.y,
@@ -275,246 +283,8 @@ function subtreeBBox(ln: LayoutNode): BBox {
 }
 
 /** 平移整棵子树（盒 + 后代盒） */
-function translateSubtree(ln: LayoutNode, dx: number, dy: number): void {
+export function translateSubtree(ln: LayoutNode, dx: number, dy: number): void {
   ln.box.x += dx;
   ln.box.y += dy;
   for (const c of ln.children) translateSubtree(c, dx, dy);
-}
-
-/** 全树是否存在任一显式 dir 声明（决定回退 vs 分支） */
-function hasAnyExplicitDir(root: EditableNode, explicit: Map<string, GrowDir>): boolean {
-  if (explicit.size === 0) return false;
-  let found = false;
-  const walk = (n: EditableNode): void => {
-    if (found) return;
-    if (explicit.has(n.id)) {
-      found = true;
-      return;
-    }
-    for (const c of n.children) walk(c);
-  };
-  walk(root);
-  return found;
-}
-
-/**
- * 节点级生长方向布局：在经典 mindmap 之上叠加「思想分叉」。
- *
- * 行为：
- * - 全树无显式 dir → 直接委托 layoutMindmap（**字节级一致**，旧文件布局不变）
- * - 存在 dir → 每节点按有效 dir 将子节点分四组，各组递归布局 + 邻侧一次防叠
- *
- * 返回 LayoutResult（nodes 为前序遍历；links 按子方向选 bezier / 正交梁线）。
- */
-export function layoutMindmapBranched(
-  root: EditableNode,
-  measure: MeasureFn,
-  collapsedIds: Set<string>,
-  opts: BranchLayoutOptions = {},
-): LayoutResult {
-  const explicit = opts.explicitDirByNodeId ?? new Map<string, GrowDir>();
-  const islandDir: GrowDir = opts.islandDir ?? 'right';
-
-  // 回归闸门：无任何显式 dir → 逐像素回退，保证旧文件布局零变更
-  if (!hasAnyExplicitDir(root, explicit)) {
-    return layoutMindmap(root, measure, collapsedIds, {
-      cache: opts.cache,
-      measureKey: opts.measureKey,
-    });
-  }
-
-  // 子节点 → 有效方向映射（供连线选样式）
-  const dirOf = new Map<string, GrowDir>();
-
-  // ① 构建可见骨架（盒置于原点，折叠节点不展开子女——与 layoutMindmap 同语义）
-  const buildSkeleton = (node: EditableNode, depth: number, parentId: string | null): LayoutNode => {
-    const m = measure(node);
-    const children: LayoutNode[] = !collapsedIds.has(node.id)
-      ? node.children.map((c) => buildSkeleton(c, depth + 1, node.id))
-      : [];
-    return {
-      node,
-      box: { x: 0, y: 0, w: m.w, h: m.h },
-      side: 0,
-      depth,
-      parentId,
-      children,
-    };
-  };
-  const rootLN = buildSkeleton(root, 0, null);
-
-  // ② 递归：先放置各子树的局部布局（子根在原点），再按方向分组挂到父节点四周
-  const place = (ln: LayoutNode, inheritedDir: GrowDir): void => {
-    if (ln.children.length === 0) return;
-
-    // 分组 + 记录每个子节点的有效方向
-    const groups: Record<GrowDir, LayoutNode[]> = { right: [], left: [], down: [], up: [] };
-    for (const c of ln.children) {
-      const cd = explicit.get(c.node.id) ?? inheritedDir;
-      dirOf.set(c.node.id, cd);
-      groups[cd].push(c);
-    }
-
-    // 先递归放置每个孩子子树（此刻子根盒在原点，后代已相对子根布局）
-    for (const c of ln.children) place(c, dirOf.get(c.node.id) ?? inheritedDir);
-
-    const nb = ln.box;
-    // ③ 每组沿父节点对应边堆叠；子根盒从原点平移到目标位置
-    (['right', 'left', 'down', 'up'] as const).forEach((dir) => {
-      const group = groups[dir];
-      if (group.length === 0) return;
-
-      if (dir === 'right' || dir === 'left') {
-        // 垂直堆叠：总高 = Σ子树垂直跨度 + V_GAP*(n-1)
-        const extents = group.map((c) => {
-          const b = subtreeBBox(c);
-          return { c, minY: b.minY, maxY: b.maxY, span: b.maxY - b.minY };
-        });
-        const total = extents.reduce((s, e) => s + e.span, 0) + V_GAP * (group.length - 1);
-        let cursor = nb.y + nb.h / 2 - total / 2; // 相对父节点垂直居中
-        for (const e of extents) {
-          const slotCenterY = cursor + e.span / 2;
-          const subCenterY = (e.minY + e.maxY) / 2;
-          const dy = slotCenterY - subCenterY;
-          const targetX =
-            dir === 'right' ? nb.x + nb.w + H_GAP : nb.x - H_GAP - e.c.box.w;
-          const dx = targetX - e.c.box.x;
-          translateSubtree(e.c, dx, dy);
-          cursor += e.span + V_GAP;
-        }
-      } else {
-        // 水平堆叠（down/up）：总宽 = Σ子树水平跨度 + H_GAP*(n-1)
-        const extents = group.map((c) => {
-          const b = subtreeBBox(c);
-          return { c, minX: b.minX, maxX: b.maxX, span: b.maxX - b.minX };
-        });
-        const total = extents.reduce((s, e) => s + e.span, 0) + H_GAP * (group.length - 1);
-        let cursor = nb.x + nb.w / 2 - total / 2; // 相对父节点水平居中
-        for (const e of extents) {
-          const slotCenterX = cursor + e.span / 2;
-          const subCenterX = (e.minX + e.maxX) / 2;
-          const dx = slotCenterX - subCenterX;
-          const targetY = dir === 'down' ? nb.y + nb.h + V_GAP : nb.y - H_GAP - e.c.box.h;
-          const dy = targetY - e.c.box.y;
-          translateSubtree(e.c, dx, dy);
-          cursor += e.span + H_GAP;
-        }
-      }
-    });
-
-    // ④ 邻侧防叠：相邻方向组（right↔down 等）bounds 相交 → 一次推开（不迭代）
-    const pushDx: Record<GrowDir, number> = { right: 0, left: 0, down: 0, up: 0 };
-    const pushDy: Record<GrowDir, number> = { right: 0, left: 0, down: 0, up: 0 };
-    const pairs: Array<[GrowDir, GrowDir]> = [
-      ['right', 'down'],
-      ['down', 'left'],
-      ['left', 'up'],
-      ['up', 'right'],
-    ];
-    for (const [a, b] of pairs) {
-      const ga = groups[a];
-      const gb = groups[b];
-      if (ga.length === 0 || gb.length === 0) continue;
-      const A = unionBBox(ga);
-      const B = unionBBox(gb);
-      if (!intersect(A, B)) continue;
-      // a 沿其外向轴推开，b 沿其外向轴推开（一次成型）
-      if (a === 'right') pushDx.right += Math.max(0, B.maxX - A.minX);
-      if (a === 'left') pushDx.left += Math.min(0, B.minX - A.maxX);
-      if (a === 'down') pushDy.down += Math.max(0, B.maxY - A.minY);
-      if (a === 'up') pushDy.up += Math.min(0, B.minY - A.maxY);
-      if (b === 'right') pushDx.right += Math.max(0, A.maxX - B.minX);
-      if (b === 'left') pushDx.left += Math.min(0, A.minX - B.maxX);
-      if (b === 'down') pushDy.down += Math.max(0, A.maxY - B.minY);
-      if (b === 'up') pushDy.up += Math.min(0, A.minY - B.maxY);
-    }
-    (['right', 'left', 'down', 'up'] as const).forEach((dir) => {
-      if (pushDx[dir] === 0 && pushDy[dir] === 0) return;
-      for (const c of groups[dir]) translateSubtree(c, pushDx[dir], pushDy[dir]);
-    });
-  };
-
-  place(rootLN, islandDir);
-
-  // 根节点居中于原点（与 layoutMindmap 约定一致，便于视觉对齐）
-  const rootCenterX = rootLN.box.x + rootLN.box.w / 2;
-  const rootCenterY = rootLN.box.y + rootLN.box.h / 2;
-  translateSubtree(rootLN, -rootCenterX, -rootCenterY);
-
-  // ⑤ 收集节点 + 连线（按子方向选线型）
-  const nodes: LayoutNode[] = [];
-  const links: LayoutResult['links'] = [];
-  const walk = (ln: LayoutNode): void => {
-    nodes.push(ln);
-    for (const c of ln.children) {
-      links.push(makeLinkByDir(ln, c, dirOf.get(c.node.id) ?? 'right', dirOf));
-      walk(c);
-    }
-  };
-  walk(rootLN);
-
-  return { nodes, links, bounds: layoutBounds(nodes) };
-}
-
-/** 多子树并集包围盒 */
-function unionBBox(group: LayoutNode[]): BBox {
-  let acc: BBox | null = null;
-  for (const c of group) {
-    const b = subtreeBBox(c);
-    if (acc === null) {
-      acc = { ...b };
-    } else {
-      acc.minX = Math.min(acc.minX, b.minX);
-      acc.minY = Math.min(acc.minY, b.minY);
-      acc.maxX = Math.max(acc.maxX, b.maxX);
-      acc.maxY = Math.max(acc.maxY, b.maxY);
-    }
-  }
-  return acc ?? { minX: 0, minY: 0, maxX: 0, maxY: 0 };
-}
-
-/** 轴对齐矩形相交判定 */
-function intersect(a: BBox, b: BBox): boolean {
-  return a.minX < b.maxX && b.minX < a.maxX && a.minY < b.maxY && b.minY < a.maxY;
-}
-
-/** 父→子连线：right/left 用贝塞尔；down 用正交梁线（向下）；up 用正交梁线（向上）。
- *  方向经参数显式注入（复审修复：原模块级可变桥接 _dirOf 从未被 bindDirOf 填充，
- *  会导致全部连线回退贝塞尔——且模块级可变状态在并发布局下不安全，已删除）。 */
-function makeLinkByDir(
-  parent: LayoutNode,
-  child: LayoutNode,
-  dir: GrowDir,
-  dirOf: ReadonlyMap<string, GrowDir>,
-): LayoutResult['links'][number] {
-  const dirOfChild = (c: LayoutNode): GrowDir => dirOf.get(c.node.id) ?? 'right';
-  if (dir === 'right' || dir === 'left') {
-    return {
-      path: bezierLink(parent, child),
-      depth: parent.depth,
-      fromId: parent.node.id,
-      toId: child.node.id,
-    };
-  }
-  if (dir === 'down') {
-    const tops = parent.children
-      .filter((c) => dirOfChild(c) === 'down')
-      .map((c) => c.box.y);
-    const beamY = (parent.box.y + parent.box.h + (tops.length ? Math.min(...tops) : parent.box.y)) / 2;
-    return {
-      path: orgBeamLink(parent, child, beamY),
-      depth: parent.depth,
-      fromId: parent.node.id,
-      toId: child.node.id,
-    };
-  }
-  // up
-  const bottoms = parent.children.filter((c) => dirOfChild(c) === 'up').map((c) => c.box.y + c.box.h);
-  const beamY = (parent.box.y + (bottoms.length ? Math.max(...bottoms) : parent.box.y + parent.box.h)) / 2;
-  return {
-    path: orgBeamLinkUp(parent, child, beamY),
-    depth: parent.depth,
-    fromId: parent.node.id,
-    toId: child.node.id,
-  };
 }

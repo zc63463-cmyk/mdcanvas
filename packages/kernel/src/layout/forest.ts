@@ -25,6 +25,7 @@ import {
   type MeasureFn,
 } from './mindmap.js';
 import { layoutLogic, layoutOrg, type LayoutKind } from './layouts.js';
+import { layoutMindmapBranched } from './branching.js';
 
 /** 中心生长方向（四向）。
  *  定义在 mindmap.ts（布局基座）——forest 与 layouts 都依赖它；
@@ -95,8 +96,14 @@ export function layoutForest(
   const gap = opts.gap ?? 160;
 
   // ① 局部布局 + 记录每棵子树的局部尺寸
+  //    D2′ 接线：岛内也要支持「思想分叉」——走分支布局（注入 islandDir=岛方向）；
+  //    无 note.dir 声明时 layoutMindmapBranched 内部逐像素回退经典布局，零行为变更。
   const local = centers.map((spec) => {
-    const res = LAYOUT_BY_DIR[spec.dir](spec.node, measure, collapsedIds);
+    const res = layoutMindmapBranched(spec.node, measure, collapsedIds, {
+      islandDir: spec.dir,
+      // 回退沿用岛内原四向布局（整棵朝该方向），保证无 note.dir 时零行为变更
+      fallback: LAYOUT_BY_DIR[spec.dir],
+    });
     return {
       spec,
       res,

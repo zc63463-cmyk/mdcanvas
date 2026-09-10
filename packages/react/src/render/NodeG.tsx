@@ -8,6 +8,9 @@ import type { DisplayMetrics, LayoutNode } from '@mindcanvas/kernel';
 import type { TokenSet } from '../theme/types.js';
 import type { NodeCardStyle } from './geometry.js';
 import type { AnimatedBox } from './transition.js';
+import { resolveNodeIcon } from './nodeIcon.js';
+import { sanitizeInlineSvg, tintSvgToCurrentColor } from './svgTint.js';
+import { NODE_ICON_SIZE } from '@mindcanvas/kernel';
 
 export interface NodeGProps {
   node: LayoutNode;
@@ -105,14 +108,32 @@ export function NodeG({
   const ref = node.node.type === 'entity' ? node.node.ref : null;
   const assetKind =
     ref?.kind && (ref.kind === 'img' || ref.kind === 'draw') ? ref.kind : null;
-  const assetHref = assetKind && ref
-    ? (resolveAssetUrl?.(ref) ?? (assetBaseUrl ? assetBaseUrl + ref.id : null))
-    : null;
+  // FA1-T3：资产来源两条 —— 实体节点（@img/@draw）或文本节点的 note.media 内联插图。
+  // 后者让「嵌入节点」不再等于「新建一个子节点」，插图属于当前节点本体。
+  const mediaRef = metrics.media ?? null;
+  const mediaSrc = mediaRef !== null ? resolveNodeIcon(mediaRef, { resolveAssetUrl, assetBaseUrl }) : null;
+  const assetHref =
+    assetKind && ref
+      ? (resolveAssetUrl?.(ref) ?? (assetBaseUrl ? assetBaseUrl + ref.id : null))
+      : (mediaSrc?.href ?? null);
   // 资产区高度仅当确实要渲染图片时才占位（无 baseUrl 时降级为纯文本节点，不留空白）
   const assetH = assetHref !== null ? (metrics.assetH ?? 0) : 0;
   // 文本区起点：有资产时下移至资产区之下，二者垂直分离不再重叠（布局侧已同步预留高度）
   const textAreaTop = assetH > 0 ? assetH + ASSET_GAP : 0;
   const textTop = textAreaTop + (bodyH - textAreaTop - lines.length * LINE_H) / 2;
+  // 节点图标（FA1-T3）：note.icon 指定的素材，渲染在标题左侧。
+  // x 由布局反推：contentX 已含 iconW（图标 + 间隙），故图标左沿 = contentX - iconW。
+  // 内联 SVG 走 currentColor 染色（T5），<image> 加载的走原色。
+  const iconSrc = resolveNodeIcon(metrics.icon ?? null, { resolveAssetUrl, assetBaseUrl });
+  const iconW = metrics.iconW ?? 0;
+  const iconX = metrics.contentX - iconW;
+  const iconY = Math.max(0, (bodyH - NODE_ICON_SIZE) / 2);
+  const showIcon = iconSrc !== null && iconW > 0 && !noText;
+  // 内联 SVG 需先净化（用户上传源码 = 等价 HTML 注入，必须过白名单）
+  const inlineIconHtml =
+    showIcon && iconSrc?.inline
+      ? sanitizeInlineSvg(tintSvgToCurrentColor(iconSrc.inline))
+      : null;
   // 资产加载失败 → warn 占位（虚线框 + ✕ 提示，非无感隐藏）；href 变化重置失败态
   const [assetFailed, setAssetFailed] = useState(false);
   useEffect(() => setAssetFailed(false), [assetHref]);
@@ -219,6 +240,23 @@ export function NodeG({
           />
         </g>
       )}
+      {/* 节点图标（FA1-T3）：内联 SVG 走 currentColor（跟随 style.color = 主题色）；
+          外链走 <image>，加载失败自动隐藏（不喧宾夺主） */}
+      {showIcon && inlineIconHtml !== null && (
+        <g
+          data-node-icon
+          transform={`translate(${iconX} ${iconY}) scale(${NODE_ICON_SIZE / 24})`}
+          style={{ color: style.text }}
+          // 已过 sanitizeInlineSvg 白名单（script / foreignObject / 事件属性 / javascript: 均已剔除）。
+          // 内联是「SVG 跟随主题变色」的唯一途径：外部 <image> 加载的 SVG 是独立文档，
+          // 拿不到宿主 currentColor —— 故在此处承担该风险，并用白名单净化把风险压到最低。
+          // biome-ignore lint/security/noDangerouslySetInnerHtml: 源码已过 sanitizeInlineSvg 白名单净化（见 render/svgTint.ts）
+          dangerouslySetInnerHTML={{ __html: inlineIconHtml }}
+        />
+      )}
+      {showIcon && inlineIconHtml === null && iconSrc?.href && (
+        <NodeIconImage href={iconSrc.href} x={iconX} y={iconY} />
+      )}
       {!noText && (
         <g>
           {metrics.kindLabel !== null && (
@@ -251,6 +289,25 @@ export function NodeG({
         </g>
       )}
     </g>
+  );
+}
+
+/** 外链图标（非内联资产）：加载失败则静默隐藏——图标是装饰，坏图不值得占视觉 */
+function NodeIconImage({ href, x, y }: { href: string; x: number; y: number }) {
+  const [failed, setFailed] = useState(false);
+  useEffect(() => setFailed(false), [href]);
+  if (failed) return null;
+  return (
+    <image
+      data-node-icon
+      href={href}
+      x={x}
+      y={y}
+      width={NODE_ICON_SIZE}
+      height={NODE_ICON_SIZE}
+      preserveAspectRatio="xMidYMid meet"
+      onError={() => setFailed(true)}
+    />
   );
 }
 

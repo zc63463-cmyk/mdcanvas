@@ -5,10 +5,10 @@
  * 视觉决策取 NodeG 的简化等价：节点卡（分支色/叶样式）+ 单行文本 + 折叠计数 + 选中描边。
  * 交互态（hover/编辑浮层/拖拽 ghost）不在场景内——超大图降级场景可接受。
  */
-import { buildLinkPath, nodeCardStyle, type CardLevel } from './geometry.js';
+import { buildLinkPath, nodeCardStyle, verticalBeamMap, type CardLevel } from './geometry.js';
 import type { BranchColor, TokenSet } from '../theme/types.js';
 import type { ScenePrimitive } from './backend.js';
-import type { Box, } from '@mindcanvas/kernel';
+import type { Box, GrowDir } from '@mindcanvas/kernel';
 
 /** 自动切 Canvas 的节点数阈值（T8 降级策略 L3：>50K） */
 export const CANVAS_AUTO_NODES = 50000;
@@ -42,8 +42,8 @@ export interface SceneInput {
     collapsed: boolean;
     selected: boolean;
   }>;
-  /** 连线（端点盒由调用方解析后传入） */
-  links: Array<{ from: Box; to: Box; toId: string }>;
+  /** 连线（端点盒由调用方解析后传入；fromId/dir 供垂直方向组共享梁分组——dir=声明方向） */
+  links: Array<{ fromId: string; from: Box; to: Box; toId: string; dir?: GrowDir }>;
   /** 节点 id → 分支色（MapView 的 branchIndex 已算好） */
   branchColorOf: (id: string) => BranchColor | undefined;
   token: TokenSet;
@@ -103,8 +103,14 @@ function nodeScene(
 
 /** 可见节点/连线 → 场景树（世界坐标） */
 export function buildSceneFromLayout(input: SceneInput): ScenePrimitive {
+  // G6′ 垂直连线共享梁：up/down 方向组共用一条水平梁（与内核 makeLinkByDir 公式一致）；
+  // dir = 声明方向（声明 up/down 无视 x 重叠，一律并入垂直组）
+  const beamYs = verticalBeamMap(input.links, (l) => l.dir);
   const linkPrims = input.links.map((l) => {
-    const p = buildLinkPath(input.token, l.from, l.to);
+    const p = buildLinkPath(input.token, l.from, l.to, undefined, {
+      beamY: beamYs.get(l),
+      dir: l.dir,
+    });
     return { type: 'path', d: p.d, stroke: p.stroke, strokeWidth: p.width } as ScenePrimitive;
   });
   const nodePrims = input.nodes.map((n) => nodeScene(n, input.token, input.branchColorOf));

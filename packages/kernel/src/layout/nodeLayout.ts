@@ -22,6 +22,15 @@ const ASSET_H = 96;
 const ASSET_GAP = 8;
 /** 可预览的资产 kind（与 NodeG 的渲染判定同源；新增资产 kind 需同步此处） */
 const ASSET_KINDS: readonly string[] = ['img', 'draw'];
+/**
+ * 节点图标（FA1-T3）：`note.icon` 指定的素材渲染在标题左侧。
+ * 布局必须同步预留宽度，否则图标会压在文字上（与 assetH 同一类图文重叠问题）。
+ */
+export const NODE_ICON_SIZE = 18;
+/** 图标与标题文字的间隙 */
+export const NODE_ICON_GAP = 6;
+/** 带插图的节点最小宽度（窄盒子里塞不下图，宁可撑宽） */
+const ASSET_MIN_W = 72;
 
 export interface DisplayMetrics {
   w: number;
@@ -48,6 +57,41 @@ export interface DisplayMetrics {
    * （1.0.1 新增可选字段：符合 ADR-0004「minor 可加不可改」）
    */
   assetH?: number;
+  /**
+   * 节点图标（FA1-T3）：`note.icon` 的值（素材 id / data URL）；无图标为 null。
+   * 与 assetH 不同——图标**不与文字争高度**，只占标题左侧一块方形。
+   */
+  icon?: string | null;
+  /** 图标占位宽度（图标 + 间隙）；无图标为 0。渲染侧据此反推图标 x = contentX - iconW */
+  iconW?: number;
+  /**
+   * 内联插图（FA1-T3）：`note.media` 的值（素材 id / data URL）。
+   * 与 `icon` 的分工：icon 是标题左侧的小方块，media 是标题**上方**的卡片式插图，
+   * 需要像实体资产那样预留 assetH（否则图片压文字）。
+   */
+  media?: string | null;
+}
+
+/**
+ * 读取节点图标（`note.icon`）。
+ *
+ * 只认非空字符串：note 是带索引签名的开放结构，写回时可能残留 null/对象，
+ * 一律窄化后再用——避免把 `icon: {..}` 之类的脏数据当 URL 渲染。
+ */
+export function nodeIcon(node: { note?: unknown }): string | null {
+  return noteString(node, 'icon');
+}
+
+/** 读取节点内联插图（`note.media`） */
+export function nodeMedia(node: { note?: unknown }): string | null {
+  return noteString(node, 'media');
+}
+
+function noteString(node: { note?: unknown }, key: string): string | null {
+  const note = node.note;
+  if (typeof note !== 'object' || note === null) return null;
+  const v = Reflect.get(note, key);
+  return typeof v === 'string' && v !== '' ? v : null;
 }
 
 /** 行宽：普通字体度量与 token 加权度量取大（防富文本加宽溢出节点盒） */
@@ -96,8 +140,10 @@ export function displayMetrics(
     const badgeW = badgeText !== null ? measure(badgeText) + 14 : 0;
     const entityUrl = safeHref(ent?.ref ?? null);
     const hasNote = Boolean(node.note);
+    const noteIcon = nodeIcon(node);
+    const noteIconW = noteIcon !== null ? NODE_ICON_SIZE + NODE_ICON_GAP : 0;
     const iconW = (entityUrl !== null ? 13 : 0) + (hasNote ? 15 : 0);
-    const contentX = PAD_X + kindW + 6;
+    const contentX = PAD_X + kindW + 6 + noteIconW;
     const w = Math.ceil(
       contentX +
         warnW +
@@ -126,6 +172,8 @@ export function displayMetrics(
       entityUrl,
       hasNote,
       assetH,
+      icon: noteIcon,
+      iconW: noteIconW,
     };
   }
   if (node.type === 'image') {
@@ -155,15 +203,25 @@ export function displayMetrics(
   const tokens = lines.map((l) => tokenizeInline(l));
   const lineW = Math.max(...lines.map((l) => lineWidthOf(l, measure)));
   const hasNote = Boolean(node.note);
-  const w = Math.ceil(Math.max(44, PAD_X + lineW + (hasNote ? 17 : 0) + PAD_X));
-  const h = Math.max(MIN_H, lines.length * LINE_H + 12);
+  const icon = nodeIcon(node);
+  const iconW = icon !== null ? NODE_ICON_SIZE + NODE_ICON_GAP : 0;
+  const media = nodeMedia(node);
+  // 内联插图与实体资产同口径：预留 ASSET_H，否则图片被压进文字条带
+  const assetH = media !== null ? ASSET_H : 0;
+  const w = Math.ceil(
+    Math.max(
+      44 + (assetH > 0 ? ASSET_MIN_W : 0),
+      PAD_X + iconW + lineW + (hasNote ? 17 : 0) + PAD_X,
+    ),
+  );
+  const h = Math.max(MIN_H, lines.length * LINE_H + 12 + (assetH > 0 ? assetH + ASSET_GAP : 0));
   return {
     w,
     h,
     lines,
     tokens,
     lineW,
-    contentX: PAD_X,
+    contentX: PAD_X + iconW,
     kindLabel: null,
     kindColor: KIND_FALLBACK_COLOR,
     warn: false,
@@ -172,5 +230,9 @@ export function displayMetrics(
     badgeX: 0,
     entityUrl: null,
     hasNote,
+    icon,
+    iconW,
+    media,
+    assetH,
   };
 }

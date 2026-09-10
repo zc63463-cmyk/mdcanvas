@@ -8,7 +8,7 @@
  * - 折叠语义：折叠节点子女不布局
  */
 import { describe, expect, it } from 'vitest';
-import { layoutMindmapBranched } from '../src/layout/layouts.js';
+import { layoutMindmapBranched } from '../src/layout/branching.js';
 import { layoutMindmap, type LayoutResult } from '../src/layout/mindmap.js';
 import { makeTextNode, type EditableNode } from '../src/tree/treeOps.js';
 import type { GrowDir } from '../src/layout/forest.js';
@@ -93,10 +93,55 @@ describe('layoutMindmapBranched：同节点多向分叉', () => {
     const a = boxOf(res, against.id);
     const f = boxOf(res, inFavor.id);
     const d = boxOf(res, detail.id);
-    // 反方(left)：整体在父左侧；正方(继承 right)：整体在父右侧；细节(down)：整体在父下方
+    // 反方(left)：整体在父左侧；细节(down)：整体在父下方 —— 显式声明必须落位
     expect(a.x + a.w).toBeLessThanOrEqual(p.x);
-    expect(f.x).toBeGreaterThanOrEqual(p.x + p.w);
     expect(d.y).toBeGreaterThanOrEqual(p.y + p.h);
+    // 正方**未声明** → 局部性优先：保持经典布局的基准位置，不再断言其左右
+    // （经典布局是整体算法，它可能落在左侧）。局部性由下方对照测试严格保证。
+  });
+
+  it('★ 局部性：未声明方向的兄弟保持经典布局位置（不因旁支声明而重排）', () => {
+    const { root, issue, inFavor, explicit } = forkFixture();
+    // 基准：完全不声明任何方向
+    const baseline = layoutMindmapBranched(root, measure, new Set(), { islandDir: 'right' });
+    // 只给「反方」「细节」声明方向，「正方」不声明
+    const withDir = layoutMindmapBranched(root, measure, new Set(), {
+      explicitDirByNodeId: explicit,
+      islandDir: 'right',
+    });
+    // 未声明的「正方」坐标必须与基准完全一致（逐像素）
+    const b = boxOf(baseline, inFavor.id);
+    const w = boxOf(withDir, inFavor.id);
+    expect(w.x).toBe(b.x);
+    expect(w.y).toBe(b.y);
+  });
+
+  it('★ 局部性：只给一个深叶子声明方向 → 旁支整条分支坐标不变', () => {
+    // 根 → 甲(甲一,甲二) / 乙(乙一,乙二) / 丙(丙一,丙二)
+    const leaf = makeTextNode('丙二');
+    const root = makeTextNode('根', [
+      makeTextNode('甲', [makeTextNode('甲一'), makeTextNode('甲二')]),
+      makeTextNode('乙', [makeTextNode('乙一'), makeTextNode('乙二')]),
+      makeTextNode('丙', [makeTextNode('丙一'), leaf]),
+    ]);
+    const baseline = layoutMindmapBranched(root, measure, new Set(), { islandDir: 'right' });
+    const withOne = layoutMindmapBranched(root, measure, new Set(), {
+      explicitDirByNodeId: new Map<string, GrowDir>([[leaf.id, 'up']]),
+      islandDir: 'right',
+    });
+    // 甲、乙 两条旁支（含子孙）逐像素不变
+    for (const text of ['甲', '甲一', '甲二', '乙', '乙一', '乙二']) {
+      const b = baseline.nodes.find((n) => n.node.text === text);
+      const w = withOne.nodes.find((n) => n.node.text === text);
+      expect(b).toBeDefined();
+      expect(w).toBeDefined();
+      expect(w!.box.x).toBe(b!.box.x);
+      expect(w!.box.y).toBe(b!.box.y);
+    }
+    // 声明的那个必须真的动到父节点上方（方向生效，不是「什么都没做」）
+    const c = withOne.nodes.find((n) => n.node.text === '丙')!;
+    const l = withOne.nodes.find((n) => n.node.text === '丙二')!;
+    expect(l.box.y + l.box.h).toBeLessThan(c.box.y);
   });
 
   it('嵌套覆盖：无声明子节点继承最近显式祖先方向，孙节点可再覆盖', () => {
@@ -181,5 +226,75 @@ describe('layoutMindmapBranched：连线形态按子方向选择', () => {
     expect(String(linkTo(against.id)!.path)).toContain('C');
     expect(String(linkTo(inFavor.id)!.path)).toContain('C');
     expect(String(linkTo(detail.id)!.path)).not.toContain('C');
+  });
+});
+
+describe('上下生长对称性与层距（浏览器实测修复：up 曾误用 H_GAP）', () => {
+  const fixed = (n: EditableNode) => ({ w: (n.text?.length ?? 1) * 10 + 20, h: 24 });
+
+  function withDir(text: string, dir: GrowDir, children: EditableNode[] = []): EditableNode {
+    return { ...makeTextNode(text, children), note: { dir } };
+  }
+
+  it('★ up 与 down 的父子层距相等（对称，不再一远一近）', () => {
+    const down = layoutMindmapBranched(
+      makeTextNode('根', [withDir('子', 'down')]),
+      fixed,
+      new Set(),
+    );
+    const up = layoutMindmapBranched(makeTextNode('根', [withDir('子', 'up')]), fixed, new Set());
+    const rootDown = boxOf(down, down.nodes[0]!.node.id);
+    const childDown = boxOf(down, down.nodes[1]!.node.id);
+    const rootUp = boxOf(up, up.nodes[0]!.node.id);
+    const childUp = boxOf(up, up.nodes[1]!.node.id);
+
+    const gapDown = childDown.y - (rootDown.y + rootDown.h);
+    const gapUp = rootUp.y - (childUp.y + childUp.h);
+    expect(gapDown).toBeGreaterThan(0);
+    expect(gapUp).toBeGreaterThan(0);
+    expect(gapUp).toBe(gapDown); // 对称：核心回归点
+  });
+
+  it('up 子节点完全位于父上方，且与父不重叠', () => {
+    const res = layoutMindmapBranched(makeTextNode('根', [withDir('子', 'up')]), fixed, new Set());
+    const root = boxOf(res, res.nodes[0]!.node.id);
+    const child = boxOf(res, res.nodes[1]!.node.id);
+    expect(child.y + child.h).toBeLessThan(root.y);
+  });
+
+  it('★ 多层 up：各层层距一致（不因层级加深而变远）', () => {
+    const grand = withDir('孙', 'up');
+    const child = withDir('子', 'up', [grand]);
+    const res = layoutMindmapBranched(makeTextNode('根', [child]), fixed, new Set());
+    const [r, c, g] = res.nodes;
+    const gap1 = r!.box.y - (c!.box.y + c!.box.h);
+    const gap2 = c!.box.y - (g!.box.y + g!.box.h);
+    expect(gap1).toBe(gap2);
+  });
+
+  it('up + down 同存：两侧层距对称', () => {
+    const res = layoutMindmapBranched(
+      makeTextNode('根', [withDir('上子', 'up'), withDir('下子', 'down')]),
+      fixed,
+      new Set(),
+    );
+    const root = boxOf(res, res.nodes[0]!.node.id);
+    const up = boxOf(res, res.nodes[1]!.node.id);
+    const down = boxOf(res, res.nodes[2]!.node.id);
+    const gapUp = root.y - (up.y + up.h);
+    const gapDown = down.y - (root.y + root.h);
+    expect(gapUp).toBe(gapDown);
+  });
+
+  it('up/down 组水平并排：子间距与经典 org（SUB_GAP）一致', () => {
+    const res = layoutMindmapBranched(
+      makeTextNode('根', [withDir('A', 'down'), withDir('B', 'down')]),
+      fixed,
+      new Set(),
+    );
+    const a = boxOf(res, res.nodes[1]!.node.id);
+    const b = boxOf(res, res.nodes[2]!.node.id);
+    expect(b.x).toBeGreaterThan(a.x + a.w); // 并排不重叠
+    expect(b.x - (a.x + a.w)).toBe(28); // SUB_GAP
   });
 });

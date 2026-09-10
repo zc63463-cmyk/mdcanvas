@@ -152,10 +152,62 @@ export function upsertGrowDir(note: Note | undefined, dir: GrowDir | null | unde
   return note ?? {};
 }
 
+/**
+ * 新子节点方向推断（PG「按入边多数方向推断」的树版）。
+ *
+ * 优先级：兄弟节点的显式 dir **多数** → 父节点的显式 dir → null（不写，走继承）。
+ * 返回 null 表示「不需要固化」——保持旧行为（不写 note.dir，布局走继承）。
+ *
+ * 为什么用「兄弟多数」而非 PG 的入边方向：树里子节点只有一条入边（父边），
+ * 无「入边方向」概念；兄弟既有方向才是用户对这一层的真实意图表达。
+ */
+export function inferChildDir(parent: EditableNode): GrowDir | null {
+  const counts = new Map<GrowDir, number>();
+  for (const c of parent.children) {
+    const d = readGrowDir(c.note, c.id);
+    if (d !== null) counts.set(d, (counts.get(d) ?? 0) + 1);
+  }
+  if (counts.size > 0) {
+    let best: GrowDir | null = null;
+    let bestN = 0;
+    for (const [d, n] of counts) {
+      if (n > bestN) {
+        best = d;
+        bestN = n;
+      }
+    }
+    if (best !== null) return best;
+  }
+  // 无兄弟声明 → 跟随父节点自己的生长侧（父朝左长，新子节点也朝左）
+  return readGrowDir(parent.note, parent.id);
+}
+
 /** 文档级 dir 聚合诊断（供 UI 顶部一次性汇报非法声明数量） */
 export function summarizeGrowDirDiagnostics(diagnostics: GrowDirDiagnostic[]): string {
   if (diagnostics.length === 0) return '无 dir 诊断';
   return diagnostics.map((d) => d.message).join('；');
+}
+
+/**
+ * 全树声明方向映射（含显式祖先继承）：declared(node) = 自身显式 ?? 最近显式祖先；全无 → 不入表。
+ *
+ * 与内核 layoutMindmapBranched 内部的 dirOf 语义一致（显式声明 → 跟随显式父 → 沿继承链上溯），
+ * 供渲染侧连线选型（geometry linkOrientation 的声明覆盖）消费。
+ *
+ * 中心节点特化（用户回归）：**岛默认方向（islandDir）不充当声明**——均衡模式下位于根左侧的
+ * 无声明子节点若被岛默认 'right' 顶死，连线会从根右缘出发横穿中心节点。无声明 = 不入表 =
+ * 回退几何自适应（左右贴实际所在侧的边缘）。
+ * O(n) 单遍，调用方按树引用 memo 化。
+ */
+export function collectDeclaredGrowDir(root: EditableNode): Map<string, GrowDir> {
+  const m = new Map<string, GrowDir>();
+  const walk = (n: EditableNode, inherited: GrowDir | undefined): void => {
+    const d = readGrowDir(n.note, n.id) ?? inherited;
+    if (d !== undefined) m.set(n.id, d);
+    n.children.forEach((c) => walk(c, d));
+  };
+  walk(root, undefined);
+  return m;
 }
 
 /**

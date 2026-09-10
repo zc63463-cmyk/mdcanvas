@@ -9,6 +9,10 @@ export interface NodeAuxiliaryRegions {
 /**
  * 保持所有调用方使用同一套纵向坐标：正文 -> 描述 -> 快速注释 -> 固定 note 笔记。
  * 未启用的区域不分配空间；异常输入被收敛为零，避免浮层脱离节点盒。
+ *
+ * ⚠️ 预留是**布局契约**，与缩放档位无关：note 卡片在 k<0.65 时会被 LOD 隐藏
+ * （只留角标），但这里仍按原样预留槽位。原因：预留若随缩放变化，滚轮每一帧都会
+ * 触发全图重排（代价远高于留白），且节点会在缩放时上下跳动。
  */
 export function nodeAuxiliaryRegions(
   boxHeight: number,

@@ -44,6 +44,13 @@ export type MeasureFn = (node: EditableNode) => { w: number; h: number };
  *  都依赖它，置此避免上层模块互取类型形成循环依赖。 */
 export type GrowDir = 'right' | 'left' | 'down' | 'up';
 
+export const GROW_DIR_VALUES: readonly GrowDir[] = ['right', 'left', 'down', 'up'];
+
+/** 运行时判据（布局层消费 note.dir 时用；非法值由 react 读侧给诊断） */
+export function isGrowDir(v: unknown): v is GrowDir {
+  return typeof v === 'string' && (GROW_DIR_VALUES as readonly string[]).includes(v);
+}
+
 export const H_GAP = 64;
 export const V_GAP = 14;
 

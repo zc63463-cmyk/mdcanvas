@@ -97,12 +97,16 @@ export function EdgeLabel({ ax, ay, nx, ny, text, stroke, token, muted, testId }
   );
 }
 
-/** 解析 `M x y C c1x c1y, c2x c2y, x y` 路径 → t=0.5 中点 + 单位法向（树边标签定位） */
+/** 解析 `M x y C c1x c1y, c2x c2y, x y` 路径 → t=0.5 中点 + 单位法向（树边标签定位）；
+ *  G6′ 起垂直连线为正交梁线（M/L/Q 圆角折线）→ 退化为弧长中点 + 切向法向。 */
 export function cubicMidNormal(d: string): { x: number; y: number; nx: number; ny: number } | null {
   const m = d.match(
     /^M ([\d.-]+) ([\d.-]+) C ([\d.-]+) ([\d.-]+), ([\d.-]+) ([\d.-]+), ([\d.-]+) ([\d.-]+)$/,
   );
-  if (!m) return null;
+  if (!m) {
+    const pts = beamPolyline(d);
+    return polylineMidNormal(pts);
+  }
   const [sx, sy, c1x, c1y, c2x, c2y, ex, ey] = m.slice(1).map(Number) as number[];
   const p0 = { x: sx!, y: sy! };
   const p1 = { x: c1x!, y: c1y! };
@@ -122,4 +126,78 @@ export function cubicMidNormal(d: string): { x: number; y: number; nx: number; n
     ny = -ny;
   }
   return { ...mid, nx, ny };
+}
+
+type PathPt = { x: number; y: number };
+
+/** orthogonalPath 的 M/L/Q 序列 → 密集折线（Q 以 t=0.5 二次贝塞尔中点二分，标签定位精度足够） */
+function beamPolyline(d: string): PathPt[] {
+  const pts: PathPt[] = [];
+  const re = /([MLQ])\s([^MLQ]+)/g;
+  for (const m of d.matchAll(re)) {
+    const cmd = m[1];
+    const body = m[2];
+    if (cmd === undefined || body === undefined) continue;
+    const nums = (body.match(/-?\d+(?:\.\d+)?/g) ?? []).map(Number);
+    const cp: PathPt[] = [];
+    for (let i = 0; i + 1 < nums.length; i += 2) {
+      const x = nums[i];
+      const y = nums[i + 1];
+      if (x === undefined || y === undefined) continue;
+      cp.push({ x, y });
+    }
+    if (cmd === 'Q') {
+      for (let i = 0; i + 1 < cp.length; i += 2) {
+        const p0 = pts[pts.length - 1];
+        const c = cp[i];
+        const e = cp[i + 1];
+        if (!p0 || !c || !e) return [];
+        pts.push({
+          x: 0.25 * p0.x + 0.5 * c.x + 0.25 * e.x,
+          y: 0.25 * p0.y + 0.5 * c.y + 0.25 * e.y,
+        });
+        pts.push(e);
+      }
+    } else {
+      for (const p of cp) pts.push(p);
+    }
+  }
+  return pts.length >= 2 ? pts : [];
+}
+
+/** 折线弧长中点 + 单位法向（归一：优先朝上，近水平时优先朝右——与 cubic 分支同款） */
+function polylineMidNormal(pts: PathPt[]): {
+  x: number;
+  y: number;
+  nx: number;
+  ny: number;
+} | null {
+  let total = 0;
+  for (let i = 1; i < pts.length; i++) {
+    const a = pts[i - 1];
+    const b = pts[i];
+    if (!a || !b) continue;
+    total += Math.hypot(b.x - a.x, b.y - a.y);
+  }
+  if (!(total > 0)) return null;
+  let half = total / 2;
+  for (let i = 1; i < pts.length; i++) {
+    const a = pts[i - 1];
+    const b = pts[i];
+    if (!a || !b) continue;
+    const len = Math.hypot(b.x - a.x, b.y - a.y);
+    if (len >= half && len > 0) {
+      const t = half / len;
+      const mid = { x: a.x + (b.x - a.x) * t, y: a.y + (b.y - a.y) * t };
+      let nx = -(b.y - a.y) / len;
+      let ny = (b.x - a.x) / len;
+      if (ny > 0 || (Math.abs(ny) < 0.15 && nx < 0)) {
+        nx = -nx;
+        ny = -ny;
+      }
+      return { ...mid, nx, ny };
+    }
+    half -= len;
+  }
+  return null;
 }
