@@ -32,17 +32,21 @@ run_vitest() {
   # Windows 路径，套在 timeout 里时 node 的输出重定向会落空，导致「明明全通过
   # 却 grep 不到结果」的误判（2026-09-10 实测）。
   _log=".git/pre-push-vitest.log"
+  _plain=".git/pre-push-vitest.plain.log"
   _code=0
   : > "$_log"
   timeout 480 node "$1" run --root "$2" > "$_log" 2>&1 || _code=$?
   cat "$_log"
-  # 结论以输出为准（退出码仅作辅助）：沙箱下进程不退出会得到 124，但用例其实已全跑完
-  if grep -qE "Tests +[0-9]+ failed" "$_log" \
-    || grep -qE "^ *FAIL |Unhandled Error|Test Files +[0-9]+ failed" "$_log"; then
+  # 判定前必须剥掉 ANSI 颜色序列：vitest 默认着色输出会把 'Tests' 与 '427 passed'
+  # 拆成 'Tests ^[[22m ^[[1m^[[32m427 passed'，直接 grep 'Tests +[0-9]+ passed' 永远不中
+  # （2026-09-10 实测根因）。
+  sed -e 's/\x1b\[[0-9;]*m//g' "$_log" > "$_plain"
+  if grep -qE "Tests +[0-9]+ failed" "$_plain" \
+    || grep -qE "^ *FAIL |Unhandled Error|Test Files +[0-9]+ failed" "$_plain"; then
     echo "  ✗ vitest 有失败用例 —— 判失败" >&2
     return 1
   fi
-  if grep -qE "Tests +[0-9]+ passed" "$_log"; then
+  if grep -qE "Tests +[0-9]+ passed" "$_plain"; then
     if [ "$_code" -eq 0 ]; then
       return 0
     fi
