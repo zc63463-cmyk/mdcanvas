@@ -5,10 +5,27 @@
 
 export type { EntityRef } from '@mindcanvas/kernel';
 export type {
+  AssetInsertAction,
   AssetItem,
   AssetPanelProps,
 } from './chrome/AssetPanel.js';
-export { AssetPanel } from './chrome/AssetPanel.js';
+export {
+  ASSET_ACTION_LABEL,
+  AssetPanel,
+  BUILTIN_ASSET_ITEMS,
+} from './chrome/AssetPanel.js';
+// FA1-T4：内置矢量图标集
+export { BUILTIN_ICONS, builtinIconById, matchBuiltinIcons } from './chrome/assetIcons.js';
+export type { BuiltinIcon } from './chrome/assetIcons.js';
+// FA1-T5：SVG 主题染色与自包含
+export {
+  isInlineableSvgText,
+  isMonochromeSvg,
+  sanitizeInlineSvg,
+  svgFromDataUrl,
+  svgToDataUrl,
+  tintSvgToCurrentColor,
+} from './render/svgTint.js';
 export {
   assetDiagnostics,
   hasAssetIn,
@@ -20,6 +37,9 @@ export {
   kindOfFileName,
 } from './chrome/assetHost.js';
 export { IdbAssetHost } from './chrome/idbAssetHost.js';
+// FA2-T4：工作区资产真落盘（写入 ./assets/，相对路径引用）
+export { WorkspaceAssetHost } from './chrome/workspaceAssetHost.js';
+export type { WorkspaceWriter } from './chrome/workspaceAssetHost.js';
 export type {
   ContextMenuItem,
   ContextMenuProps,
@@ -163,6 +183,7 @@ export type {
   DescMenuActions,
   EdgeMenuActions,
   EntityMenuActions,
+  SectionMenuActions,
 } from './edit/contextMenuItems.js';
 export {
   contextMenuItemsFor,
@@ -194,6 +215,7 @@ export type { EditorKeyAction } from './edit/keys.js';
 export {
   EDITOR_KEY_BINDINGS,
   matchEditorKey,
+  matchPreDirKey,
 } from './edit/keys.js';
 export type { OverlayEditorProps } from './edit/OverlayEditor.js';
 export { OverlayEditor } from './edit/OverlayEditor.js';
@@ -202,14 +224,51 @@ export type {
   FsFileHandle,
   FsFileSystemWindow,
   FsWritable,
+  SaveOutcome,
   SaveResult,
 } from './edit/save.js';
 export {
   installBeforeUnload,
   MM_FILE_TYPES,
   saveMarkdown,
+  writeToHandle,
 } from './edit/save.js';
 export { useEditor } from './edit/useEditor.js';
+// FA1-T2：句柄跨会话持久化（IndexedDB 结构化克隆）
+export {
+  deleteFileHandle,
+  deleteDirectoryHandle,
+  getDirectoryHandle,
+  getFileHandle,
+  setDirectoryHandle,
+  setFileHandle,
+  verifyPermission,
+  WORKSPACE_ROOT_KEY,
+} from './edit/handleStore.js';
+export type { PermissionAware } from './edit/handleStore.js';
+// FA2-T1：本地目录工作区（showDirectoryPicker）
+export {
+  ASSETS_DIR,
+  DirectoryWorkspaceHost,
+  filterTree,
+  flattenDirs,
+  flattenFiles,
+  isDirectoryPickerSupported,
+  SCAN_SKIP_DIRS,
+} from './edit/directoryHost.js';
+export type { ScanOptions } from './edit/directoryHost.js';
+export {
+  isDirEntry,
+  isFileEntry,
+  isWorkspaceDocName,
+} from './edit/directoryTypes.js';
+export type {
+  FsDirectoryHandle,
+  FsEntryHandle,
+  WorkspaceDir,
+  WorkspaceFile,
+  WorkspaceNode,
+} from './edit/directoryTypes.js';
 export { DemoPlugin } from './plugins/demoPlugin.js';
 export type {
   BackendKind,
@@ -291,19 +350,28 @@ export {
 export {
   collectCenterHistory,
   collectCenters,
+  ensureNodeCid,
   forgetCenterPos,
   GROW_DIRS,
   isGrowDir,
+  planPromoteCenter,
   rememberCenterPos,
   removeCenter,
   upsertCenter,
 } from './render/centers.js';
-export type { Center, CenterPosEntry, DocCenter } from './render/centers.js';
+export type { Center, CenterPosEntry, DocCenter, PromotePlan } from './render/centers.js';
+
+// v1.5.0 Section 锚解析（T2）：resolveSections 三态 + W-SECTION-DANGLING 诊断
+// （唯一实现在 kernel/registry/section-anchor.ts，此处转发便于 canvas 单包导入）
+export { resolveSections } from '@mindcanvas/kernel';
+export type { ResolvedSection, SectionDiagnostic } from '@mindcanvas/kernel';
 
 // D 包：节点级生长方向 note.dir（思想分叉）协议层（集成人统一导出）
 export {
+  collectDeclaredGrowDir,
   collectExplicitDir,
   effectiveGrowDir,
+  inferChildDir,
   probeDirRoundTrip,
   readGrowDir,
   summarizeGrowDirDiagnostics,
@@ -336,6 +404,21 @@ export type {
   MapViewProps,
 } from './render/MapView.js';
 export { MapView } from './render/MapView.js';
+
+// v1.5.0 Section 渲染层（Phase 1 子树锚定）：帧模型纯几何 + 背景层组件
+export {
+  buildSectionViews,
+  SECTION_PADDING,
+  SECTION_PALETTE,
+  SECTION_TITLE_H,
+} from './render/sectionFrames.js';
+export type {
+  SectionFrame,
+  SectionGhost,
+  SectionPaletteEntry,
+  SectionView,
+} from './render/sectionFrames.js';
+export { SectionLayer } from './render/SectionLayer.js';
 export {
   NODE_ANIM_MAX_NODES,
   NODE_ANIM_MS,

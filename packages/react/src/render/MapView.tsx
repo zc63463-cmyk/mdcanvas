@@ -7,8 +7,8 @@
  * 组件/几何分离：几何与命中检测在 geometry.ts（纯函数），本组件只做组装。
  */
 
-import { hasNote, noteOf } from '@mindcanvas/kernel';
-import type { CharMeasure, EditableNode, Entity } from '@mindcanvas/kernel';
+import { hasNote, noteOf, resolveSections } from '@mindcanvas/kernel';
+import type { CharMeasure, EditableNode, Entity, GrowDir } from '@mindcanvas/kernel';
 import {
   type Box,
   type BoundaryLink,
@@ -20,6 +20,7 @@ import {
 } from '@mindcanvas/kernel';
 import {
   type ReactElement,
+  type PointerEvent as ReactPointerEvent,
   type RefObject,
   Fragment,
   useCallback,
@@ -31,7 +32,7 @@ import {
   useSyncExternalStore,
 } from 'react';
 import { DescBlock, estimateDescHeight } from '../chrome/DescBlock.js';
-import { NotePopover } from '../chrome/NotePopover.js';
+import { FLOATING_NOTE_GAP, NotePopover } from '../chrome/NotePopover.js';
 import { estimateNoteAreaHeight } from '../chrome/NoteGrowthPanel.js';
 import { estimateCommentAreaHeight, GrowthCommentPanel } from '../chrome/GrowthCommentPanel.js';
 import { OverlayEditor } from '../edit/OverlayEditor.js';
@@ -44,7 +45,8 @@ import { cubicMidNormal, EdgeLabel } from './EdgeLabel.js';
 import type { EdgeRouteEntry } from './FreeEdgeLayer.js';
 import { type EdgeManual, FreeEdgeLayer } from './FreeEdgeLayer.js';
 import { collectFreeEdges, type FreeEdge } from './freeEdges.js';
-import { fixedNotePanelsOf } from './fixedNotePanels.js';
+import { collectDeclaredGrowDir } from './growDir.js';
+import { fixedNotePanelsOf, noteLodFor } from './fixedNotePanels.js';
 import type { LodLevel } from './geometry.js';
 import {
   buildLinkPath,
@@ -53,6 +55,7 @@ import {
   lodSkipText,
   nodeCardStyle,
   nodeHitTest,
+  verticalBeamMap,
 } from './geometry.js';
 import {
   NODE_ANIM_MAX_NODES,
@@ -64,6 +67,8 @@ import {
 } from './motion.js';
 import { NodeG } from './NodeG.js';
 import { nodeAuxiliaryRegions } from './nodeAuxiliary.js';
+import { SectionLayer } from './SectionLayer.js';
+import { buildSectionViews, type SectionView } from './sectionFrames.js';
 import { type DropMode, dropModeFor, planDrop } from './nodeDrag.js';
 import { commentAreaH, DescOverlays, ExpandCommentOverlay, NodeTextOverlay } from './overlays.js';
 import { PinchTracker } from './pinch.js';
@@ -71,6 +76,13 @@ import { buildSceneFromLayout, resolveBackend } from './sceneBuilder.js';
 import { FrameScheduler } from './scheduler.js';
 import { lerpNodeFrame, type NodeFrame, toNodeFrame } from './transition.js';
 import { hitNodeAt, useMapGestures, worldPointOf } from './useMapGestures.js';
+import {
+  dropGlyph,
+  dropHint,
+  senseDropTarget,
+  type DropBox,
+  type DropTarget,
+} from './dropSensing.js';
 import { estimatePanVelocity, type PanSample, ViewportController } from './viewport.js';
 
 export interface MapViewProps {
@@ -145,6 +157,8 @@ export interface MapViewProps {
   /** 折叠集合（缺省无折叠） */
   collapsedIds?: ReadonlySet<string>;
   onToggleCollapse?: (id: string) => void;
+  /** v1.5.0 Section：幽灵态（dangling）一键清理——从根 note.sections 移除该条目（T4 接线） */
+  onRemoveSection?: (sectionId: string) => void;
   /** 展开态节点 id（快速注释"生长"：节点向下变宽变高参与布局；null = 无展开） */
   expandedId?: string | null;
   /** 点击节点展开/收起（由上层决定 expandedId） */
@@ -165,6 +179,12 @@ export interface MapViewProps {
    * 缺省 = 忽略（拖放/粘贴文件不响应）。
    */
   onAssetFiles?: (files: File[]) => void;
+  /**
+   * 带落点语义的素材投放（FA2-T3）：拖放时按光标所处区域判定
+   * `icon`（文本核心）/ `media`（上下边缘）/ `child`（右侧桩）/ `free`（空白）。
+   * 提供本回调时优先于 `onAssetFiles`；未提供的老调用方行为不变。
+   */
+  onAssetDrop?: (files: File[], target: DropTarget) => void;
   /** 选中自由边 key（E3 边编辑高亮；null = 无） */
   selectedEdgeKey?: string | null;
   /** 点击自由边（E2 选中回调；带屏幕坐标供浮窗锚定） */
@@ -226,6 +246,7 @@ const CULL_MARGIN = 128;
  * （100 条边 ≈ 0.5s），并且路由回调会自我触发形成死循环。此处固定为空集单例。
  */
 const EMPTY_COLLAPSED: ReadonlySet<string> = new Set();
+const EMPTY_SECTION_VIEWS: readonly SectionView[] = [];
 
 /** 避障障碍条目（节点 id + 世界坐标盒；动画期按 id 排除端点自身，见 FreeEdgeLayer 注释） */
 export interface EdgeObstacleEntry {
@@ -277,6 +298,7 @@ export function MapView({
   onCenterMove,
   collapsedIds,
   onToggleCollapse,
+  onRemoveSection,
   expandedId,
   onToggleExpand,
   onQaChange,
@@ -286,6 +308,7 @@ export function MapView({
   resolveAssetUrl,
   onNodeMove,
   onAssetFiles,
+  onAssetDrop,
   selectedEdgeKey,
   onEdgeClick,
   onEdgeManualChange,
@@ -344,6 +367,18 @@ export function MapView({
   /**
    * 悬停预览是独立浮窗；固定 note 笔记由布局预留区渲染，不在这里处理。
    */
+  /**
+   * note 的缩放档位（与几何 LOD 是两套：几何 LOD 管文本/命中区，这里管 note DOM 生不生成）。
+   *   full  → 固定卡片 + 悬停浮窗
+   *   badge → 只留角标，悬停仍以屏幕浮窗预览
+   *   none  → note DOM 全剔除（正在编辑的除外，见下）
+   */
+  const noteLod = noteLodFor(viewport.transform.k);
+  /**
+   * 悬停预览恒为**屏幕空间浮窗**（宽度/字号固定，不随 k 缩放）——
+   * 此前宽度取 `box.w * k`，画布缩小到 0.4 时浮窗被压成细条、文字撑爆容器。
+   * anchorTop 供浮窗在空间不足时翻转到节点上方。
+   */
   const noteTargets = useMemo(() => {
     const pinnedIds = pinnedNoteIds ?? (pinnedNoteId ? [pinnedNoteId] : []);
     const targets: { id: string; ln: LayoutNode; pinned: false }[] = [];
@@ -351,27 +386,38 @@ export function MapView({
       const ln = layout.nodes.find((n) => n.node.id === hover.id);
       if (ln && hasNote(ln.node)) targets.push({ id: hover.id, ln, pinned: false });
     }
+    // 鸟瞰档：连悬停预览也不生成（DOM 与视觉噪点一起剔除）
+    if (noteLod === 'none') return [];
     return targets.map(({ id, ln, pinned }) => {
-      const x = ln.box.x * viewport.transform.k + viewport.transform.x;
-      const y = (ln.box.y + ln.box.h) * viewport.transform.k + viewport.transform.y + 8;
+      const { k, x: tx, y: ty } = viewport.transform;
       return {
         id,
         data: noteOf(ln.node),
         pinned,
-        x,
-        y,
-        width: ln.box.w * viewport.transform.k,
+        x: ln.box.x * k + tx,
+        y: (ln.box.y + ln.box.h) * k + ty + FLOATING_NOTE_GAP,
+        anchorTop: ln.box.y * k + ty,
+        // 浮窗宽度对齐节点、字号不大于节点字号（屏幕口径：世界值 × k）
+        nodeWidth: ln.box.w * k,
+        nodeFontSize: nodeFontOf(token, ln.depth) * k,
       };
     });
-  }, [pinnedNoteId, pinnedNoteIds, hover, layout, viewport.transform]);
+  }, [pinnedNoteId, pinnedNoteIds, hover, layout, viewport.transform, noteLod, token]);
   const fixedNoteIds = useMemo(
     () => new Set(pinnedNoteIds ?? (pinnedNoteId ? [pinnedNoteId] : [])),
     [pinnedNoteId, pinnedNoteIds],
   );
   const editingNoteIdSet = useMemo(() => new Set(editingNoteIds), [editingNoteIds]);
   const view = viewport.worldRect(CULL_MARGIN);
+  /**
+   * 固定卡片只在 full 档位生成（badge/none 档位不挂载大卡片，只留角标）。
+   *
+   * 唯一例外：**正在编辑**的面板在任何档位都保留 —— 编辑态会自动升级为屏幕浮窗
+   * （见 NotePopover 的 NOTE_EDIT_FLOAT_K），否则用户缩一下画布就会丢掉正在输入的内容。
+   */
   const fixedNotePanels = useMemo(() => {
-    return fixedNotePanelsOf(
+    if (noteLod !== 'full' && editingNoteIdSet.size === 0) return [];
+    const panels = fixedNotePanelsOf(
       layout,
       fixedNoteIds,
       editingNoteIdSet,
@@ -379,7 +425,8 @@ export function MapView({
       viewport.transform,
       estimateNoteAreaHeight(),
     );
-  }, [editingNoteIdSet, fixedNoteIds, layout, view, viewport.transform]);
+    return noteLod === 'full' ? panels : panels.filter((p) => p.editing);
+  }, [editingNoteIdSet, fixedNoteIds, layout, view, viewport.transform, noteLod]);
   onNodeClickRef.current = onNodeClick;
   onBlankClickRef.current = onBlankClick;
   const onNodeContextRef = useRef(onNodeContext);
@@ -404,6 +451,10 @@ export function MapView({
   onNodeMoveRef.current = onNodeMove;
   const onAssetFilesRef = useRef(onAssetFiles);
   onAssetFilesRef.current = onAssetFiles;
+  const onAssetDropRef = useRef(onAssetDrop);
+  onAssetDropRef.current = onAssetDrop;
+  // 可见节点镜像（供 senseAt 读取；见其注释里的 TDZ 说明）
+  const visibleNodesRef = useRef<readonly (typeof layout.nodes)[number][]>([]);
   const onEdgeClickRef = useRef(onEdgeClick);
   onEdgeClickRef.current = onEdgeClick;
   const onEdgeManualChangeRef = useRef(onEdgeManualChange);
@@ -454,8 +505,43 @@ export function MapView({
   const rootNode = documentRoot ?? geometricRoot;
   const freeEdges = useMemo(() => (rootNode ? collectFreeEdges(rootNode) : []), [rootNode]);
 
+  // G6′ 用户回归：声明方向覆盖几何判据。全树声明方向（自身显式 ?? 最近显式祖先；岛默认
+  // 不充当声明——中心节点特化）——铺宽的上分支组外侧子节点虽与父盒无 x 重叠，仍必须从
+  // 父顶边中心出发梁线；而均衡模式下根左侧的无声明子节点不被岛 'right' 顶死右缘（否则
+  // 连线横穿中心节点），回退几何自适应贴左缘。
+  const growDirOf = useMemo(
+    () => (rootNode ? collectDeclaredGrowDir(rootNode) : new Map<string, GrowDir>()),
+    [rootNode],
+  );
+
   // 文件拖入画布高亮（P1）
   const [fileDragActive, setFileDragActive] = useState(false);
+  // FA2-T3：拖放落点预览（松手前即可预知会被设成图标/插图/子分支/自由节点）
+  const [dropPreview, setDropPreview] = useState<{
+    target: DropTarget;
+    sx: number;
+    sy: number;
+  } | null>(null);
+
+  /**
+   * 落点判定（FA2-T3）：世界坐标 → 命中哪个节点、落在它的哪一块。
+   *
+   * 用 ref 读 visibleNodes 而非闭包：本函数在组件靠前处定义，
+   * 而 `visibleNodes` 要到下面才声明（TDZ）—— 直接引用会编译不过。
+   * ref 每渲染同步，读到的始终是当前帧的可见节点。
+   */
+  const senseAt = useCallback(
+    (e: { clientX: number; clientY: number }, el: Element | null): DropTarget | null => {
+      if (!el) return null;
+      const w = worldPointOf(e, el, viewport);
+      const boxes = visibleNodesRef.current.map((ln) => ({
+        id: ln.node.id,
+        box: { x: ln.box.x, y: ln.box.y, w: ln.box.w, h: ln.box.h } satisfies DropBox,
+      }));
+      return senseDropTarget(boxes, w);
+    },
+    [viewport],
+  );
 
   // 渲染后端（M5-T7）：SVG 适配器——连线等原语经后端绘制，为未来 Canvas 切换预留
   const backendRef = useRef<RenderBackend | null>(null);
@@ -545,6 +631,69 @@ export function MapView({
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [derived, animBoxes],
   );
+
+  // v1.5.0 Section 空间分区（T3）：解析根 note.sections → 帧模型（背景层，位于连线/节点之下）。
+  // 纯渲染投影：不进 layout.nodes（不参与节点裁剪）、不污染 layout.bounds（fit 无回归）。
+  // 成员清单优先岛成员（islandMembers），缺省回退内容树子树；取盒经 renderBoxOf 包装——
+  // 中心拖拽预览偏移经 deps 传入，框随预览实时跟随（与节点/连线同一数据源）。
+  const sectionViews = useMemo(() => {
+    if (rootNode === undefined || !rootNode.note?.sections) return EMPTY_SECTION_VIEWS;
+    const contentRoot: EditableNode = rootNode;
+    const resolved = resolveSections(contentRoot);
+    if (resolved.length === 0) return EMPTY_SECTION_VIEWS;
+    // 内容树索引：子树成员与标题（岛成员缺失时兜底；含折叠隐藏的成员——AABB 只取有盒者，
+    // memberCount 仍计全量子树，折叠徽标 +N 由此而来）
+    const subtreeCache = new Map<string, string[]>();
+    const titleCache = new Map<string, string>();
+    const walk = (n: EditableNode): string[] => {
+      const ids: string[] = [n.id];
+      if (n.type === 'text' && n.text) titleCache.set(n.id, n.text);
+      else if (n.type === 'entity' && n.ref) titleCache.set(n.id, `@${n.ref.kind}:${n.ref.id}`);
+      for (const c of n.children) ids.push(...walk(c));
+      subtreeCache.set(n.id, ids);
+      return ids;
+    };
+    walk(contentRoot);
+    return buildSectionViews({
+      resolved,
+      titleOf: (id) => titleCache.get(id) ?? id,
+      memberIdsOf: (id) => islandMembers?.get(id) ?? subtreeCache.get(id) ?? [id],
+      boxOf: (id) => {
+        const b = derived.boxes.get(id);
+        return b ? renderBoxOf(id, b) : undefined;
+      },
+      collapsedIds: collapsedIds ?? EMPTY_COLLAPSED,
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [rootNode, islandMembers, derived, collapsedIds, animBoxes, centerPreview]);
+
+  // Section 选中态（会话态；T5 接 Esc/空白退出三件套）
+  const [selectedSectionId, setSelectedSectionId] = useState<string | null>(null);
+
+  // v1.5.0 Section 标题栏拖拽（T4）：等价于「按住中心节点本体」——注入同一 nodeDrag，
+  // 后续 pointermove/pointerup 由既有手势层接管（centerPreview 实时预览 + 单次 onCenterMove 提交
+  // + Esc 零调用，全部沿用 mapview-center-drag 既有语义，零新写回通道）。
+  // D1 守卫：root 非 center（手写 YAML 可能）→ 不启动拖拽（否则退化为节点重排，语义错误）。
+  const handleSectionTitlePointerDown = (
+    rootId: string,
+    e: ReactPointerEvent<SVGGElement>,
+  ): void => {
+    if (!centerIds?.has(rootId)) return;
+    viewport.cancelAnim();
+    setNodeDrag({
+      nodeId: rootId,
+      pointerId: e.pointerId,
+      startX: e.clientX,
+      startY: e.clientY,
+      dx: 0,
+      dy: 0,
+      moved: false,
+      targetId: null,
+      mode: 'child',
+      valid: false,
+    });
+    e.stopPropagation();
+  };
   // A4：节点卡（NodeG）直接读 ln.box——预览成员在此产出偏移副本（浅拷贝，children 引用共享）。
   const visibleNodes = layout.nodes
     .filter((n) => isBoxInView(renderBoxOf(n.node.id, n.box), view, CULL_MARGIN))
@@ -555,12 +704,32 @@ export function MapView({
         box: { ...ln.box, x: ln.box.x + centerPreview.dx, y: ln.box.y + centerPreview.dy },
       };
     });
+  visibleNodesRef.current = visibleNodes;
   // 淡出中的被删节点（ghost）：仅动画期间存在，参与裁剪但不计入 stats
   const visibleGhosts =
     anim?.ghosts.filter((g) =>
       isBoxInView(animBoxes?.get(g.node.id) ?? g.box, view, CULL_MARGIN),
     ) ?? [];
   const visibleLinks = filterVisibleLinks(layout.links, derived.boxes, view, CULL_MARGIN);
+
+  // G6′ 垂直连线共享梁：up/down 方向组共用一条水平梁（与内核 makeLinkByDir 公式一致）。
+  // 每帧以当前（动画期 = 插值）盒重算分组 → 梁随节点动画同步；O(n)，与逐帧路径构建同阶。
+  // dir：声明方向（growDirOf）——声明 up/down 时无视 x 重叠与否，一律并入垂直组。
+  const visibleLinkGeoms = visibleLinks.flatMap((ln) => {
+    const fb = derived.boxes.get(ln.fromId);
+    const tb = derived.boxes.get(ln.toId);
+    if (!fb || !tb) return [];
+    return [
+      {
+        ln,
+        fromId: ln.fromId,
+        from: renderBoxOf(ln.fromId, fb),
+        to: renderBoxOf(ln.toId, tb),
+        dir: growDirOf.get(ln.toId),
+      },
+    ];
+  });
+  const linkBeamYs = verticalBeamMap(visibleLinkGeoms, (g) => g.dir);
 
   // G6″（A3-2/G3）：跨岛父子连接可见性——两端盒都在布局中（投影 owner 覆盖全树）才可画；
   // 端点盒缺失（如父端被折叠隐藏，布局不含该节点）时跳过，不误连到原点。
@@ -634,7 +803,7 @@ export function MapView({
             derived.boxes.get(l.fromId) ?? { x: 0, y: 0, w: 0, h: 0 },
           );
           const to = renderBoxOf(l.toId, derived.boxes.get(l.toId) ?? { x: 0, y: 0, w: 0, h: 0 });
-          return [{ from, to, toId: l.toId }];
+          return [{ fromId: l.fromId, from, to, toId: l.toId, dir: growDirOf.get(l.toId) }];
         }),
         branchColorOf: (id: string) => token.color.branches[derived.branchIndex.get(id) ?? 0],
         token,
@@ -893,14 +1062,28 @@ export function MapView({
           if (e.dataTransfer?.types.includes('Files')) {
             e.preventDefault();
             if (!fileDragActive) setFileDragActive(true);
+            // FA2-T3：拖动过程中实时判定落点（松手前就能看到会被插成什么）
+            const target = senseAt(e, e.currentTarget);
+            setDropPreview(target ? { target, sx: e.clientX, sy: e.clientY } : null);
           }
         }}
-        onDragLeave={() => setFileDragActive(false)}
+        onDragLeave={() => {
+          setFileDragActive(false);
+          setDropPreview(null);
+        }}
         onDrop={(e) => {
           e.preventDefault();
           setFileDragActive(false);
           const files = Array.from(e.dataTransfer?.files ?? []);
-          if (files.length > 0) onAssetFilesRef.current?.(files);
+          if (files.length === 0) {
+            setDropPreview(null);
+            return;
+          }
+          // 落点感知：优先带坐标的语义投放；上层没接就退回原「只上传图库」行为
+          const sensed = senseAt(e, e.currentTarget);
+          setDropPreview(null);
+          if (onAssetDropRef.current) onAssetDropRef.current(files, sensed ?? { action: 'free', nodeId: null });
+          else onAssetFilesRef.current?.(files);
         }}
         // 粘贴图片/文件 → 上传图库
         onPaste={(e) => {
@@ -956,19 +1139,36 @@ export function MapView({
             }}
           >
             <g transform={`translate(${x} ${y}) scale(${k})`}>
+              {/* v1.5.0 Section 背景层：永在连线/节点之下（T3）。逐框 isBoxInView 自裁剪
+                  （view 已含 CULL_MARGIN）；Canvas 模式不经 SVG 分支 → 自动降级不渲染。 */}
+              {sectionViews.length > 0 && (
+                <SectionLayer
+                  views={sectionViews.filter(
+                    (v) => v.kind === 'ghost' || isBoxInView(v.bounds, view, 0),
+                  )}
+                  view={view}
+                  k={k}
+                  selectedId={selectedSectionId}
+                  onSelect={setSelectedSectionId}
+                  onToggleCollapse={
+                    onToggleCollapseRef.current
+                      ? (id) => onToggleCollapseRef.current?.(id)
+                      : undefined
+                  }
+                  onRemoveGhost={onRemoveSection}
+                  onTitlePointerDown={handleSectionTitlePointerDown}
+                />
+              )}
               <g>
-                {visibleLinks.map((ln) => {
-                  const fromBox = derived.boxes.get(ln.fromId);
-                  const toBox = derived.boxes.get(ln.toId);
-                  if (!fromBox || !toBox) return null;
+                {visibleLinkGeoms.map((g) => {
+                  const { ln, from, to, dir } = g;
                   const palette = token.color.branches[derived.branchIndex.get(ln.toId) ?? 0];
-                  // 连线随节点同步插值：端点取动画帧盒（防「节点动、线不动」脱节）
-                  const p = buildLinkPath(
-                    token,
-                    renderBoxOf(ln.fromId, fromBox),
-                    renderBoxOf(ln.toId, toBox),
-                    palette,
-                  );
+                  // 连线随节点同步插值：端点取动画帧盒（防「节点动、线不动」脱节）；
+                  // 垂直连线取方向组共享梁高（up/down 组内同一条水平梁）
+                  const p = buildLinkPath(token, from, to, palette, {
+                    beamY: linkBeamYs.get(g),
+                    dir,
+                  });
                   // E7 审查修复：关系属性可见——chip 显示 label ?? rel ?? via（只填 rel 也可见）；
                   // note/完整属性走 hover <title>
                   const childNode = nodeByIdx.get(ln.toId);
@@ -1161,7 +1361,9 @@ export function MapView({
                     />
                     {/* v1.4.0：有节点注释的标记（右上角小圆点）—— 没有它用户无从发现
                         哪些节点挂着注释（注释本身不占节点空间、不显示在节点盒里）。 */}
-                    {hasNote(ln.node) && !lodSkipText(lod, ln.depth) && (
+                    {hasNote(ln.node) &&
+                      noteLod !== 'none' &&
+                      (noteLod === 'badge' || !lodSkipText(lod, ln.depth)) && (
                       <circle
                         data-note-badge={ln.node.id}
                         cx={ln.box.x + ln.box.w - 5}
@@ -1421,9 +1623,15 @@ export function MapView({
             key={noteTarget.id}
             seq={noteTarget.data.seq}
             text={noteTarget.data.text}
+            mode="floating"
             x={noteTarget.x}
             y={noteTarget.y}
-            width={noteTarget.width}
+            anchorTop={noteTarget.anchorTop}
+            viewportW={viewport.viewW}
+            viewportH={viewport.viewH}
+            // 宽度对齐节点长度；字号不大于节点内部字体（屏幕口径：世界值 × k）
+            nodeWidth={noteTarget.nodeWidth}
+            nodeFontSize={noteTarget.nodeFontSize}
             pinned={noteTarget.pinned}
             editing={false}
             token={token}
@@ -1441,18 +1649,61 @@ export function MapView({
             pinned
             editing={panel.editing}
             token={token}
+            // 世界空间卡片：基线尺寸 + 一次 scale(k)（不逐帧改内部字号）
+            mode="embedded"
+            scale={panel.k}
             x={panel.x}
             y={panel.y}
-            width={panel.width}
-            height={panel.height}
+            width={panel.worldWidth}
+            height={panel.worldHeight}
+            // 世界口径：卡片宽度本就是节点基线宽；字号同样不大于节点字号
+            nodeFontSize={nodeFontOf(token, panel.depth)}
             onChangeSeq={(seq) => onNoteChangeSeq?.(panel.id, seq)}
             onChangeText={(text) => onNoteChangeText?.(panel.id, text)}
             onClose={() => onNoteCloseRef.current?.(panel.id)}
           />
         ))}
+      {/* FA2-T3：拖放落点预览 —— 松手前就能看到会被插成图标 / 插图 / 子分支 / 自由节点。
+          position:fixed 直接用 clientX/clientY，省去一层坐标换算。 */}
+      {dropPreview && (
+        <div
+          data-drop-preview
+          data-drop-action={dropPreview.target.action}
+          data-drop-node={dropPreview.target.nodeId ?? ''}
+          style={{
+            position: 'fixed',
+            left: dropPreview.sx + 14,
+            top: dropPreview.sy + 14,
+            zIndex: 90,
+            pointerEvents: 'none',
+            display: 'flex',
+            alignItems: 'center',
+            gap: 6,
+            padding: '5px 10px',
+            borderRadius: 999,
+            background: token.color.annotationBadge,
+            border: `1px dashed ${token.color.selection}`,
+            color: token.color.text,
+            fontFamily: token.font.family,
+            fontSize: token.font.sizeLeaf,
+            whiteSpace: 'nowrap',
+          }}
+        >
+          <span style={{ color: token.color.selection }}>{dropGlyph(dropPreview.target.action)}</span>
+          <span>{dropHint(dropPreview.target.action)}</span>
+        </div>
+      )}
       </div>
     </div>
   );
+}
+
+/**
+ * 节点正文字号（世界 px，k=1）：叶用小一号 —— 与 DescBlock 的 descFontSize 同分档口径。
+ * note 浮窗/卡片据此封顶自己的字号（笔记不得大于所属节点字体）。
+ */
+function nodeFontOf(token: TokenSet, depth: number): number {
+  return depth >= 2 ? token.font.sizeLeaf : token.font.size;
 }
 
 /** 实体 kind chip 起点（contentX - kindW - 6；与内核 displayMetrics 排版一致） */
