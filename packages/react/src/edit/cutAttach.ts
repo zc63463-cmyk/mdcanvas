@@ -77,7 +77,7 @@ function isWithin(subtree: EditableNode, id: string): boolean {
   return subtree.children.some((c) => isWithin(c, id));
 }
 
-const ANCHOR_NOTE_KEYS = ['centers', 'center_pos', 'edges', 'links', 'groups'] as const;
+const ANCHOR_NOTE_KEYS = ['centers', 'center_pos', 'edges', 'links', 'groups', 'sections'] as const;
 
 /**
  * 盘点全树 note 锚引用（design §5 清单：centers.at / center_pos.at / edges 两端 /
@@ -113,6 +113,11 @@ export function collectReferenceAnchors(root: EditableNode): AnchorRef[] {
               anchor: item.at,
               ...(typeof item.cid === 'string' ? { cid: item.cid } : {}),
             });
+          }
+          if (key === 'sections' && typeof item.root === 'string') {
+            // sections[].root：cid 锚身份稳定（迁移时原样保留即正确）；
+            // node: 路径锚走 planReferenceMigration 的 nodeId 重建（v1.5.0 Phase 1）
+            refs.push({ noteKey: n.id, field: `sections[${i}].root`, anchor: item.root });
           }
           if (typeof item.from === 'string') {
             refs.push({ noteKey: n.id, field: `${key}[${i}].from`, anchor: item.from });

@@ -67,7 +67,41 @@ export interface Note {
    * 两者可同时存在，也可只填其一。
    */
   note_text?: string;
+  /**
+   * Section 空间分区清单（v1.5.0 · Phase 1 子树锚定）：仅文档根节点的 note 使用。
+   * 每项锚定一棵子树（root 字段写入一律 `cid:`，读取兼容 `node:` 路径），
+   * 渲染层据子树 AABB 自动算框——树内容增删改后框自动跟随，零引用同步成本。
+   * 读写访问器见 `section.ts` 的 `sectionsOf()`。
+   */
+  sections?: SectionSpec[];
   [key: string]: unknown;
+}
+
+/** Section 配色 token（渲染层映射具体色值；未知 token 透传不丢，渲染回退 slate） */
+export const SECTION_COLORS = ['blue', 'amber', 'green', 'violet', 'rose', 'slate'] as const;
+export type SectionColor = (typeof SECTION_COLORS)[number];
+export const DEFAULT_SECTION_COLOR: SectionColor = 'slate';
+
+/**
+ * Section 空间分区（v1.5.0 · Phase 1 = 带装饰的 Center Island，D1 裁决）。
+ *
+ * Phase 1 仅 `root` 子树锚定形态：设 Section 即升格为 center，不存在非 center 的
+ * Section（自由落位仅 center 级）。`members`/`collapsed` 为 Phase 2 预留字段——
+ * Phase 1 不解析、不渲染、不写入。
+ */
+export interface SectionSpec {
+  /** 实体身份：`sec_` + 短随机（供 `kind:id` 引用与 Phase 2 反向索引） */
+  id: string;
+  /** 标题栏文本；缺省渲染层取 root 节点标题 */
+  title?: string;
+  /** 配色 token；缺省 slate，未知值透传保留（前向兼容） */
+  color?: SectionColor;
+  /** 子树根锚：`cid:xxx`（写入一律落 cid）或 `node:根/分支/名`（读取兼容） */
+  root: string;
+  /** Phase 2 预留（D4 裁决 · C-a 形态）：管道分隔 cid 列表，如 "cid:a|cid:b" */
+  members?: string;
+  /** Phase 2+ 预留（D2 裁决）：折叠持久化；Phase 1 折叠为会话态不落盘 */
+  collapsed?: boolean;
 }
 
 /** MindNode 三分结构（v0.2.1） */

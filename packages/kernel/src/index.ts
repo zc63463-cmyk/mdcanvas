@@ -9,9 +9,19 @@ export {
   REGISTERED_KINDS,
   KIND_META,
   KIND_FALLBACK_COLOR,
+  SECTION_COLORS,
+  DEFAULT_SECTION_COLOR,
   validateId,
   stripOrgPrefix,
 } from './protocol/types.js';
+
+export {
+  makeSectionId,
+  removeSection,
+  sectionColorOf,
+  sectionsOf,
+  upsertSection,
+} from './protocol/section.js';
 
 export type {
   RegisteredKind,
@@ -22,6 +32,8 @@ export type {
   Note,
   Diagnostic,
   ParseResult,
+  SectionColor,
+  SectionSpec,
 } from './protocol/types.js';
 
 export const kernelPlaceholder = '@mindcanvas/kernel';
@@ -79,12 +91,20 @@ export type {
   LayoutKind,
 } from './layout/layouts.js';
 
+// D2′ 分支布局（思想分叉）；从 layouts.ts 拆出以避免该文件越过 600 行预算线
+export {
+  collectDirByNodeId,
+  layoutMindmapBranched,
+} from './layout/branching.js';
+export type { BranchLayoutOptions } from './layout/layouts.js';
+
 // G6′ 森林布局：多中心各自局部布局 → 平移 → 合并
 export {
   GROW_DIR_LABEL,
   layoutForest,
   LAYOUT_KIND_BY_DIR,
 } from './layout/forest.js';
+export { GROW_DIR_VALUES, isGrowDir } from './layout/mindmap.js';
 export type { CenterSpec, GrowDir } from './layout/forest.js';
 
 export {
@@ -147,6 +167,9 @@ export {
   cachedMetrics,
   displayMetrics,
   LINE_H,
+  NODE_ICON_GAP,
+  NODE_ICON_SIZE,
+  nodeIcon,
   TITLE_MAX_ENTITY,
   TITLE_MAX_IMAGE,
   TITLE_MAX_TEXT,
@@ -240,6 +263,13 @@ export type {
   ReferenceMigrationPlan,
 } from './registry/anchor-migrate.js';
 
+export {
+  W_SECTION_DANGLING,
+  resolveSections,
+  collectSectionDiagnostics,
+} from './registry/section-anchor.js';
+export type { ResolvedSection, SectionDiagnostic } from './registry/section-anchor.js';
+
 export { NoteKeyRegistry } from './registry/note-key.js';
 export type { NoteKeyHandler } from './registry/note-key.js';
 
@@ -299,3 +329,15 @@ export type {
   EditableNode,
   NodeLocation,
 } from './tree/treeOps.js';
+
+export {
+  graphJsonToMindmap,
+} from './adapters/graphJsonAdapter.js';
+export type {
+  GraphJsonPayload,
+  GraphJsonNode,
+  GraphJsonEdge,
+  GraphJsonIndices,
+  AdapterResult,
+  DocEdgePayload,
+} from './adapters/graphJsonAdapter.js';

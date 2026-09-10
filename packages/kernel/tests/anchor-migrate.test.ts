@@ -284,3 +284,48 @@ describe('T18：歧义拒绝 / dangling 保留 / 实体锚不动', () => {
     ]);
   });
 });
+
+describe('T17-s · sections[].root 锚迁移（v1.5.0 Phase 1）', () => {
+  /** before/after：工作 → 职场（id/cid 不变）；sections 双形态锚挂根 note */
+  function makeSecTree(workName: string): EditableNode {
+    return {
+      id: 'root',
+      type: 'text',
+      text: '总览',
+      note: {
+        sections: [
+          { id: 'sec_p', root: 'node:总览/工作' },
+          { id: 'sec_c', root: 'cid:c-work' },
+        ],
+      },
+      children: [
+        {
+          id: 'p',
+          type: 'text',
+          text: workName,
+          note: { cid: 'c-work' },
+          children: [{ id: 'c', type: 'text', text: '任务A', children: [] }],
+        },
+      ],
+    };
+  }
+
+  it('node: 路径锚随改名迁移重建；cid 锚原样保留（不进 updates）', () => {
+    const before = makeSecTree('工作');
+    const after = makeSecTree('职场');
+    const refs: AnchorRef[] = [
+      { noteKey: 'root', field: 'sections[0].root', anchor: 'node:总览/工作' },
+      { noteKey: 'root', field: 'sections[1].root', anchor: 'cid:c-work' },
+    ];
+    const plan = planReferenceMigration(before, after, refs);
+    expect(plan.ok).toBe(true);
+    if (!plan.ok) return;
+    // 仅 sections[0].root 产出更新：node:总览/工作 → node:总览/职场
+    expect(plan.updates).toEqual([
+      { noteKey: 'root', field: 'sections[0].root', from: 'node:总览/工作', to: 'node:总览/职场' },
+    ]);
+    // cid 锚无更新（身份稳定，保留即正确）；且无 dangling 诊断
+    expect(plan.updates.find((u) => u.field === 'sections[1].root')).toBeUndefined();
+    expect(plan.diagnostics.filter((d) => d.field === 'sections[1].root')).toEqual([]);
+  });
+});
