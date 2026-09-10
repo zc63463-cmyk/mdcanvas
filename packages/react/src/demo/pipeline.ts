@@ -6,7 +6,7 @@
 import {
   astToEditable,
   layoutForest,
-  layoutMindmap,
+  layoutMindmapBranched,
   parseMm,
   projectIslands,
   refKey,
@@ -198,7 +198,9 @@ export function layoutDemo(
   return {
     layout: useForest
       ? layoutForest(centers!, measure, collapsedIds)
-      : layoutMindmap(
+      // D2′ 接线：无 note.dir 声明时内部逐像素回退 layoutMindmap（旧文件零变更），
+      // 有声明则按子节点各自 dir 分组挂不同侧（思想分叉）。
+      : layoutMindmapBranched(
           editable,
           measure,
           collapsedIds,
