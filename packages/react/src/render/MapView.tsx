@@ -1031,6 +1031,31 @@ export function MapView({
     };
   }, [nodeDrag, setNodeDrag]);
 
+  // v1.5.0 T5：Section 选中态退出三件套（Esc / 画布空白点击 / 再次点击同框）。
+  // 选中是纯会话态（不落盘、不进 history）——退出同样零副作用。
+  // 「再次点击」由 onSelect 收到同 id 时 toggle 实现（见 SectionLayer 的 onSelect 接线）。
+  useEffect(() => {
+    if (selectedSectionId === null) return;
+    const onKey = (e: KeyboardEvent): void => {
+      if (e.key === 'Escape') {
+        e.stopPropagation();
+        setSelectedSectionId(null);
+      }
+    };
+    const onDown = (e: PointerEvent): void => {
+      // 点击落在 Section 本体（frame/titlebar/折叠钮）由该元素自行处置，不在此清除
+      const t = e.target;
+      if (t instanceof Element && t.closest('[data-section-id]')) return;
+      setSelectedSectionId(null);
+    };
+    window.addEventListener('keydown', onKey);
+    window.addEventListener('pointerdown', onDown);
+    return () => {
+      window.removeEventListener('keydown', onKey);
+      window.removeEventListener('pointerdown', onDown);
+    };
+  }, [selectedSectionId]);
+
   if (root === undefined) return null;
 
   const { k, x, y } = viewport.transform;
@@ -1149,7 +1174,10 @@ export function MapView({
                   view={view}
                   k={k}
                   selectedId={selectedSectionId}
-                  onSelect={setSelectedSectionId}
+                  // T5 退出三件套之一：再次点击同框 → 取消选中（toggle）
+                  onSelect={(id) =>
+                    setSelectedSectionId((prev) => (prev === id ? null : id))
+                  }
                   onToggleCollapse={
                     onToggleCollapseRef.current
                       ? (id) => onToggleCollapseRef.current?.(id)
