@@ -31,11 +31,15 @@ function seed(n: number): DocLibrary {
   return d;
 }
 
+const FOLDERS_KEY = 'mindcanvas.folders.v1';
+
 beforeEach(() => {
   localStorage.removeItem(KEY);
+  localStorage.removeItem(FOLDERS_KEY);
 });
 afterEach(() => {
   localStorage.removeItem(KEY);
+  localStorage.removeItem(FOLDERS_KEY);
 });
 
 describe('DocLibrary · 基本增删查', () => {
@@ -237,5 +241,32 @@ describe('DocLibrary · 目录（树）', () => {
     const d = lib();
     expect(d.get('old')?.folder).toBe('');
     expect(d.childrenOf('').docs.map((e) => e.id)).toEqual(['old']);
+  });
+
+  it('addFolder 添加自定义空目录，可在 folders() 和 childrenOf() 中列出', () => {
+    const d = lib();
+    d.addFolder('工作项目/前端');
+    expect(d.folders()).toEqual(['工作项目', '工作项目/前端']);
+    expect(d.childrenOf('').dirs).toEqual(['工作项目']);
+    expect(d.childrenOf('工作项目').dirs).toEqual(['前端']);
+  });
+
+  it('removeFolder 删除目录及其子目录，并将所含文档退回根目录', () => {
+    const d = lib();
+    d.addFolder('待删目录/子目录');
+    d.upsert({ id: 'doc1', name: 'Doc1.mm.md', source: '# 1', folder: '待删目录/子目录' });
+    d.upsert({ id: 'doc2', name: 'Doc2.mm.md', source: '# 2', folder: '其他目录' });
+
+    d.removeFolder('待删目录');
+    expect(d.folders()).toEqual(['其他目录']);
+    expect(d.get('doc1')?.folder).toBe('');
+    expect(d.get('doc2')?.folder).toBe('其他目录');
+  });
+
+  it('ensurePresetFolders 在空库时初始化默认预置分类目录', () => {
+    const d = lib();
+    d.ensurePresetFolders();
+    expect(d.folders()).toContain('示例导图');
+    expect(d.folders()).toContain('工作项目');
   });
 });

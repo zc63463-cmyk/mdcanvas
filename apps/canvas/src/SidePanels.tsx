@@ -11,15 +11,33 @@
  * 各自有独立的开关状态，仍留在 StageContent。
  */
 import type { Entity } from '@mindcanvas/kernel';
-import type { AssetHost, AssetItem, EditorController, EntityRelation } from '@mindcanvas/react';
+import type {
+  AssetHost,
+  AssetInsertAction,
+  AssetItem,
+  EditorController,
+  EntityRelation,
+} from '@mindcanvas/react';
 import {
   AssetPanel,
   EntityGraphPanel,
   OutlinePanel,
   SearchPanel,
   searchMind,
+  svgToDataUrl,
 } from '@mindcanvas/react';
 import type { ComponentProps, Dispatch, SetStateAction } from 'react';
+
+/**
+ * 素材 → 写入节点的值（FA1-T3 / T5）。
+ *
+ * - 内置图标 / 小 SVG：直接内联成 data URL 写进 note —— 脱离 IndexedDB 也能在
+ *   Obsidian / VS Code 里显示（自包含分发）。
+ * - 宿主资产：写 `kind:id` 引用，渲染时经宿主解析（大图不塞进文档）。
+ */
+function assetValueOf(item: AssetItem): string {
+  return item.svg ? svgToDataUrl(item.svg) : `${item.kind}:${item.id}`;
+}
 
 /** 侧面板的互斥状态（null = 全关） */
 export type PanelId = 'search' | 'outline' | 'assets' | 'relation' | null;
@@ -82,15 +100,23 @@ export function SidePanels({
       {panel === 'assets' && (
         <AssetPanel
           assets={assetList}
+          defaultView="grid"
           resolve={(item) => assetHost.resolveAsset(item)}
           onUpload={onUpload}
-          onInsert={(item) => {
-            // 无选中 → 回落根节点下插入（与画布 drop 语义一致，不再静默 no-op）
-            const parentId = controller.selectedId ?? controller.root.id;
-            const id = controller.addEntityChild(parentId, {
-              kind: item.kind,
-              id: item.id,
-            });
+          // 三语义插入（FA1-T3）：图标 / 插图 / 子分支。
+          // 前两者都落在**当前节点本体**上（note.icon / note.media），
+          // 只有「子分支」才新建子节点 —— 终结「点素材必生子节点」。
+          onInsertAs={(item, action: AssetInsertAction) => {
+            const targetId = controller.selectedId ?? controller.root.id;
+            if (action === 'icon') {
+              controller.updateNote(targetId, { icon: assetValueOf(item) });
+              return; // 留在面板里：连续换图标是常见操作
+            }
+            if (action === 'media') {
+              controller.updateNote(targetId, { media: assetValueOf(item) });
+              return;
+            }
+            const id = controller.addEntityChild(targetId, { kind: item.kind, id: item.id });
             setEntities((prev) => {
               const next = new Map(prev);
               next.set(`${item.kind}:${item.id}`, {
@@ -106,6 +132,25 @@ export function SidePanels({
             onSelectNode(id);
             onClose();
           }}
+          // 未显式选语义的老路径（onInsertAs 缺省时）保持原语义：新增子分支
+          onInsert={(item) => {
+            const parentId = controller.selectedId ?? controller.root.id;
+            const id = controller.addEntityChild(parentId, { kind: item.kind, id: item.id });
+            setEntities((prev) => {
+              const next = new Map(prev);
+              next.set(`${item.kind}:${item.id}`, {
+                kind: item.kind,
+                id: item.id,
+                title: item.name,
+                status: 'ready',
+                ref: null,
+              });
+              return next;
+            });
+            onSelectNode(id);
+            onClose();
+          }}
+          onPaste={onUpload}
           onClose={onClose}
         />
       )}

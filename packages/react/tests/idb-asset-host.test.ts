@@ -3,6 +3,7 @@ import 'fake-indexeddb/auto';
 import { IDBFactory } from 'fake-indexeddb';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { IdbAssetHost } from '../src/chrome/idbAssetHost.js';
+import { DemoAssetHost } from '../src/chrome/assetHost.js';
 
 const STATIC = [
   {
@@ -73,5 +74,48 @@ describe('IdbAssetHost：IndexedDB 持久化资产宿主（P0-2：上传刷新�
     const host = new IdbAssetHost(STATIC, '/');
     expect(host.hasAsset({ kind: 'img', id: 'assets/none.png' })).toBe(false);
     expect(host.hasAsset(STATIC[0]!)).toBe(true);
+  });
+});
+
+/**
+ * FA1-T5：小 SVG 留下源码，让「设为节点图标」能把图标内联进 .mm.md
+ * （脱离本机 IndexedDB 也能在 Obsidian / VS Code 里显示 = 自包含分发）。
+ * 大 SVG / 位图不存文本：那会让库体积失控，且它们本来也不适合当图标。
+ */
+describe('IdbAssetHost：小 SVG 源码留存（FA1-T5 自包含）', () => {
+  const SVG = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M5 13l4 4L19 7"/></svg>';
+
+  it('小 SVG 上传 → item.svg 带源码；新实例 listAssets 仍能取回（跨会话）', async () => {
+    const first = new IdbAssetHost([], '/');
+    const item = await first.uploadAsset(new File([SVG], 'star.svg', { type: 'image/svg+xml' }));
+    expect(item.kind).toBe('draw');
+    expect(item.svg).toBe(SVG);
+
+    const second = new IdbAssetHost([], '/');
+    const list = await second.listAssets();
+    expect(list.find((a) => a.id === 'assets/star.svg')?.svg).toBe(SVG);
+  });
+
+  it('位图（png）不存 svg 源码（避免库膨胀 + 它当不了 currentColor 图标）', async () => {
+    const host = new IdbAssetHost([], '/');
+    const item = await host.uploadAsset(new File(['png-data'], 'shot.png', { type: 'image/png' }));
+    expect(item.svg).toBeUndefined();
+  });
+
+  it('超过 15KB 的 SVG 不存源码（体积门槛）', async () => {
+    const big = `<svg xmlns="http://www.w3.org/2000/svg">${'<path d="M0 0"/>'.repeat(1200)}</svg>`;
+    expect(big.length).toBeGreaterThan(15 * 1024);
+    const host = new IdbAssetHost([], '/');
+    const item = await host.uploadAsset(new File([big], 'big.svg', { type: 'image/svg+xml' }));
+    expect(item.svg).toBeUndefined();
+  });
+});
+
+describe('DemoAssetHost：小 SVG 源码留存（与 IdbAssetHost 同口径）', () => {
+  const SVG = '<svg xmlns="http://www.w3.org/2000/svg"><path d="M0 0"/></svg>';
+  it('小 SVG 上传 → item.svg 有源码（换宿主不丢内联能力）', async () => {
+    const host = new DemoAssetHost([]);
+    const item = await host.uploadAsset(new File([SVG], 'star.svg', { type: 'image/svg+xml' }));
+    expect(item.svg).toBe(SVG);
   });
 });

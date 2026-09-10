@@ -10,7 +10,7 @@
  */
 import { act, renderHook } from '@testing-library/react';
 import type { RefObject } from 'react';
-import type { DocumentHost, EditorController, MindDoc } from '@mindcanvas/react';
+import type { DocumentHost, EditorController, FsFileHandle, MindDoc } from '@mindcanvas/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { useDocumentActions } from '../src/hooks/useDocumentActions';
 
@@ -24,17 +24,32 @@ function makeController(over: Partial<EditorController> = {}): EditorController 
   } as unknown as EditorController;
 }
 
+/** 保存结果（FA1-T1 起 DocumentHost.save 回传 result + handle） */
+function fsOk(handle?: FsFileHandle): { result: 'fs'; handle?: FsFileHandle } {
+  return handle ? { result: 'fs', handle } : { result: 'fs' };
+}
+
 function makeDocHost(over: Partial<DocumentHost> = {}): DocumentHost {
   return {
     remember: vi.fn(),
     open: vi.fn(async () => null),
     create: vi.fn((name: string) => ({ name, source: '', saved: false })),
-    save: vi.fn(async () => 'saved'),
+    save: vi.fn(async () => fsOk()),
+    restoreHandle: vi.fn(async (d: MindDoc) => d),
     ...over,
   } as unknown as DocumentHost;
 }
 
 const baseDoc: MindDoc = { name: 'a.mm.md', source: 'X', saved: true, handle: {} };
+
+/**
+ * 把 setDoc 的调用「求值」成最终状态。
+ * 组件里大量用函数式更新 `setDoc((d) => …)`，而测试里 setDoc 是 vi.fn() ——
+ * 不手动调用 updater 就永远只看到一个函数，断言不到真实写入的字段。
+ */
+function applied(setDoc: ReturnType<typeof vi.fn>, prev: MindDoc): unknown[] {
+  return setDoc.mock.calls.map((c) => (typeof c[0] === 'function' ? c[0](prev) : c[0]));
+}
 
 function setup(over: {
   controller?: Partial<EditorController>;
@@ -128,7 +143,7 @@ describe('useDocumentActions · handleSave', () => {
 
   it('用户取消保存对话框 → 不动（不 markSaved、不 setDoc）', async () => {
     const { result, controller, setDoc, docHost } = setup({
-      docHost: { save: vi.fn(async () => 'cancelled') },
+      docHost: { save: vi.fn(async () => ({ result: 'cancelled' })) },
     });
 
     await act(async () => {
@@ -138,6 +153,78 @@ describe('useDocumentActions · handleSave', () => {
     expect(controller.markSaved).not.toHaveBeenCalled();
     expect(setDoc).not.toHaveBeenCalled();
     expect(docHost.remember).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * FA1-T1：句柄闭环 —— 首次保存拿到 handle 后必须写回 doc。
+ * 这是「第二次 Ctrl+S 不再弹系统覆盖确认」的唯一前提：
+ * doc.handle 一直是 undefined 的话，每次都会重新唤起 showSaveFilePicker。
+ */
+describe('useDocumentActions · 句柄闭环（FA1-T1）', () => {
+  it('保存返回的 handle 写回 doc（后续保存静默落盘的前提）', async () => {
+    const handle = { name: 'a.mm.md' } as FsFileHandle;
+    const { result, setDoc } = setup({ docHost: { save: vi.fn(async () => fsOk(handle)) } });
+
+    await act(async () => {
+      await result.current.handleSave();
+    });
+
+    expect(applied(setDoc, baseDoc)).toContainEqual(
+      expect.objectContaining({ handle, saved: true }),
+    );
+  });
+
+  it('无 handle 的保存结果（下载兜底）→ 不把已有 handle 抹成 undefined', async () => {
+    const existing = { name: 'a.mm.md' } as FsFileHandle;
+    const prev = { ...baseDoc, handle: existing };
+    const { result, setDoc } = setup({
+      doc: { handle: existing },
+      docHost: { save: vi.fn(async () => fsOk()) },
+    });
+
+    await act(async () => {
+      await result.current.handleSave();
+    });
+
+    expect(applied(setDoc, prev)).toContainEqual(expect.objectContaining({ handle: existing }));
+  });
+
+  it('另存为 → 用新路径的 handle 覆盖旧的', async () => {
+    const fresh = { name: 'b.mm.md' } as FsFileHandle;
+    const { result, setDoc } = setup({ docHost: { save: vi.fn(async () => fsOk(fresh)) } });
+
+    await act(async () => {
+      await result.current.handleSaveAs();
+    });
+
+    expect(applied(setDoc, baseDoc)).toContainEqual(
+      expect.objectContaining({ handle: fresh, saved: true }),
+    );
+  });
+
+  it('切换文档后异步补挂句柄（restoreHandle 回填 setDoc）', async () => {
+    const stored = { name: 'a.mm.md' } as FsFileHandle;
+    const { result, setDoc } = setup({
+      docHost: { restoreHandle: vi.fn(async (d: MindDoc) => ({ ...d, handle: stored })) },
+    });
+
+    await act(async () => {
+      await result.current.applyDoc({ ...baseDoc });
+    });
+
+    expect(applied(setDoc, baseDoc)).toContainEqual(expect.objectContaining({ handle: stored }));
+  });
+
+  it('宿主不提供 restoreHandle（可选能力）→ 切换不报错', async () => {
+    const { result, setDoc } = setup({
+      docHost: { restoreHandle: undefined } as unknown as Partial<DocumentHost>,
+    });
+
+    await act(async () => {
+      await expect(result.current.applyDoc({ ...baseDoc })).resolves.toBe(true);
+    });
+    expect(setDoc).toHaveBeenCalled();
   });
 });
 

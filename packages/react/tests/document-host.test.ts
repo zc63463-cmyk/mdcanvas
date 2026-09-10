@@ -24,8 +24,8 @@ describe('文档宿主（B1：多文档 + 本地持久化）', () => {
 
   it('save：无句柄（新建/导入）→ 下载兜底（jsdom 无 FS Access）', async () => {
     const host = new LocalDocHost();
-    const result = await host.save(docOf());
-    expect(result).toBe('download');
+    const outcome = await host.save(docOf());
+    expect(outcome.result).toBe('download');
   });
 
   it('save：有句柄 → 直接写回（不弹框）；写入内容 = 文档 source', async () => {
@@ -40,9 +40,22 @@ describe('文档宿主（B1：多文档 + 本地持久化）', () => {
       getFile: async () => new File(['old'], 'a.mm.md'),
     };
     const host = new LocalDocHost();
-    const result = await host.save(docOf({ handle: handle as never, source: '# 新内容' }));
-    expect(result).toBe('fs');
+    const outcome = await host.save(docOf({ handle: handle as never, source: '# 新内容' }));
+    expect(outcome.result).toBe('fs');
     expect(written).toBe('# 新内容');
+    // FA1-T1：写回成功 → 回传同一句柄（调用方据此持久绑定，后续保存零弹窗）
+    expect(outcome.handle).toBe(handle);
+  });
+
+  it('save：句柄写回抛错 → 回落选择器（jsdom 无 FS Access → download），不把失败当成功', async () => {
+    const broken = {
+      createWritable: async () => {
+        throw new Error('file moved');
+      },
+    };
+    const host = new LocalDocHost();
+    const outcome = await host.save(docOf({ handle: broken as never }));
+    expect(outcome.result).toBe('download');
   });
 
   it('remember/recent：去重置顶 + 上限 8 + handle 不序列化', () => {

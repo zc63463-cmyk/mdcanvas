@@ -26,3 +26,6 @@ bench-assets/
 
 # LLM 生成产物（prompts/ 模板保留）
 llm/out/
+
+# 图引擎编译缓存（可删可重建，勿入库）
+.engine/
