@@ -76,7 +76,11 @@ export const EDITOR_KEY_BINDINGS: ReadonlyArray<{
   { key: 'Ctrl+Shift+A', label: '图库', action: 'assets' },
   { key: 'Ctrl+Shift+R', label: '关系图', action: 'relation' },
   { key: '?', label: '快捷键帮助', action: 'help' },
-  { key: 'Alt+↑ / Alt+↓ / Alt+← / Alt+→', label: '预方向（上/下/左/右，Tab 生长时固化）', action: 'help' },
+  {
+    key: 'Alt+↑ / Alt+↓ / Alt+← / Alt+→',
+    label: '预方向：先按方向，再 Tab/Enter 生长（固化进新节点）',
+    action: 'help',
+  },
 ];
 
 /** 键盘事件 → 动作（无匹配 → null；组合键优先于裸键，裸键要求无任何修饰） */

@@ -97,7 +97,10 @@ export class LocalDocHost implements DocumentHost {
       return { id: file.name, name: file.name, source, handle, saved: true, ts: Date.now() };
     } catch (e) {
       if (isAbortError(e)) return null; // 用户取消
-      return null;
+      // 其它错误（嵌入预览窗不支持 FS Access / 权限被拒 / 描述符被拦）**原样抛出**。
+      // 此前在这里静默吞掉并返回 null，调用方无从分辨「取消」与「失败」，
+      // 表现为「点打开毫无反应」。抛出后由调用方走 <input type=file> 兜底。
+      throw e;
     }
   }
 

@@ -214,3 +214,86 @@ describe('D3′：生长方向菜单（思想分叉）', () => {
     expect(labels.some((l) => l.startsWith('生长方向'))).toBe(false);
   });
 });
+
+describe('v1.6.0：出线长度菜单（note.len 软约束）', () => {
+  const lenFixture = (cur: number | null) => ({
+    explicitDirOf: () => 'right' as const,
+    onSetGrowDir: vi.fn(),
+    lenOf: () => cur,
+    onSetLen: vi.fn(),
+  });
+
+  it('未设置 → 预设全出现、「缺省」带 ✓；点选回调携带数值 / null', () => {
+    const c = build(PLAIN);
+    const id = c.root.children[0]!.id;
+    const actions = lenFixture(null);
+    const items = contextMenuItemsFor(
+      c, id, undefined, undefined, undefined, undefined, undefined, actions,
+    );
+    const labels = items.map((i) => i.label);
+    expect(labels).toContain('出线长度 › 14');
+    expect(labels).toContain('出线长度 › 32');
+    expect(labels).toContain('出线长度 › 60');
+    expect(labels).toContain('出线长度 › 100');
+    expect(labels).toContain('出线长度 › 缺省 ✓');
+    expect(labels).toContain('出线长度 › 自定义…');
+    items.find((i) => i.label === '出线长度 › 60')!.onSelect();
+    expect(actions.onSetLen).toHaveBeenCalledWith(id, 60);
+    items.find((i) => i.label === '出线长度 › 缺省 ✓')!.onSelect();
+    expect(actions.onSetLen).toHaveBeenCalledWith(id, null);
+  });
+
+  it('已设置 60 → 60 带 ✓、缺省无 ✓；文件手改的预设外值在自定义上打 ✓', () => {
+    const c = build(PLAIN);
+    const id = c.root.children[0]!.id;
+    const labels = contextMenuItemsFor(
+      c, id, undefined, undefined, undefined, undefined, undefined, lenFixture(60),
+    ).map((i) => i.label);
+    expect(labels).toContain('出线长度 › 60 ✓');
+    expect(labels).toContain('出线长度 › 缺省');
+    const labels2 = contextMenuItemsFor(
+      c, id, undefined, undefined, undefined, undefined, undefined, lenFixture(45),
+    ).map((i) => i.label);
+    expect(labels2).toContain('出线长度 › 自定义… ✓');
+  });
+
+  it('自定义…：prompt 合法输入写回；取消/非法静默放弃', () => {
+    const c = build(PLAIN);
+    const id = c.root.children[0]!.id;
+    const actions = lenFixture(null);
+    const items = contextMenuItemsFor(
+      c, id, undefined, undefined, undefined, undefined, undefined, actions,
+    );
+    const custom = items.find((i) => i.label === '出线长度 › 自定义…')!;
+    // node 环境无 window.prompt：手动桩（jsdom 亦无确定语义，直接赋值最稳）
+    const g = globalThis as { prompt?: (m?: string, d?: string) => string | null };
+    const prev = g.prompt;
+    let reply: string | null = '80';
+    g.prompt = () => reply;
+    try {
+      custom.onSelect();
+      expect(actions.onSetLen).toHaveBeenCalledWith(id, 80);
+      reply = null; // 取消
+      custom.onSelect();
+      expect(actions.onSetLen).toHaveBeenCalledTimes(1);
+      reply = 'abc'; // 非数字
+      custom.onSelect();
+      expect(actions.onSetLen).toHaveBeenCalledTimes(1);
+      reply = '-3'; // 非法值
+      custom.onSelect();
+      expect(actions.onSetLen).toHaveBeenCalledTimes(1);
+    } finally {
+      g.prompt = prev;
+    }
+  });
+
+  it('lenOf/onSetLen 缺省（向后兼容）→ 不追加出线长度项', () => {
+    const c = build(PLAIN);
+    const id = c.root.children[0]!.id;
+    const labels = contextMenuItemsFor(
+      c, id, undefined, undefined, undefined, undefined, undefined,
+      { explicitDirOf: () => null, onSetGrowDir: vi.fn() },
+    ).map((i) => i.label);
+    expect(labels.some((l) => l.startsWith('出线长度'))).toBe(false);
+  });
+});

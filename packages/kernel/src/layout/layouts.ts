@@ -25,6 +25,9 @@ import {
   type LinkBuilder,
   type MeasureFn,
 } from './mindmap.js';
+// 仅取型：separate.ts / linkClear.ts 只依赖 mindmap（基座），不会与 layouts 形成循环
+import type { SeparateOptions } from './separate.js';
+import type { LinkClearOptions } from './linkClear.js';
 
 export type LayoutKind =
   | 'mindmap'
@@ -231,8 +234,9 @@ export function isLayoutKind(value: string | undefined): value is LayoutKind {
 // 设计（设计文档 §5 D2′）：
 // - 每节点把子节点按**有效 dir** 分 right/left/up/down 四组，每组递归布局，
 //   各组挂对应侧——天然实现「同节点多向分叉」
-// - 邻侧防叠：right↔down、down↔left、left↔up、up↔right 相邻组 bounds 检测 +
-//   **布局期一次推开**（参考 PG resolveSubtreeOverlaps，但不迭代、不运行期）
+// - 碰撞消解：分组挂位后由 separate.ts 做**自底向上的子树刚性分离**（相邻/对角/
+//   左右全对比真实节点盒，迭代至零重叠；参考 PG resolveSubtreeOverlaps 的迭代思路，
+//   但改用「最小位移 + 方向偏好」而非固定优先级）
 // - 缺省 = 继承（最近显式 dir 祖先 → islandDir）；非法值由读侧（growDir.ts）过滤，
 //   本层只消费合法 GrowDir
 // - 无 dir 声明（或 dir 映射为空/全树无命中）→ 逐像素回退经典 layoutMindmap
@@ -260,6 +264,16 @@ export interface BranchLayoutOptions {
   cache?: LayoutCache;
   /** 度量语义键（透传回退路径） */
   measureKey?: string;
+  /**
+   * 碰撞消解参数（缺省启用默认值）。传 `false` 关闭——仅供对照测试
+   * （验证「不消解会重叠、消解后零重叠」），生产路径不要关。
+   */
+  separate?: SeparateOptions | false;
+  /**
+   * 连线避让参数（缺省启用默认值）。传 `false` 关闭——仅供对照测试
+   * （验证「只消解盒重叠时连线仍会穿盒」）。与 `separate` 交替执行。
+   */
+  linkClear?: LinkClearOptions | false;
 }
 
 export type BBox = { minX: number; minY: number; maxX: number; maxY: number };

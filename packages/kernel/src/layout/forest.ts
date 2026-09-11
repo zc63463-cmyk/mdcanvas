@@ -5,7 +5,8 @@
  * - **复用而非改写**：每个中心内部交给现成的布局函数（logic-right / logic-left /
  *   org / org-up），本模块只做「局部布局 → 平移 → 合并」，布局算法一行不改
  * - **只有中心有坐标**：子树内节点的位置仍由算法决定，不落进事实源
- * - **缺失 pos 即自动排列**：无坐标的中心按 bounds 宽度依次横向排开
+ * - **缺失 pos 即自动排列**：无坐标的中心按 bounds **右边界**依次横向错开
+ *   （对齐左边界而非根中心——四向生长的岛左翼会伸到根中心左侧，只按宽度顺排会压岛）
  *
  * ⚠️ 平移后必须**重新生成** links：path 字符串内含绝对坐标，
  * 只平移节点盒会让连线留在原地。
@@ -95,7 +96,7 @@ export function layoutForest(
 
   const gap = opts.gap ?? 160;
 
-  // ① 局部布局 + 记录每棵子树的局部尺寸
+  // ① 局部布局 + 记录每棵子树的局部包围盒（自动排列用真实 bounds，不再只用宽度）
   //    D2′ 接线：岛内也要支持「思想分叉」——走分支布局（注入 islandDir=岛方向）；
   //    无 note.dir 声明时 layoutMindmapBranched 内部逐像素回退经典布局，零行为变更。
   const local = centers.map((spec) => {
@@ -107,20 +108,30 @@ export function layoutForest(
     return {
       spec,
       res,
-      w: res.bounds.maxX - res.bounds.minX,
       root: res.nodes.find((n) => n.parentId === null) ?? null,
     };
   });
 
-  // ② 确定落点：有 pos 用 pos；无 pos 按局部宽度依次横向排开
+  // ② 确定落点：有 pos 用 pos；无 pos 则**按真实包围盒**向右错开。
+  //    注意 origin 是「中心节点中心」，而岛可以向任意方向生长——向左/向上生长的岛，
+  //    其翼展落在 origin 的负方向。若只按宽度 cursorX += w 顺排，下一个岛的左翼就会
+  //    压进前一个岛（这正是四向生长引入的跨岛重叠）。故改为对齐**最右边界**：
+  //    下一个岛的左边界 = 已摆放岛的最右边界 + gap。
+  //    （首岛保持 origin.x = 0，与既有绝对坐标口径一致。）
   const origins: { x: number; y: number }[] = [];
-  let cursorX = 0;
+  let rightMost: number | null = null;
+  const advanceRight = (x: number, maxX: number): void => {
+    const right = x + maxX;
+    if (rightMost === null || right > rightMost) rightMost = right;
+  };
   for (const item of local) {
     if (item.spec.pos) {
       origins.push(item.spec.pos);
+      advanceRight(item.spec.pos.x, item.res.bounds.maxX);
     } else {
-      origins.push({ x: cursorX, y: 0 });
-      cursorX += item.w + gap;
+      const x = rightMost === null ? 0 : rightMost + gap - item.res.bounds.minX;
+      origins.push({ x, y: 0 });
+      advanceRight(x, item.res.bounds.maxX);
     }
   }
 

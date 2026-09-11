@@ -5,7 +5,14 @@
  * 视觉决策取 NodeG 的简化等价：节点卡（分支色/叶样式）+ 单行文本 + 折叠计数 + 选中描边。
  * 交互态（hover/编辑浮层/拖拽 ghost）不在场景内——超大图降级场景可接受。
  */
-import { buildLinkPath, nodeCardStyle, verticalBeamMap, type CardLevel } from './geometry.js';
+import {
+  buildLinkPath,
+  horizontalBeamMap,
+  hubArrowTip,
+  nodeCardStyle,
+  verticalBeamMap,
+  type CardLevel,
+} from './geometry.js';
 import type { BranchColor, TokenSet } from '../theme/types.js';
 import type { ScenePrimitive } from './backend.js';
 import type { Box, GrowDir } from '@mindcanvas/kernel';
@@ -44,6 +51,8 @@ export interface SceneInput {
   }>;
   /** 连线（端点盒由调用方解析后传入；fromId/dir 供垂直方向组共享梁分组——dir=声明方向） */
   links: Array<{ fromId: string; from: Box; to: Box; toId: string; dir?: GrowDir }>;
+  /** v1.7.0：出线枢纽判定（nodeId → note.hub）。缺省不启用——hub 左右组退化为贝塞尔（降级场景可接受） */
+  hubOf?: (id: string) => boolean;
   /** 节点 id → 分支色（MapView 的 branchIndex 已算好） */
   branchColorOf: (id: string) => BranchColor | undefined;
   token: TokenSet;
@@ -106,12 +115,27 @@ export function buildSceneFromLayout(input: SceneInput): ScenePrimitive {
   // G6′ 垂直连线共享梁：up/down 方向组共用一条水平梁（与内核 makeLinkByDir 公式一致）；
   // dir = 声明方向（声明 up/down 无视 x 重叠，一律并入垂直组）
   const beamYs = verticalBeamMap(input.links, (l) => l.dir);
+  const beamXs = horizontalBeamMap(input.links, (l) => input.hubOf?.(l.fromId) === true, (l) => l.dir);
   const linkPrims = input.links.map((l) => {
+    const hub = input.hubOf?.(l.fromId) === true;
     const p = buildLinkPath(input.token, l.from, l.to, undefined, {
       beamY: beamYs.get(l),
+      beamX: beamXs.get(l),
+      hub,
       dir: l.dir,
     });
-    return { type: 'path', d: p.d, stroke: p.stroke, strokeWidth: p.width } as ScenePrimitive;
+    const tip = hubArrowTip(l.from, l.to, l.dir, {
+      hub,
+      beamX: beamXs.get(l),
+      beamY: beamYs.get(l),
+    });
+    return {
+      type: 'path',
+      d: p.d,
+      stroke: p.stroke,
+      strokeWidth: p.width,
+      tipD: tip ?? undefined,
+    } as ScenePrimitive;
   });
   const nodePrims = input.nodes.map((n) => nodeScene(n, input.token, input.branchColorOf));
   return { type: 'group', transform: '', children: [...linkPrims, ...nodePrims] };

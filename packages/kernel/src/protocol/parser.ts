@@ -133,6 +133,42 @@ function scalarValue(v: string): unknown {
   return s;
 }
 
+/**
+ * 尝试解析一层嵌套 mapping（v1.7.0）：`key:` 空值 + 后续「缩进 > 0 的 key: value」行
+ * （无 '-' 项）。返回 null = 不是嵌套 mapping（交回调用方原判别路径：列表 / 空串）。
+ * 仅一层；值经 scalarValue（保留字符串形态，数字/布尔由消费端容错收敛）。
+ */
+function tryParseNestedMapping(
+  lines: readonly string[],
+  i: number,
+): { obj: Record<string, unknown>; next: number } | null {
+  let k = i + 1;
+  while (k < lines.length && lines[k]?.trim() === '') k++;
+  const first = lines[k];
+  if (first === undefined) return null;
+  if (!/^[ \t]/.test(first)) return null; // 下一非空行无缩进 → 不是嵌套
+  const trimmedFirst = first.trim();
+  if (trimmedFirst.match(RE_YAML_LIST_ITEM)) return null; // '-' 项 → 列表路径
+  if (trimmedFirst.match(RE_KEY) === null) return null;
+  const obj: Record<string, unknown> = {};
+  let j = k;
+  while (j < lines.length) {
+    const line = lines[j];
+    if (line === undefined) break;
+    const t = line.trim();
+    if (t === '') {
+      j++;
+      continue;
+    }
+    const fm = /^[ \t]/.test(line) && !t.startsWith('-') ? t.match(RE_KEY) : null;
+    if (fm === null || fm[1] === undefined) break;
+    obj[fm[1]] = scalarValue(fm[2] ?? '');
+    j++;
+  }
+  if (Object.keys(obj).length === 0) return null;
+  return { obj, next: j };
+}
+
 function parseNoteYaml(body: string): Note | null {
   // 剥离笔记公共缩进（列表下注释块常带缩进）：键/列表项不带前导空白，方可 RE_KEY 解析
   const rawLines = body.split('\n');
@@ -160,6 +196,18 @@ function parseNoteYaml(body: string): Note | null {
     const key = m[1];
     const value = m[2].trim();
     if (value === '') {
+      // v1.7.0：嵌套 mapping（key: 空值 + 下一非空行「缩进的 key: value」，非 '-' 项）
+      // → 一层嵌套对象（note.lens 等结构化字段）。此前该形态落入列表分支：
+      // 无 '-' 项 → note[key]=''，后续缩进行顶层匹配失败 → E-INVALID-NOTE-YAML
+      // **整条笔记丢弃（连 dir 等合法字段一起）**——失败模式过重，改为支持一层嵌套。
+      // 值经 scalarValue（保留字符串形态；数字/布尔由消费端容错收敛，见 beamSide 读取器）。
+      const nested = tryParseNestedMapping(lines, i);
+      if (nested !== null) {
+        note[key] = nested.obj;
+        i = nested.next;
+        sawKey = true;
+        continue;
+      }
       // 列表：字符串项（旧行为）或扁平对象项（1.1.0，links 等）。
       // 对象项判别（宁保守不误判）：未引号 + "- key: value" 形态 + 紧随续行字段（缩进 key: value）。
       // 仅由形态+续行判定，不做首项决定论——冒号字符串列表（qa/decisions/rel）行为不变。

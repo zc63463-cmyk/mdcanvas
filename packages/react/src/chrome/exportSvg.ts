@@ -2,10 +2,19 @@
  * SVG 导出（GH-T4）：当前文档全图 → 独立 SVG 字符串（保持主题令牌；复用渲染侧 nodeCardStyle/buildLinkPath）。
  * view 缺省 = 布局 bounds 外扩 40px（全图导出）。
  */
-import { filterVisibleLinks, isBoxInView, type GrowDir, type LayoutResult } from '@mindcanvas/kernel';
+import {
+  filterVisibleLinks,
+  isBoxInView,
+  type EditableNode,
+  type GrowDir,
+  type LayoutResult,
+  readHubFlag,
+} from '@mindcanvas/kernel';
 import {
   buildLinkPath,
   computeBranchIndex,
+  horizontalBeamMap,
+  hubArrowTip,
   nodeCardStyle,
   verticalBeamMap,
   type LinkGeom,
@@ -49,9 +58,16 @@ export function exportSvg(
   );
 
   // 连线（复用渲染侧 path 构建；不传分支色 → 默认连线色）。
-  // G6′：垂直连线共享梁——与渲染侧同款分组（verticalBeamMap + 声明方向），导出形状与画布一致
+  // G6′：垂直连线共享梁——与渲染侧同款分组（verticalBeamMap + 声明方向），导出形状与画布一致。
+  // v1.7.0：hub（note.hub）左右组共享竖梁（horizontalBeamMap，与画布同形）+ 出线箭头
   const docRoot = layout.nodes.find((n) => n.depth === 0)?.node;
   const growDirOf = docRoot ? collectDeclaredGrowDir(docRoot) : new Map<string, GrowDir>();
+  const hubOf = new Map<string, boolean>();
+  const walkHub = (n: EditableNode): void => {
+    hubOf.set(n.id, readHubFlag(n.note));
+    for (const c of n.children) walkHub(c);
+  };
+  if (docRoot) walkHub(docRoot);
   const linkGeoms: Array<LinkGeom & { dir?: GrowDir }> = [];
   for (const l of visibleLinks) {
     const from = boxes.get(l.fromId);
@@ -60,11 +76,31 @@ export function exportSvg(
     linkGeoms.push({ fromId: l.fromId, from, to, dir: growDirOf.get(l.toId) });
   }
   const beamYs = verticalBeamMap(linkGeoms, (g) => g.dir);
+  const beamXs = horizontalBeamMap(
+    linkGeoms,
+    (g) => hubOf.get(g.fromId) === true,
+    (g) => g.dir,
+  );
+  // 出线箭头（左入右出、上入下出）：实心三角 path——与画布/sceneBuilder 同形，无需 marker defs
   for (const g of linkGeoms) {
-    const p = buildLinkPath(token, g.from, g.to, undefined, { beamY: beamYs.get(g), dir: g.dir });
+    const isHub = hubOf.get(g.fromId) === true;
+    const p = buildLinkPath(token, g.from, g.to, undefined, {
+      beamY: beamYs.get(g),
+      beamX: beamXs.get(g),
+      hub: isHub,
+      dir: g.dir,
+    });
     parts.push(
       `<path d="${esc(p.d)}" fill="none" stroke="${esc(p.stroke)}" stroke-width="${r(p.width)}"/>`,
     );
+    const tip = hubArrowTip(g.from, g.to, g.dir, {
+      hub: isHub,
+      beamX: beamXs.get(g),
+      beamY: beamYs.get(g),
+    });
+    if (tip !== null) {
+      parts.push(`<path d="${esc(tip)}" fill="${esc(p.stroke)}" stroke="none"/>`);
+    }
   }
 
   // G6″（A6/T23）：跨岛父子连接补线——与 MapView 渲染侧同款虚线样式（6 4 / 0.55）。

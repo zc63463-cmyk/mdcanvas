@@ -6,6 +6,33 @@ export * from './inline.js';
 export * from './wrap.js';
 export * from './mindmap.js';
 export * from './layouts.js';
+export {
+  boxesIntersect,
+  clearParentEdges,
+  findOverlaps,
+  overlapXOf,
+  overlapYOf,
+  separateTree,
+  subtreeBoxOf,
+  PARENT_EDGE_ROUNDS,
+  SEPARATE_MARGIN,
+  SEPARATE_MAX_ROUNDS,
+  type OverlapPair,
+  type SeparateOptions,
+  type SeparateStats,
+} from './separate.js';
+export {
+  collectNodes,
+  findLinkCrossings,
+  LINK_CLEAR_MARGIN,
+  NodeIndex,
+  pickClearGeometry,
+  polylineBox,
+  polylineHitsBox,
+  segmentHitsRect,
+  type LinkClearOptions,
+  type LinkGeometry,
+} from './linkClear.js';
 export * from './nodeLayout.js';
 export * from './cull.js';
 export * from './fit.js';

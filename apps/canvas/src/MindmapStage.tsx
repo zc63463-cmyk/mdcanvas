@@ -18,7 +18,7 @@ import {
   removeSection,
   upsertSection,
 } from '@mindcanvas/kernel';
-import { findNode, getNode, LayoutCache, REGISTERED_KINDS, refKey } from '@mindcanvas/kernel';
+import { findNode, getNode, LayoutCache, readLensMap, REGISTERED_KINDS, refKey } from '@mindcanvas/kernel';
 import type {
   AssetHost,
   AssetItem,
@@ -942,8 +942,8 @@ function StageContent({
       if (controller.editingId !== null) return; // 输入框内：stopPropagation 已在 OverlayEditor
       if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return; // 搜索/批注输入框内不触发画布快捷键
       const sel = controller.selectedId;
-      // PG 式预方向：W W / S S / A A / D D（会话级易失，不落文档）
-      // 生长时（Tab/Enter）才把方向固化进新节点 note.dir。
+      // 预方向：Alt+方向键（会话级预设；生长时 Tab/Enter 才把它固化进新节点 note.dir）。
+      // 快捷键清单见 ShortcutHelpPanel（'?'）；事后改向走右键「生长方向」。
       const preDir = matchPreDirKey(e);
       if (preDir !== null) {
         if (!sel) return;
@@ -1285,6 +1285,16 @@ function StageContent({
         layout={layout}
         // G6′复审修复：自由边/折叠路由必须读完整文档树（森林布局有多个几何根）
         documentRoot={controller.root}
+        // v1.7.0：拖共享梁松手 → 写 lens[dir]（单条 undo；其余方向键保留，
+        // 子节点自身 len 的覆盖关系由内核口径保证）
+        onBeamLensChange={(fromId, dir, len) => {
+          if (!Number.isFinite(len)) return; // NaN/Infinity 不落盘（防文档污染 → 布局 NaN 扩散）
+          const node = getNode(controller.root, fromId);
+          // readLensMap 容错合并：手写文件的 lens 可能是字符串形态（深度审查修复）
+          const lens = { ...(readLensMap(node?.note) ?? {}) };
+          lens[dir] = len;
+          controller.updateNote(fromId, { lens });
+        }}
         boundaryLinks={islandView.boundaryLinks}
           // A6/T23 门禁：岛/自由边文档强制 SVG（见上方 forceBackend memo）
           forceBackend={forceBackend}

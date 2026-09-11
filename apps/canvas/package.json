@@ -19,6 +19,8 @@
     "diag:stepwise": "node scripts/diag-stepwise.mjs",
     "diag:bench": "node scripts/diag-aesthetic-bench.mjs",
     "diag:layout": "node scripts/diag-layout.mjs",
+    "diag:overlap": "node scripts/diag-overlap.mjs",
+    "diag:place": "node scripts/diag-place.mjs",
     "diag:positions": "node scripts/diag-all-positions.mjs",
     "diag:perf10k": "node scripts/diag-10k-layout-perf.mjs",
     "gen:routing": "node scripts/gen-routing-tuning.mjs"

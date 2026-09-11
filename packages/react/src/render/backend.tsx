@@ -36,7 +36,15 @@ export type ScenePrimitive =
       /** 阴影滤镜（SVG filter 语法；'none' 省略） */
       filter?: string;
     }
-  | { type: 'path'; d: string; stroke: string; strokeWidth: number; fill?: string }
+  | {
+      type: 'path';
+      d: string;
+      stroke: string;
+      strokeWidth: number;
+      fill?: string;
+      /** v1.7.0：hub 出线箭头三角（实心 fill=stroke；缺省不画） */
+      tipD?: string;
+    }
   | {
       type: 'text';
       x: number;
@@ -88,6 +96,8 @@ export interface LinkDraw {
   d: string;
   stroke: string;
   strokeWidth: number;
+  /** v1.7.0：hub 出线箭头三角（实心、fill=stroke；缺省不画） */
+  tipD?: string;
 }
 
 /** 图片绘制参数（@img/@draw 资产预览） */
@@ -156,7 +166,13 @@ export class SvgBackend implements RenderBackend {
   }
 
   link(d: LinkDraw): ScenePrimitive {
-    return { type: 'path', d: d.d, stroke: d.stroke, strokeWidth: d.strokeWidth };
+    return {
+      type: 'path',
+      d: d.d,
+      stroke: d.stroke,
+      strokeWidth: d.strokeWidth,
+      tipD: d.tipD,
+    };
   }
 
   image(d: ImageDraw): ScenePrimitive {
@@ -229,12 +245,17 @@ export function sceneToSvg(scene: ScenePrimitive): ReactElement {
       );
     case 'path':
       return (
-        <path
-          d={scene.d}
-          stroke={scene.stroke}
-          strokeWidth={scene.strokeWidth}
-          fill={scene.fill ?? 'none'}
-        />
+        <>
+          <path
+            d={scene.d}
+            stroke={scene.stroke}
+            strokeWidth={scene.strokeWidth}
+            fill={scene.fill ?? 'none'}
+          />
+          {scene.tipD !== undefined && (
+            <path d={scene.tipD} fill={scene.stroke} stroke="none" />
+          )}
+        </>
       );
     case 'text':
       return (

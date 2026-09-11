@@ -197,6 +197,94 @@ export function verticalBeamMap<L extends LinkGeom>(
   return out;
 }
 
+/** 水平方向组共享竖梁 x（与内核 beamXRight/beamXLeft 公式逐像素一致）：
+ *  right：父右缘与最靠左子左缘（min lefts）的中点；left：父左缘与最靠右子右缘（max rights）的中点。 */
+export function beamXForGroup(parent: Box, childBoxes: readonly Box[], dir: 'right' | 'left'): number {
+  if (dir === 'right') {
+    const lefts = childBoxes.map((b) => b.x);
+    return (parent.x + parent.w + (lefts.length ? Math.min(...lefts) : parent.x + parent.w)) / 2;
+  }
+  const rights = childBoxes.map((b) => b.x + b.w);
+  return (parent.x + (rights.length ? Math.max(...rights) : parent.x)) / 2;
+}
+
+/** 水平连线 → 共享竖梁 x 映射（verticalBeamMap 的换轴镜像，仅 hub 节点的左右组入表）：
+ *  hubOf 判定该连线的**父端**是否为出线枢纽（note.hub）；渲染层每帧以当前盒调用一次。 */
+export function horizontalBeamMap<L extends LinkGeom>(
+  links: readonly L[],
+  hubOf?: (l: L) => boolean,
+  dirOf?: (l: L) => GrowDir | undefined,
+): Map<L, number> {
+  const out = new Map<L, number>();
+  const groups = new Map<
+    string,
+    { dir: 'right' | 'left'; parent: Box; children: Box[]; members: L[] }
+  >();
+  for (const l of links) {
+    if (!hubOf?.(l)) continue;
+    const o = linkOrientation(l.from, l.to, dirOf?.(l));
+    if (o.kind === 'vertical') continue;
+    const key = `${l.fromId}|${o.toRight ? 'right' : 'left'}`;
+    let g = groups.get(key);
+    if (!g) {
+      g = { dir: o.toRight ? 'right' : 'left', parent: l.from, children: [], members: [] };
+      groups.set(key, g);
+    }
+    g.children.push(l.to);
+    g.members.push(l);
+  }
+  for (const g of groups.values()) {
+    const beamX = beamXForGroup(g.parent, g.children, g.dir);
+    for (const m of g.members) out.set(m, beamX);
+  }
+  return out;
+}
+
+/**
+ * hub 出线箭头三角（实心 path，画布/导出通用——无需 marker defs）。
+ *
+ * 朝向取连线末段：左右 bus 为横段（beamX），up/down 梁为竖段（beamY）；
+ * 两者都缺时按主轴判向（单线调用方）。非 hub 返回 null。
+ */
+export function hubArrowTip(
+  parent: Box,
+  child: Box,
+  dir: GrowDir | undefined,
+  opts?: { hub?: boolean; beamX?: number; beamY?: number },
+): string | null {
+  if (opts?.hub !== true) return null;
+  const { sx, sy, ex, ey } = linkEndpoints(parent, child, dir);
+  // 流向语义（v1.7.1）：左入/上入 = 支流汇入枢纽 → 箭头落在**父出边**上、指向枢纽内部
+  // （left：+x；up：+y）；右出/下出 = 枢纽流出 → 箭头落在**子入边**上、指向外侧。
+  // 入/出分形正是四向箭头的语义差分，缺了它左右上下无差别。
+  const inbound = dir === 'up' || dir === 'left';
+  if (inbound) {
+    if (opts.beamX !== undefined) {
+      // 左 bus：竖梁在父左侧，入流沿 +x 汇入父左缘
+      return `M ${sx} ${sy} L ${sx - 8} ${sy - 4} L ${sx - 8} ${sy + 4} Z`;
+    }
+    if (opts.beamY !== undefined) {
+      // 上梁：横梁在父上方，入流沿 +y 汇入父顶缘
+      return `M ${sx} ${sy} L ${sx - 4} ${sy - 8} L ${sx + 4} ${sy - 8} Z`;
+    }
+  }
+  if (opts.beamX !== undefined) {
+    const d = ex >= opts.beamX ? 1 : -1;
+    return `M ${ex} ${ey} L ${ex - d * 8} ${ey - 4} L ${ex - d * 8} ${ey + 4} Z`;
+  }
+  if (opts.beamY !== undefined) {
+    const d = ey >= opts.beamY ? 1 : -1;
+    return `M ${ex} ${ey} L ${ex - 4} ${ey - d * 8} L ${ex + 4} ${ey - d * 8} Z`;
+  }
+  const horiz = Math.abs(ex - sx) >= Math.abs(ey - sy);
+  if (horiz) {
+    const d = ex >= sx ? 1 : -1;
+    return `M ${ex} ${ey} L ${ex - d * 8} ${ey - 4} L ${ex - d * 8} ${ey + 4} Z`;
+  }
+  const d = ey >= sy ? 1 : -1;
+  return `M ${ex} ${ey} L ${ex - 4} ${ey - d * 8} L ${ex + 4} ${ey - d * 8} Z`;
+}
+
 /** LOD 等级（性能常量，非视觉值）：full 全量 / detail 叶省略文本 / skeleton 只画卡 */
 export type LodLevel = 'full' | 'detail' | 'skeleton';
 
@@ -234,11 +322,14 @@ export function buildLinkPath(
   parent: Box,
   child: Box,
   branchColor?: BranchColor,
-  opts?: { beamY?: number; dir?: GrowDir },
+  opts?: { beamY?: number; dir?: GrowDir; hub?: boolean; beamX?: number },
 ): LinkPathResult {
   const { sx, sy, ex, ey } = linkEndpoints(parent, child, opts?.dir);
   const lang = token.lineStyle.language;
   const vertical = linkOrientation(parent, child, opts?.dir).kind === 'vertical';
+  // hub 的左右组：共享竖梁 bus（父中线段 → 横段 → 竖梁 → 横段 → 子中线段），
+  // 与垂直梁线同族正交形——与内核 linkGeometry 的 beamXVariants 首选候选同形状
+  const hubBeamX = opts?.hub === true && !vertical ? opts?.beamX : undefined;
   const d = vertical
     ? orthogonalPath([
         { x: sx, y: sy },
@@ -246,9 +337,16 @@ export function buildLinkPath(
         { x: ex, y: opts?.beamY ?? (sy + ey) / 2 },
         { x: ex, y: ey },
       ])
-    : lang === 'wavy'
-      ? wavyPath(sx, sy, ex, ey)
-      : compactBezier(sx, sy, ex, ey, token.lineStyle.curvature);
+    : hubBeamX !== undefined
+      ? orthogonalPath([
+          { x: sx, y: sy },
+          { x: hubBeamX, y: sy },
+          { x: hubBeamX, y: ey },
+          { x: ex, y: ey },
+        ])
+      : lang === 'wavy'
+        ? wavyPath(sx, sy, ex, ey)
+        : compactBezier(sx, sy, ex, ey, token.lineStyle.curvature);
   const stroke =
     lang === 'color-curve' && branchColor ? branchColor.stroke : token.color.linkStroke;
   return { d, stroke, width: token.lineStyle.width };

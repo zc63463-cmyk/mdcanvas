@@ -25,7 +25,7 @@ export default mergeConfig(
 
       // 2026-09-06 实测：pretendToBeVisual 的 rAF 循环让事件循环永不排空——
       // 套件打印完成后进程不退出（pre-push 门禁挂起 480s 超时的根因）。
-      // react 包有 18 个测试依赖该行为不能关；canvas 28 个测试实测不依赖（全绿）。
+      // react 包有 18 个测试依赖该行为不能关；canvas 56 个测试实测不依赖（全绿）。
       environmentOptions: {
         jsdom: { pretendToBeVisual: false },
       },

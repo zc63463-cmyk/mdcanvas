@@ -137,6 +137,28 @@ describe('layout/forest：自动排列（无 pos）', () => {
     );
     expect(centerOf(r.nodes, 'B')?.x).toBeCloseTo(5000, 6);
   });
+
+  it('★ 左生长岛：后续岛按真实 bounds 错开，前岛左翼不被压（四向生长引入的跨岛重叠）', () => {
+    // dir=left 的岛，子树整体伸到「根中心」左侧；若只按宽度 cursorX += w 顺排，
+    // 下一个岛的左翼会压进前一个岛。
+    const r = layoutForest(
+      [
+        { node: t('A', [t('甲1', [t('甲1a', [t('甲1b')])]), t('甲2'), t('甲3')]), dir: 'left' },
+        { node: t('B', [t('乙1')]), dir: 'left' },
+      ],
+      measure,
+      new Set(),
+      { gap: 100 },
+    );
+    const of = (pred: (id: string) => boolean) =>
+      r.nodes.filter((n) => pred(n.node.id)).map((n) => n.box);
+    const aBoxes = of((id) => id.startsWith('甲') || id === 'A');
+    const bBoxes = of((id) => id.startsWith('乙') || id === 'B');
+    const aMax = Math.max(...aBoxes.map((b) => b.x + b.w));
+    const bMin = Math.min(...bBoxes.map((b) => b.x));
+    expect(bMin).toBeGreaterThanOrEqual(aMax);
+    expect(bMin - aMax).toBeCloseTo(100, 6); // gap 精确生效
+  });
 });
 
 describe('layout/forest：连线随节点平移（最易错点）', () => {

@@ -8,7 +8,14 @@
  * v1.4.0 扩展：可选 noteActions —— 追加「编辑 note笔记」，打开节点下方的固定笔记。
  * 两种内容不同：desc 常驻节点盒内，固定 note 笔记在节点下方向下生长并参与布局。
  */
-import { findNode, getNode, type EditableNode, type GrowDir, type Note } from '@mindcanvas/kernel';
+import {
+  findNode,
+  getNode,
+  readLinkLen,
+  type EditableNode,
+  type GrowDir,
+  type Note,
+} from '@mindcanvas/kernel';
 import type { ContextMenuItem } from '../chrome/ContextMenu.js';
 import { inferChildDir } from '../render/growDir.js';
 import type { EditorController } from './controller.js';
@@ -76,6 +83,13 @@ export interface GrowDirMenuActions {
   explicitDirOf: (id: string) => GrowDir | null;
   /** 设置/清除生长方向（null = 恢复继承；经 OpHistory 可撤销） */
   onSetGrowDir: (id: string, dir: GrowDir | null) => void;
+  /**
+   * v1.6.0：节点当前出线长度 note.len（null = 未设置，跟随布局缺省）。
+   * 可选——缺省不出现「出线长度」项（向后兼容：既有调用方/测试不受影响）。
+   */
+  lenOf?: (id: string) => number | null;
+  /** v1.6.0：设置/清除出线长度（null = 恢复缺省；与 onSetLen 同经 updateNote 可撤销） */
+  onSetLen?: (id: string, len: number | null) => void;
 }
 
 /**
@@ -265,6 +279,45 @@ export function contextMenuItemsFor(
         onSelect: () => growDirActions.onSetGrowDir(id, null),
       });
     }
+    // v1.6.0：出线长度（note.len）——与生长方向同族的软约束：只调本节点连线的
+    // 直线段长度（up/down 垂直 / left/right 水平），不改居中与避让。
+    // 扁平预设 + 自定义，✓ 标当前值；预设外的值（手改文件的）在「自定义」上打 ✓。
+    if (growDirActions.lenOf && growDirActions.onSetLen) {
+      const curLen = growDirActions.lenOf(id);
+      const presets = [14, 32, 60, 100];
+      for (const v of presets) {
+        items.push({
+          label: `出线长度 › ${v}${curLen === v ? ' ✓' : ''}`,
+          onSelect: () => growDirActions.onSetLen?.(id, v),
+        });
+      }
+      items.push({
+        label: `出线长度 › 缺省${curLen === null ? ' ✓' : ''}`,
+        onSelect: () => growDirActions.onSetLen?.(id, null),
+      });
+      items.push({
+        label: `出线长度 › 自定义…${
+          curLen !== null && !presets.includes(curLen) ? ' ✓' : ''
+        }`,
+        onSelect: () => {
+          const raw = prompt('出线长度（像素，下限 14）', curLen !== null ? String(curLen) : '32');
+          if (raw === null) return; // 取消
+          const v = Math.round(Number(raw));
+          if (!Number.isFinite(v) || v <= 0) return; // 非法输入静默放弃（与内核「非法忽略」同口径）
+          growDirActions.onSetLen?.(id, v);
+        },
+      });
+    }
+  }
+  // v1.7.0：出线枢纽（note.hub）——左右组从贝塞尔切换为共享竖梁 bus 线型
+  //（与 up/down 共享梁对称；渲染层据此显示箭头与可拖拽的梁）。
+  // 选择性启用：未标记节点一根线不变（逐像素回归闸门依赖于此）。
+  if (!isRoot) {
+    const isHub = getNode(controller.root, id)?.note?.hub === true;
+    items.push({
+      label: isHub ? '取消出线枢纽' : '升级为出线枢纽',
+      onSelect: () => controller.updateNote(id, { hub: isHub ? undefined : true }),
+    });
   }
   // N2：实体节点专属项（改引用 / 关系图定位 / 转纯文本）
   if (entityActions) {

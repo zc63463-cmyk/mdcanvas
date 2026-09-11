@@ -7,8 +7,8 @@
  *      worker + jsdom 的句柄不释放（见 `b42b34d`）。改为单进程（fileParallelism: false）
  *      后实测：**挂载耗时约 200ms，正常退出**。
  *
- * 于是这个盲区可以补上了 —— `MindmapStage.tsx` 是全项目最大的文件（1,741 行，
- * 占 canvas 源码 66%），此前零整体渲染保护，每次改动都只能靠其他包的测试间接兜底。
+ * 于是这个盲区可以补上了 —— `MindmapStage.tsx` 是全项目最大的文件（2,066 行，
+ * 占 canvas 源码约 42%），此前零整体渲染保护，每次改动都只能靠其他包的测试间接兜底。
  *
  * 本文件覆盖的是「整体能起来」这条地板；面板区的细粒度行为仍走：
  *   ① 抽出的 hook 单独测（tests/useDocumentActions.test.tsx 模式）

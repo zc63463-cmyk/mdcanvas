@@ -9,9 +9,17 @@
  */
 import { describe, expect, it } from 'vitest';
 import { layoutMindmapBranched } from '../src/layout/branching.js';
-import { layoutMindmap, type LayoutResult } from '../src/layout/mindmap.js';
+import { findOverlaps } from '../src/layout/separate.js';
+import { layoutMindmap, type LayoutNode, type LayoutResult } from '../src/layout/mindmap.js';
 import { makeTextNode, type EditableNode } from '../src/tree/treeOps.js';
 import type { GrowDir } from '../src/layout/forest.js';
+
+/** 布局结果的根布局节点（零重叠断言入口） */
+function rootOf(res: LayoutResult): LayoutNode {
+  const r = res.nodes.find((n) => n.parentId === null);
+  if (!r) throw new Error('布局结果缺少根节点');
+  return r;
+}
 
 /** 定长度量（可复现）：宽随文本长度，高固定 */
 const measure = (n: EditableNode) => ({ w: (n.text?.length ?? 1) * 10 + 20, h: 30 });
@@ -211,6 +219,17 @@ describe('layoutMindmapBranched：邻侧防叠（布局期一次推开）', () =
     const leftBox = unionBox(res, leftIds);
     const downBox = unionBox(res, downIds);
     expect(intersects(leftBox, downBox)).toBe(false);
+  });
+
+  it('★ 升级为全对断言：任意两节点盒都不相交（separate 接管后不再只查相邻组）', () => {
+    const { root, explicit } = forkFixture();
+    const res = layoutMindmapBranched(root, measure, new Set(), {
+      explicitDirByNodeId: explicit,
+      islandDir: 'right',
+    });
+    const rootLn = rootOf(res);
+    // 详尽的零重叠断言在 layout-separate.test.ts；此处锁住「本 describe 的主诉求」
+    expect(findOverlaps(rootLn)).toHaveLength(0);
   });
 });
 

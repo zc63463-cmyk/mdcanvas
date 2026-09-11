@@ -1,7 +1,7 @@
 /**
  * useDocumentActions 行为测试
  *
- * 为什么测它：`StageContent` 有 1,343 行、管着 10 个面板，是全项目最大的组件，
+ * 为什么测它：`StageContent` 有 1,637 行、管着 10 个面板，是全项目最大的组件，
  * 且 apps 层此前零测试。抽出 hook 后，这部分逻辑终于可测。
  * 本文件锁住的行为，就是后续继续拆分 StageContent 时的回归基线。
  *
@@ -70,6 +70,7 @@ function setup(over: {
 
 afterEach(() => {
   vi.restoreAllMocks();
+  vi.unstubAllGlobals(); // handleOpen 用例注入的 window.showOpenFilePicker 随用例回收
 });
 
 describe('useDocumentActions · applyDoc', () => {
@@ -241,6 +242,8 @@ describe('useDocumentActions · handleNew / handleOpen', () => {
   });
 
   it('handleOpen 打开成功 → 走 applyDoc 切换', async () => {
+    // 实现契约（打开健壮性）：FS Access 可用才走 docHost.open；不可用直接 file input 兜底
+    vi.stubGlobal('showOpenFilePicker', vi.fn());
     const opened = { ...baseDoc, name: 'opened.mm.md' };
     const { result, docHost, setDoc } = setup({
       docHost: { open: vi.fn(async () => opened) },
@@ -252,6 +255,38 @@ describe('useDocumentActions · handleNew / handleOpen', () => {
 
     expect(setDoc).toHaveBeenCalledWith(opened);
     expect(docHost.remember).toHaveBeenCalledWith(opened);
+  });
+
+  it('handleOpen 用户取消（open 返回 null）→ 不再弹 file input（避免取消后二次打扰）', async () => {
+    vi.stubGlobal('showOpenFilePicker', vi.fn());
+    const click = vi.fn();
+    const { result, fileInputRef } = setup(); // 默认 open → null
+    fileInputRef.current = { click } as unknown as HTMLInputElement;
+
+    await act(async () => {
+      await result.current.handleOpen();
+    });
+
+    expect(click).not.toHaveBeenCalled();
+  });
+
+  it('handleOpen FS 抛错（嵌入预览窗/权限被拒）→ 兜底点击隐藏 file input', async () => {
+    vi.stubGlobal('showOpenFilePicker', vi.fn());
+    const click = vi.fn();
+    const { result, fileInputRef } = setup({
+      docHost: {
+        open: vi.fn(async () => {
+          throw new Error('fs-denied');
+        }),
+      },
+    });
+    fileInputRef.current = { click } as unknown as HTMLInputElement;
+
+    await act(async () => {
+      await result.current.handleOpen();
+    });
+
+    expect(click).toHaveBeenCalled();
   });
 
   it('handleOpen 打开失败且浏览器无 FS API → 兜底点击隐藏 file input', async () => {

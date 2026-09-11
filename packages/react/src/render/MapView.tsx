@@ -9,6 +9,7 @@
 
 import { hasNote, noteOf, resolveSections } from '@mindcanvas/kernel';
 import type { CharMeasure, EditableNode, Entity, GrowDir } from '@mindcanvas/kernel';
+import { readHubFlag } from '@mindcanvas/kernel';
 import {
   type Box,
   type BoundaryLink,
@@ -46,6 +47,18 @@ import type { EdgeRouteEntry } from './FreeEdgeLayer.js';
 import { type EdgeManual, FreeEdgeLayer } from './FreeEdgeLayer.js';
 import { collectFreeEdges, type FreeEdge } from './freeEdges.js';
 import { collectDeclaredGrowDir } from './growDir.js';
+import {
+  beamRailDuringDrag,
+  buildBeamHandles,
+  type BeamDir,
+  type BeamDragState,
+  type BeamHandle,
+} from './beamDrag.js';
+
+/** 无枢纽文档的空梁映射/把手（模块级常量：同一实例，避免 useMemo 依赖抖动） */
+const EMPTY_BEAM_MAP: ReadonlyMap<object, number> = new Map();
+const EMPTY_LINKS: readonly never[] = [];
+const EMPTY_HANDLES: readonly BeamHandle[] = [];
 import { fixedNotePanelsOf, noteLodFor } from './fixedNotePanels.js';
 import type { LodLevel } from './geometry.js';
 import {
@@ -55,6 +68,8 @@ import {
   lodSkipText,
   nodeCardStyle,
   nodeHitTest,
+  horizontalBeamMap,
+  hubArrowTip,
   verticalBeamMap,
 } from './geometry.js';
 import {
@@ -152,6 +167,8 @@ export interface MapViewProps {
   centerIds?: ReadonlySet<string>;
   /** G6′：中心拖拽结束 —— (id, 世界 dx, 世界 dy) */
   onCenterMove?: (id: string, worldDx: number, worldDy: number) => void;
+  /** v1.7.0：拖共享梁松手 —— 提交该方向组层距（写 lens[dir]，单条 undo；拖拽中不落盘） */
+  onBeamLensChange?: (fromId: string, dir: BeamDir, len: number) => void;
   /** 双击节点请求进入编辑（仅 text 类型命中回调；由上层决定 select+startEdit） */
   onEditStart?: (id: string) => void;
   /** 折叠集合（缺省无折叠） */
@@ -296,6 +313,7 @@ export function MapView({
   onEditTabGrow,
   centerIds,
   onCenterMove,
+  onBeamLensChange,
   collapsedIds,
   onToggleCollapse,
   onRemoveSection,
@@ -339,6 +357,10 @@ export function MapView({
   const prevLayoutRef = useRef<LayoutResult | null>(null);
 
   // 节点拖拽重排（M5-T5）：pointerdown 命中节点启动；moved 后跟随光标 + 悬停目标提示
+  // v1.7.0：共享梁拖拽状态（预览叠层消费；逻辑在 useMapGestures/beamDrag）
+  const [beamDrag, setBeamDrag] = useState<BeamDragState | null>(null);
+  // v1.7.0：梁悬停方向（容器光标 ns/ew-resize 的依据；null = 非梁区域）
+  const [beamHoverDir, setBeamHoverDir] = useState<BeamDir | null>(null);
   const [nodeDrag, setNodeDrag] = useState<{
     nodeId: string;
     pointerId: number;
@@ -439,6 +461,8 @@ export function MapView({
   onEditTabGrowRef.current = onEditTabGrow;
   const onCenterMoveRef = useRef(onCenterMove);
   onCenterMoveRef.current = onCenterMove;
+  const onBeamLensChangeRef = useRef(onBeamLensChange);
+  onBeamLensChangeRef.current = onBeamLensChange;
   const onToggleCollapseRef = useRef(onToggleCollapse);
   onToggleCollapseRef.current = onToggleCollapse;
   const onToggleExpandRef = useRef(onToggleExpand);
@@ -513,6 +537,22 @@ export function MapView({
     () => (rootNode ? collectDeclaredGrowDir(rootNode) : new Map<string, GrowDir>()),
     [rootNode],
   );
+  // v1.7.0：出线枢纽标记（note.hub）——其左右组连线渲染为共享竖梁 bus 线型
+  const hubInfo = useMemo(() => {
+    const m = new Map<string, boolean>();
+    let any = false;
+    const w = (n: EditableNode): void => {
+      const h = readHubFlag(n.note);
+      m.set(n.id, h);
+      if (h) any = true;
+      for (const c of n.children) w(c);
+    };
+    if (rootNode) w(rootNode);
+    return { map: m, any };
+  }, [rootNode]);
+  const hubOf = hubInfo.map;
+  // 无枢纽文档（绝大多数）的快速门：跳过每帧 O(链接数) 的横向梁映射/把手构建
+  const hasHubNodes = hubInfo.any;
 
   // 文件拖入画布高亮（P1）
   const [fileDragActive, setFileDragActive] = useState(false);
@@ -730,6 +770,20 @@ export function MapView({
     ];
   });
   const linkBeamYs = verticalBeamMap(visibleLinkGeoms, (g) => g.dir);
+  const linkBeamXs = hasHubNodes
+    ? horizontalBeamMap(
+        visibleLinkGeoms,
+        (g) => hubOf.get(g.fromId) === true,
+        (g) => g.dir,
+      )
+    : EMPTY_BEAM_MAP;
+  // v1.7.0：hub 共享梁把手（命中测试 + 拖拽映射的输入；每帧随插值盒重建）
+  const hubLinks = hasHubNodes
+    ? visibleLinkGeoms.filter((g) => hubOf.get(g.fromId) === true)
+    : EMPTY_LINKS;
+  const beamHandles = hasHubNodes
+    ? buildBeamHandles(hubLinks, (l) => linkBeamYs.get(l) ?? linkBeamXs.get(l))
+    : EMPTY_HANDLES;
 
   // G6″（A3-2/G3）：跨岛父子连接可见性——两端盒都在布局中（投影 owner 覆盖全树）才可画；
   // 端点盒缺失（如父端被折叠隐藏，布局不含该节点）时跳过，不误连到原点。
@@ -985,6 +1039,12 @@ export function MapView({
       // G6′：中心拖拽 = 移动坐标（带动子树），而非改树结构
       isCenter: centerIds ? (id) => centerIds.has(id) : undefined,
       onCenterMove: (id, wdx, wdy) => onCenterMoveRef.current?.(id, wdx, wdy),
+      // v1.7.0：共享梁拖拽（把手/状态/提交）
+      beamHandles,
+      beamDrag,
+      setBeamDrag,
+      onBeamLensChange: onBeamLensChangeRef.current,
+      onBeamHover: setBeamHoverDir,
       onNodeClick: (ln, info) => onNodeClickRef.current?.(ln, info),
       onBlankClick: () => onBlankClickRef.current?.(),
       onNodeHover: (id, at) => {
@@ -1058,7 +1118,15 @@ export function MapView({
 
   if (root === undefined) return null;
 
-  const { k, x, y } = viewport.transform;
+  // 渲染出口自愈（v1.7.1）：非有限变换回原点——任何入口漏进 viewport 的 NaN
+  // 都不会把 `<g transform>` 渲染成 translate(NaN NaN)（整幅图飞出画布的实测症状）。
+  // 注意：HMR 无法热替换类实例方法，viewport 的入口护栏需整页刷新后生效。
+  const kRaw = viewport.transform.k;
+  const xRaw = viewport.transform.x;
+  const yRaw = viewport.transform.y;
+  const k = Number.isFinite(kRaw) && kRaw > 0 ? kRaw : 1;
+  const x = Number.isFinite(xRaw) ? xRaw : 0;
+  const y = Number.isFinite(yRaw) ? yRaw : 0;
   return (
     <div
       ref={containerRef}
@@ -1076,7 +1144,20 @@ export function MapView({
           position: 'absolute',
           inset: 0,
           backgroundImage: token.color.canvasGlow,
-          cursor: dragRef.current ? 'grabbing' : 'grab',
+          // 光标三态：画布平移 grabbing ＞ 梁拖拽 ns/ew ＞ 梁悬停 ns/ew ＞ grab。
+          // 梁悬停期间拖拽中不触发 hover 回调，由 beamDrag 状态接棒保持 resize 光标
+          cursor:
+            dragRef.current
+              ? 'grabbing'
+              : beamDrag !== null
+                ? beamDrag.handle.dir === 'up' || beamDrag.handle.dir === 'down'
+                  ? 'ns-resize'
+                  : 'ew-resize'
+                : beamHoverDir !== null
+                  ? beamHoverDir === 'up' || beamHoverDir === 'down'
+                    ? 'ns-resize'
+                    : 'ew-resize'
+                  : 'grab',
           touchAction: 'none',
           // 拖拽文件进画布时的高亮提示（P1 上传管线）
           outline: fileDragActive ? `2px dashed ${token.color.selection}` : undefined,
@@ -1122,6 +1203,8 @@ export function MapView({
         onPointerMove={onPointerMove}
         onPointerUp={onPointerUp}
         onPointerCancel={onPointerCancel}
+        // v1.7.1：指针离画布 → 清梁悬停（否则 resize 光标残留到下次进入）
+        onPointerLeave={() => setBeamHoverDir(null)}
         onContextMenu={(e) => {
           e.preventDefault();
           const w = worldPointOf(e, e.currentTarget, viewport);
@@ -1192,10 +1275,20 @@ export function MapView({
                   const { ln, from, to, dir } = g;
                   const palette = token.color.branches[derived.branchIndex.get(ln.toId) ?? 0];
                   // 连线随节点同步插值：端点取动画帧盒（防「节点动、线不动」脱节）；
-                  // 垂直连线取方向组共享梁高（up/down 组内同一条水平梁）
+                  // 垂直连线取方向组共享梁高（up/down 组内同一条水平梁）；
+                  // hub 的左右组取共享竖梁 x（horizontalBeamMap，与内核 beamXVariants 同形）
+                  const hub = hubOf.get(ln.fromId) === true;
                   const p = buildLinkPath(token, from, to, palette, {
                     beamY: linkBeamYs.get(g),
+                    beamX: linkBeamXs.get(g),
+                    hub,
                     dir,
+                  });
+                  // hub 出线箭头（左入右出、上入下出）：实心三角 path——两种 backend 通吃
+                  const tip = hubArrowTip(from, to, dir, {
+                    hub,
+                    beamX: linkBeamXs.get(g),
+                    beamY: linkBeamYs.get(g),
                   });
                   // E7 审查修复：关系属性可见——chip 显示 label ?? rel ?? via（只填 rel 也可见）；
                   // note/完整属性走 hover <title>
@@ -1214,11 +1307,14 @@ export function MapView({
                     // A6 冒烟修复：path 是 SVG d 字符串——两条几何形状相同的边会产出
                     // 相同 d → React 重复 key 警告。改用端点 id（一对节点间至多一条树边）。
                     <g key={`${ln.fromId}->${ln.toId}`}>
-                      {
-                        backend.render(
-                          backend.link({ d: p.d, stroke: p.stroke, strokeWidth: p.width }),
-                        ) as ReactElement
-                      }
+                      {backend.render(
+                        backend.link({
+                          d: p.d,
+                          stroke: p.stroke,
+                          strokeWidth: p.width,
+                          tipD: tip ?? undefined,
+                        }),
+                      ) as ReactElement}
                       {/* 仅右键触发编辑（左键保持画布平移，蒋指导反馈①）；hover <title> 呈现全部属性。
                         性能：低 LOD（缩小时）跳过命中区/chip——10px 透明命中区在缩小视图无交互价值且翻倍 DOM
                         E8：且仅在关系模式下挂载——浏览态树边不可编辑 */}
@@ -1262,6 +1358,34 @@ export function MapView({
                     </g>
                   );
                 })}
+                {/* v1.7.0：梁拖拽预览叠层——梁线随指针移动 + 像素徽标；节点在松手提交后由布局权威重排 */}
+                {beamDrag !== null &&
+                  (() => {
+                    const h = beamDrag.handle;
+                    const rail = beamRailDuringDrag(h, beamDrag.len);
+                    const vertical = h.dir === 'up' || h.dir === 'down';
+                    return (
+                      <g style={{ pointerEvents: 'none' }}>
+                        <line
+                          x1={vertical ? h.lo - 8 : rail}
+                          y1={vertical ? rail : h.lo - 8}
+                          x2={vertical ? h.hi + 8 : rail}
+                          y2={vertical ? rail : h.hi + 8}
+                          stroke={token.color.selection}
+                          strokeWidth={2}
+                          strokeDasharray="4 3"
+                        />
+                        <text
+                          x={beamDrag.curW.x + 12}
+                          y={beamDrag.curW.y - 10}
+                          fontSize={12}
+                          fill={token.color.selection}
+                        >
+                          出线 {beamDrag.len}px
+                        </text>
+                      </g>
+                    );
+                  })()}
                 {/* G6″（A3-2/G3）：跨岛父子连接（虚线，与树线/自由边视觉区分；不参与布局、不可交互）。
                     仅 SVG 后端——Canvas 模式不渲染（与自由边同类已知边界），含本功能文档的门禁归 A6。 */}
                 {!useCanvas &&

@@ -352,16 +352,84 @@ export function compactBezier(
   return `M ${sx} ${sy} C ${sx + dir * dx} ${sy + dy / 2}, ${ex - dir * dx} ${ey - dy / 2}, ${ex} ${ey}`;
 }
 
+/** 二维点（连线折线 / 碰撞采样共用） */
+export interface Point {
+  x: number;
+  y: number;
+}
+
+/** 三次贝塞尔的四个控制点（起点 / 两个控制点 / 终点） */
+export interface BezierControls {
+  sx: number;
+  sy: number;
+  c1x: number;
+  c1y: number;
+  c2x: number;
+  c2y: number;
+  ex: number;
+  ey: number;
+}
+
+/**
+ * 父→子贝塞尔的控制点（**渲染与碰撞检测共用的唯一几何来源**）。
+ *
+ * 与 {@link bezierLink} / {@link compactBezier} 逐值一致：端点贴父/子左右缘，
+ * 控制点取中点偏移。碰撞检测采样这条曲线，渲染输出这条曲线的 path——
+ * 两者若各写一份，避让算出来的「安全带」就可能与真正画出来的线不一致。
+ */
+export function bezierControls(
+  parent: LayoutNode,
+  child: LayoutNode,
+  curvature = 0.4,
+): BezierControls {
+  const fromRight = child.box.x > parent.box.x;
+  const sx = fromRight ? parent.box.x + parent.box.w : parent.box.x;
+  const ex = fromRight ? child.box.x : child.box.x + child.box.w;
+  const sy = parent.box.y + parent.box.h / 2;
+  const ey = child.box.y + child.box.h / 2;
+  const dx = Math.abs(ex - sx) * curvature;
+  const dy = Math.abs(ey - sy) * curvature;
+  const dir = ex >= sx ? 1 : -1;
+  return {
+    sx,
+    sy,
+    c1x: sx + dir * dx,
+    c1y: sy + dy / 2,
+    c2x: ex - dir * dx,
+    c2y: ey - dy / 2,
+    ex,
+    ey,
+  };
+}
+
+/** 把 {@link BezierControls} 转成 SVG path（与 compactBezier 同公式） */
+export function bezierPath(c: BezierControls): string {
+  return `M ${c.sx} ${c.sy} C ${c.c1x} ${c.c1y}, ${c.c2x} ${c.c2y}, ${c.ex} ${c.ey}`;
+}
+
+/** 三次贝塞尔采样为折线（连线穿越检测用；缺省 16 段足够贴合曲线） */
+export function sampleBezier(c: BezierControls, segments = 16): Point[] {
+  const out: Point[] = [];
+  for (let i = 0; i <= segments; i++) {
+    const t = i / segments;
+    const u = 1 - t;
+    const a = u * u * u;
+    const b = 3 * u * u * t;
+    const d = 3 * u * t * t;
+    const e = t * t * t;
+    out.push({
+      x: a * c.sx + b * c.c1x + d * c.c2x + e * c.ex,
+      y: a * c.sy + b * c.c1y + d * c.c2y + e * c.ey,
+    });
+  }
+  return out;
+}
+
 /** 父边线型构建器：由布局方按类型注入 */
 export type LinkBuilder = (parent: LayoutNode, child: LayoutNode) => string;
 
 /** 水平紧凑贝塞尔（端点贴父/子左右边界，子在其右取左右缘，反之为左缘） */
-export const bezierLink: LinkBuilder = (parent, child) => {
-  const fromRight = child.box.x > parent.box.x;
-  const sx = fromRight ? parent.box.x + parent.box.w : parent.box.x;
-  const ex = fromRight ? child.box.x : child.box.x + child.box.w;
-  return compactBezier(sx, parent.box.y + parent.box.h / 2, ex, child.box.y + child.box.h / 2);
-};
+export const bezierLink: LinkBuilder = (parent, child) => bezierPath(bezierControls(parent, child));
 
 // ---------- 共享布局工具（其他结构布局复用：树构建 / 收集 / 连线） ----------
 
@@ -442,14 +510,29 @@ export function orthogonalPath(pts: Array<{ x: number; y: number }>, r = 5): str
   return d;
 }
 
-/** 组织图梁线：父底中心垂直下 → 共享梁（beamY）水平 → 子顶中心垂直下 */
-export function orgBeamLink(parent: LayoutNode, child: LayoutNode, beamY: number): string {
-  return orthogonalPath([
+/** 组织图梁线的航点（向下）：父底中心 → 共享梁（beamY）→ 子顶中心 */
+export function orgBeamPoints(parent: LayoutNode, child: LayoutNode, beamY: number): Point[] {
+  return [
     { x: parent.box.x + parent.box.w / 2, y: parent.box.y + parent.box.h },
     { x: parent.box.x + parent.box.w / 2, y: beamY },
     { x: child.box.x + child.box.w / 2, y: beamY },
     { x: child.box.x + child.box.w / 2, y: child.box.y },
-  ]);
+  ];
+}
+
+/** 组织图梁线：父底中心垂直下 → 共享梁（beamY）水平 → 子顶中心垂直下 */
+export function orgBeamLink(parent: LayoutNode, child: LayoutNode, beamY: number): string {
+  return orthogonalPath(orgBeamPoints(parent, child, beamY));
+}
+
+/** 组织图梁线的航点（向上）：父顶中心 → 共享梁（beamY）→ 子底中心 */
+export function orgBeamPointsUp(parent: LayoutNode, child: LayoutNode, beamY: number): Point[] {
+  return [
+    { x: parent.box.x + parent.box.w / 2, y: parent.box.y },
+    { x: parent.box.x + parent.box.w / 2, y: beamY },
+    { x: child.box.x + child.box.w / 2, y: beamY },
+    { x: child.box.x + child.box.w / 2, y: child.box.y + child.box.h },
+  ];
 }
 
 /**
@@ -458,12 +541,7 @@ export function orgBeamLink(parent: LayoutNode, child: LayoutNode, beamY: number
  * beamY 落在父顶边与子底边之间（由调用方按 direction 计算）。
  */
 export function orgBeamLinkUp(parent: LayoutNode, child: LayoutNode, beamY: number): string {
-  return orthogonalPath([
-    { x: parent.box.x + parent.box.w / 2, y: parent.box.y },
-    { x: parent.box.x + parent.box.w / 2, y: beamY },
-    { x: child.box.x + child.box.w / 2, y: beamY },
-    { x: child.box.x + child.box.w / 2, y: child.box.y + child.box.h },
-  ]);
+  return orthogonalPath(orgBeamPointsUp(parent, child, beamY));
 }
 
 /** 布局包围盒 */

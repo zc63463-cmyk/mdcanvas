@@ -79,7 +79,17 @@ export function drawScene(ctx: Ctx2D, scene: ScenePrimitive): void {
       ctx.lineWidth = scene.strokeWidth;
       ctx.beginPath();
       tracePath(ctx, scene.d);
+      if (scene.fill !== undefined) {
+        ctx.fillStyle = scene.fill;
+        ctx.fill();
+      }
       ctx.stroke();
+      if (scene.tipD !== undefined) {
+        ctx.fillStyle = scene.stroke;
+        ctx.beginPath();
+        tracePath(ctx, scene.tipD);
+        ctx.fill();
+      }
       ctx.restore();
       return;
     }
@@ -194,7 +204,7 @@ export class CanvasBackend implements RenderBackend {
   }
 
   link(d: LinkDraw): ScenePrimitive {
-    return { type: 'path', d: d.d, stroke: d.stroke, strokeWidth: d.strokeWidth };
+    return { type: 'path', d: d.d, stroke: d.stroke, strokeWidth: d.strokeWidth, tipD: d.tipD };
   }
 
   image(d: ImageDraw): ScenePrimitive {

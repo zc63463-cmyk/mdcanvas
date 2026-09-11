@@ -95,8 +95,42 @@ export type {
 export {
   collectDirByNodeId,
   layoutMindmapBranched,
+  linkGeometry,
 } from './layout/branching.js';
+export {
+  readHubFlag,
+  readLensMap,
+  readLinkLen,
+} from './layout/beamSide.js';
 export type { BranchLayoutOptions } from './layout/layouts.js';
+
+// 碰撞消解（四向分叉的重叠兜底）：自底向上子树刚性分离 + 全树重叠扫描
+export {
+  boxesIntersect,
+  clearParentEdges,
+  findOverlaps,
+  overlapXOf,
+  overlapYOf,
+  separateTree,
+  subtreeBoxOf,
+  PARENT_EDGE_ROUNDS,
+  SEPARATE_MARGIN,
+  SEPARATE_MAX_ROUNDS,
+} from './layout/separate.js';
+export type { OverlapPair, SeparateOptions, SeparateStats } from './layout/separate.js';
+
+// 连线避障：树连线不得压在别的节点盒上（换几何，不动节点）
+export {
+  collectNodes,
+  findLinkCrossings,
+  LINK_CLEAR_MARGIN,
+  NodeIndex,
+  pickClearGeometry,
+  polylineBox,
+  polylineHitsBox,
+  segmentHitsRect,
+} from './layout/linkClear.js';
+export type { LinkClearOptions, LinkGeometry } from './layout/linkClear.js';
 
 // G6′ 森林布局：多中心各自局部布局 → 平移 → 合并
 export {
@@ -132,11 +166,16 @@ export type { CharMeasure } from './layout/measure.js';
 export {
   __subtreeHeightCache,
   annotateTree,
+  bezierControls,
   bezierLink,
+  bezierPath,
   buildLayoutTree,
   collectLayout,
   compactBezier,
   H_GAP,
+  orgBeamPoints,
+  orgBeamPointsUp,
+  sampleBezier,
   layoutBounds,
   LayoutCache,
   layoutMindmap,
@@ -147,13 +186,14 @@ export {
   V_GAP,
 } from './layout/mindmap.js';
 export type {
+  BezierControls,
   Box,
   LayoutNode,
   LayoutOptions,
   LayoutResult,
   LinkBuilder,
-  LinkGeometry,
   MeasureFn,
+  Point,
 } from './layout/mindmap.js';
 
 export {

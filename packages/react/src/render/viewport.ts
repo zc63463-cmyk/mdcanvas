@@ -89,12 +89,14 @@ export class ViewportController {
 
   /** 屏幕坐标增量平移（px）；手动操作打断视口动画 */
   panBy(dx: number, dy: number): void {
+    if (!Number.isFinite(dx) || !Number.isFinite(dy)) return; // 非有限增量护栏（NaN 污染 transform 永久化）
     this.frame.cancelAnim(VIEWPORT_ANIM_SLOT);
     this.applyPan(dx, dy);
   }
 
   /** 平移增量应用（不打断动画——惯性滑行内部使用） */
   private applyPan(dx: number, dy: number): void {
+    if (!Number.isFinite(dx) || !Number.isFinite(dy)) return;
     this.transform.x += dx;
     this.transform.y += dy;
     this.notify();
@@ -105,6 +107,11 @@ export class ViewportController {
    * 越界软回弹：允许短暂超出硬边界（弹性余量 ZOOM_OVERSHOOT）后平滑回弹至边界，而非硬停。
    */
   zoomAt(sx: number, sy: number, factor: number): void {
+    // 有限性护栏：捏合双指距离为 0 时 factor = 0/0 = NaN，两个越界比较对 NaN 均为
+    // false → applyZoom(NaN) → transform.k 永久 NaN（translate(NaN NaN) scale(NaN) 的实测根因）
+    if (!Number.isFinite(sx) || !Number.isFinite(sy) || !Number.isFinite(factor) || factor <= 0) {
+      return;
+    }
     this.frame.cancelAnim(VIEWPORT_ANIM_SLOT);
     const t = this.transform;
     const k = t.k > 0 ? t.k : 1;
@@ -181,9 +188,23 @@ export class ViewportController {
    * 可中断续接：进行中再次调用 → 从当前插值位置继续；手动 pan/zoom 自动打断。
    */
   animateTo(target: Transform, durationMs: number): void {
+    // 起点净化：当前变换若已含 NaN（历史污染），以此为插值起点会让**每一帧**都产出
+    // NaN → 与 notify 自愈互相打架、错误持续刷屏。非有限起点回落原点；目标非有限直接放弃。
+    const cur = this.transform;
+    const from: Transform = Number.isFinite(cur.x) && Number.isFinite(cur.y) && Number.isFinite(cur.k)
+      ? { ...cur }
+      : { k: 1, x: 0, y: 0 };
+    if (
+      !Number.isFinite(target.x) ||
+      !Number.isFinite(target.y) ||
+      !Number.isFinite(target.k) ||
+      target.k <= 0
+    ) {
+      return;
+    }
     this.frame.animate(
       {
-        from: { ...this.transform },
+        from,
         to: { ...target },
         duration: durationMs,
         easing: easeInOutQuad,
@@ -257,6 +278,15 @@ export class ViewportController {
 
   /** 脏标记 + 单帧合批广播：同帧多次变更 → epoch 立即更新但仅广播一次（React 单帧单渲） */
   private notify(): void {
+    // 自愈（v1.7.1）：任何入口漏进来的非有限值在广播前重置回原点——
+    // NaN transform 会永久污染（NaN 参与后续所有运算），渲染层表现为整幅图飞出画布。
+    // 重置时**必须连视口动画一起取消**：进行中的动画每帧从（可能已污染的）插值状态
+    // 写回 NaN，与自愈形成「写坏 → 重置 → 再写坏」的死循环（实测错误持续刷屏的根因）。
+    const t = this.transform;
+    if (!Number.isFinite(t.x) || !Number.isFinite(t.y) || !Number.isFinite(t.k) || t.k <= 0) {
+      this.frame.cancelAnim(VIEWPORT_ANIM_SLOT);
+      this.transform = { k: 1, x: 0, y: 0 };
+    }
     this.epoch += 1;
     if (this.broadcasting) return;
     this.broadcasting = true;

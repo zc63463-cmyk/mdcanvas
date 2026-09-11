@@ -89,13 +89,19 @@ export function useDocumentActions({
   );
 
   const handleOpen = useCallback(async (): Promise<void> => {
-    const opened = await docHost.open();
-    if (opened) {
-      await applyDoc(opened);
-      return;
+    if (typeof window.showOpenFilePicker === 'function') {
+      try {
+        const opened = await docHost.open();
+        if (opened) {
+          await applyDoc(opened);
+          return;
+        }
+        return; // 用户取消 → 不动（不能再弹 file input，否则取消后反而又弹一次）
+      } catch {
+        // FS Access 抛错（嵌入预览窗不支持 / 权限被拒）→ 隐藏 file input 兜底
+      }
     }
-    // FS 取消 → 不动；浏览器不支持 → 隐藏 file input 兜底读取
-    if (typeof window.showOpenFilePicker !== 'function') fileInputRef.current?.click();
+    fileInputRef.current?.click();
   }, [docHost, applyDoc, fileInputRef]);
 
   const handleNew = useCallback((): void => {

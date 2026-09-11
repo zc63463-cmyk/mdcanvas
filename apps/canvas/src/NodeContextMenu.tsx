@@ -14,6 +14,7 @@
  */
 import { pathOfNode } from '@mindcanvas/kernel';
 import { anchorOfNode, collectCenters, contextMenuItemsFor, ContextMenu, planAttachIsland, readGrowDir, removeCenter, upsertCenter, type EditorController, type SectionMenuActions } from '@mindcanvas/react';
+import { readLensMap, readLinkLen } from '@mindcanvas/kernel';
 import { nodeById } from './hooks/useEdgeActions.js';
 
 /** 侧面板标识（与 MindmapStage 的 panel 状态一致；null = 全部关闭） */
@@ -169,6 +170,29 @@ export function NodeContextMenu({
           explicitDirOf: (id) => readGrowDir(nodeById(controller.root, id)?.note, id),
           onSetGrowDir: (id, dir) => {
             controller.updateNote(id, { dir: dir ?? undefined });
+          },
+          // v1.7.1：出线长度菜单与拖梁同通道——写 `lens.up/lens.down`（拖梁写 lens[dir]）。
+          // 此前菜单写 `len`：lens[dir] 优先级更高，**拖过梁后菜单就失效**（实测反馈）。
+          // lenOf 显示「生效中的 up 组缺省」：lens.up ?? len；「缺省」项同时清 len 与 lens.up/down。
+          lenOf: (id) => {
+            const note = nodeById(controller.root, id)?.note;
+            return readLensMap(note)?.up ?? readLinkLen(note);
+          },
+          onSetLen: (id, len) => {
+            const note = nodeById(controller.root, id)?.note;
+            const lens = { ...(readLensMap(note) ?? {}) };
+            if (len === null) {
+              delete lens.up;
+              delete lens.down;
+              controller.updateNote(id, {
+                len: undefined,
+                lens: Object.keys(lens).length > 0 ? lens : undefined,
+              });
+              return;
+            }
+            lens.up = len;
+            lens.down = len;
+            controller.updateNote(id, { lens, len: len ?? undefined });
           },
         },
         // v1.5.0 Section 三态入口（D1：Section ⇒ center，故依赖中心块提供 isCenter）

@@ -20,6 +20,12 @@
 import type { LayoutResult } from '@mindcanvas/kernel';
 import type { Dispatch, PointerEvent as ReactPointerEvent, SetStateAction } from 'react';
 import { useRef } from 'react';
+import {
+  beamLenAfterDrag,
+  hitBeamAt,
+  type BeamDragState,
+  type BeamHandle,
+} from './beamDrag.js';
 import { PAN_INERTIA_TRIGGER, PAN_SAMPLE_WINDOW } from './motion.js';
 import { type DropMode, dropModeFor, planDrop } from './nodeDrag.js';
 import { PinchTracker } from './pinch.js';
@@ -120,6 +126,15 @@ export interface UseMapGesturesParams {
   isCenter?: (id: string) => boolean;
   /** G6′：中心拖拽结束 —— 世界坐标位移（已除以缩放 k） */
   onCenterMove?: (id: string, worldDx: number, worldDy: number) => void;
+  /** v1.7.0：hub 共享梁把手（beamDrag.buildBeamHandles 产出；缺省 = 不启用梁拖拽） */
+  beamHandles?: readonly BeamHandle[];
+  /** v1.7.0：梁拖拽状态（MapView useState——渲染叠层消费） */
+  beamDrag?: BeamDragState | null;
+  setBeamDrag?: Dispatch<SetStateAction<BeamDragState | null>>;
+  /** v1.7.0：梁拖拽松手 —— 提交 lens[dir]（单条 undo；拖拽中不落盘） */
+  onBeamLensChange?: (fromId: string, dir: BeamDragState['handle']['dir'], len: number) => void;
+  /** v1.7.0：梁悬停方向变化（null = 离开梁/命中节点）——供上层切换 ns/ew-resize 光标 */
+  onBeamHover?: (dir: BeamDragState['handle']['dir'] | null) => void;
 }
 
 export function useMapGestures({
@@ -135,6 +150,11 @@ export function useMapGestures({
   onNodeHover,
   isCenter,
   onCenterMove,
+  beamHandles,
+  beamDrag,
+  setBeamDrag,
+  onBeamLensChange,
+  onBeamHover,
 }: UseMapGesturesParams) {
   /** R2：多指 pinch 跟踪（≥2 指 → 缩放模式，抑制 pan / 节点拖拽） */
   const pinch = useRef(new PinchTracker());
@@ -144,10 +164,11 @@ export function useMapGestures({
   const onPointerDown = (e: ReactPointerEvent<HTMLElement>): void => {
     // 用户接管视口：打断进行中的视口动画（M5-T3）
     viewport.cancelAnim();
-    // R2：多指登记——第二指落下进入 pinch（取消单指 pan / 节点拖拽）
+    // R2：多指登记——第二指落下进入 pinch（取消单指 pan / 节点拖拽 / 梁拖拽）
     if (pinch.current.down(e.pointerId, e.clientX, e.clientY)?.type === 'start') {
       dragRef.current = null;
       setNodeDrag(null);
+      setBeamDrag?.(null);
       return;
     }
     const w = worldPointOf(e, e.currentTarget, viewport);
@@ -159,6 +180,7 @@ export function useMapGestures({
       hitNodeAt(visibleNodes, w, (ln) => ln.depth === 0 && !isCenter?.(ln.node.id))?.node.id ??
       null;
     if (hitId !== null) {
+      onBeamHover?.(null); // 节点命中优先 → 清梁悬停（光标回默认）
       setNodeDrag({
         nodeId: hitId,
         pointerId: e.pointerId,
@@ -171,6 +193,27 @@ export function useMapGestures({
         mode: 'child',
         valid: false,
       });
+    } else if (beamHandles && setBeamDrag) {
+      // v1.7.0：共享梁拖拽——梁线 ±8px 带内按下（空白处，节点命中之后）→ 优先于画布平移
+      const bh = hitBeamAt(beamHandles, w);
+      if (bh) {
+        setBeamDrag({
+          handle: bh,
+          pointerId: e.pointerId,
+          startW: w,
+          len: bh.startLen,
+          moved: false,
+          curW: w,
+        });
+      } else {
+        dragRef.current = {
+          id: e.pointerId,
+          x: e.clientX,
+          y: e.clientY,
+          moved: false,
+          samples: [],
+        };
+      }
     } else {
       dragRef.current = {
         id: e.pointerId,
@@ -227,6 +270,15 @@ export function useMapGestures({
       });
       return;
     }
+    // v1.7.0：梁拖拽路径——沿行程轴位移 → 新层距（预览；不落盘）
+    if (beamDrag && setBeamDrag) {
+      if (beamDrag.pointerId !== e.pointerId) return;
+      const w = worldPointOf(e, e.currentTarget, viewport);
+      const len = beamLenAfterDrag(beamDrag.handle, beamDrag.startW, w);
+      const moved = beamDrag.moved || len !== beamDrag.handle.startLen;
+      setBeamDrag({ ...beamDrag, len, moved, curW: w });
+      return;
+    }
     // 画布平移路径（含 M5-T4 速度采样）
     const d = dragRef.current;
     // 未按下时（纯移动）也要做命中检测 —— 供上层显示节点注释浮窗（悬停预览）
@@ -234,6 +286,9 @@ export function useMapGestures({
       const w = worldPointOf(e, e.currentTarget, viewport);
       const hit = hitNodeAt(visibleNodes, w);
       onNodeHover?.(hit ? hit.node.id : null, { x: e.clientX, y: e.clientY });
+      // v1.7.0：梁悬停方向（节点命中优先 → null）——上层据此切换 ns/ew-resize 光标
+      const bh = hit === null && beamHandles ? hitBeamAt(beamHandles, w) : null;
+      onBeamHover?.(bh === null ? null : bh.dir);
       return;
     }
     if (d.id !== e.pointerId) return;
@@ -273,6 +328,16 @@ export function useMapGestures({
       setNodeDrag(null);
       return;
     }
+    // v1.7.0：梁拖拽结束——越过阈值 → 提交 lens[dir]（单条 undo）；否则视为点击取消
+    if (beamDrag && setBeamDrag) {
+      if (beamDrag.pointerId === e.pointerId) {
+        if (beamDrag.moved) {
+          onBeamLensChange?.(beamDrag.handle.fromId, beamDrag.handle.dir, beamDrag.len);
+        }
+        setBeamDrag(null);
+      }
+      return;
+    }
     const d = dragRef.current;
     if (!d || d.id !== e.pointerId) return;
     dragRef.current = null;
@@ -293,6 +358,7 @@ export function useMapGestures({
     pinch.current.up(e.pointerId);
     if (dragRef.current?.id === e.pointerId) dragRef.current = null;
     setNodeDrag((d) => (d?.pointerId === e.pointerId ? null : d));
+    setBeamDrag?.((d) => (d?.pointerId === e.pointerId ? null : d));
   };
 
   return { pinch, dragRef, onPointerDown, onPointerMove, onPointerUp, onPointerCancel };
