@@ -46,11 +46,13 @@ function fixture(withSection: boolean, withCenter: boolean) {
         : {}),
     },
   };
+  // 布局树 = 投影后的视图：c 已从 root 摘出（projectIslands 语义），只作为独立岛存在。
+  // documentRoot 仍是完整树（含 c）——cid 锚解析与标题/成员缓存走它；若两份混用同一对象，
+  // c 子树会在 layout.nodes 里出现两次 → React 重复 key 警告（节点与边各重复一对）。
+  const layoutRoot: EditableNode = { ...root, children: [other] };
   const layout = layoutForest(
     [
-      { node: root, dir: 'right', pos: { x: 0, y: 0 } },
-      // 升格岛独立摆放（projectIslands 语义：同一节点被投影出来，id 必须与树内一致，
-      // 否则 derived.boxes 找不到该子树成员 → 帧无盒可算，Section 不渲染）
+      { node: layoutRoot, dir: 'right', pos: { x: 0, y: 0 } },
       { node: c, dir: 'right', pos: { x: 40, y: 0 } },
     ],
     createNodeMeasure(char, new Map()),

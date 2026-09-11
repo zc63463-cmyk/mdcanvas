@@ -88,9 +88,10 @@ export function ShortcutHelpPanel({ onClose }: ShortcutHelpPanelProps) {
             ×
           </button>
         </div>
+        {/* 一个 action 可有多条绑定（如 help：`?` 与 Alt+方向键）——key 必须复合唯一 */}
         {EDITOR_KEY_BINDINGS.map((b) => (
           <div
-            key={b.action}
+            key={`${b.action}:${b.key}`}
             data-shortcut-row
             style={{
               display: 'flex',

@@ -22,8 +22,9 @@ function fixture(opts: { collapseRoot?: boolean } = {}) {
   const c1 = makeTextNode('c1');
   const c2 = makeTextNode('c2');
   const c: EditableNode = { ...makeTextNode('C', [c1, c2]), note: { cid: 'c7' } };
+  const other = makeTextNode('other');
   const root: EditableNode = {
-    ...makeTextNode('R', [c, makeTextNode('other')]),
+    ...makeTextNode('R', [c, other]),
     note: {
       sections: [{ id: 'sec_t5', title: '折叠测试', root: 'cid:c7', color: 'green' }],
       centers: [{ at: 'node:R/C', cid: 'c7', dir: 'right', x: 40, y: 0 }],
@@ -31,9 +32,12 @@ function fixture(opts: { collapseRoot?: boolean } = {}) {
   };
   // 折叠集合由本 fixture 自己的 id 构造（跨 fixture 取 id 会静默失效）
   const collapsed = new Set<string>(opts.collapseRoot ? [c.id] : []);
+  // 布局树 = 投影后的视图（c 已从 root 摘出）；documentRoot 仍是完整树（含 c）。
+  // 两份混用同一对象会让 c 子树在 layout.nodes 出现两次（React 重复 key 警告）。
+  const layoutRoot: EditableNode = { ...root, children: [other] };
   const layout = layoutForest(
     [
-      { node: root, dir: 'right', pos: { x: 0, y: 0 } },
+      { node: layoutRoot, dir: 'right', pos: { x: 0, y: 0 } },
       { node: c, dir: 'right', pos: { x: 40, y: 0 } },
     ],
     createNodeMeasure(char, new Map()),
