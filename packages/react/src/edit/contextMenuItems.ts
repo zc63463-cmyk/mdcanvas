@@ -90,6 +90,14 @@ export interface GrowDirMenuActions {
   lenOf?: (id: string) => number | null;
   /** v1.6.0：设置/清除出线长度（null = 恢复缺省；与 onSetLen 同经 updateNote 可撤销） */
   onSetLen?: (id: string, len: number | null) => void;
+  /**
+   * v1.7.1：节点 `lens.left/right` 的残留值（拖过梁又取消枢纽后会留着——
+   * lens 读取与 hub 无关，非枢纽也生效，表现为「不是枢纽却线很长」）。
+   * 返回非空 → 菜单出现「清除左右出线长度」复位项。可选（缺省不出现该项）。
+   */
+  lenSidesOf?: (id: string) => { left?: number; right?: number } | null;
+  /** v1.7.1：清除 lens.left/right（保留 up/down 节奏；经 updateNote 可撤销） */
+  onClearLenSides?: (id: string) => void;
 }
 
 /**
@@ -307,6 +315,20 @@ export function contextMenuItemsFor(
           growDirActions.onSetLen?.(id, v);
         },
       });
+    }
+    // v1.7.1：左右出线残留复位（lens.left/right 与 hub 无关——取消枢纽后拖出的长间距会留着；
+    // 出现条件 = 确实有残留值，避免菜单噪音）
+    if (growDirActions.lenSidesOf && growDirActions.onClearLenSides) {
+      const sides = growDirActions.lenSidesOf(id);
+      if (sides && (sides.left !== undefined || sides.right !== undefined)) {
+        const desc = [sides.left !== undefined ? `左 ${sides.left}` : null, sides.right !== undefined ? `右 ${sides.right}` : null]
+          .filter(Boolean)
+          .join(' / ');
+        items.push({
+          label: `出线长度 › 清除左右（${desc}）`,
+          onSelect: () => growDirActions.onClearLenSides?.(id),
+        });
+      }
     }
   }
   // v1.7.0：出线枢纽（note.hub）——左右组从贝塞尔切换为共享竖梁 bus 线型

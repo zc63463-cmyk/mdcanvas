@@ -194,6 +194,24 @@ export function NodeContextMenu({
             lens.down = len;
             controller.updateNote(id, { lens, len: len ?? undefined });
           },
+          // v1.7.1：lens.left/right 残留复位（拖过梁又取消枢纽后间距会留着——lens 读取与 hub 无关）
+          lenSidesOf: (id) => {
+            const lens = readLensMap(nodeById(controller.root, id)?.note);
+            if (!lens) return null;
+            const out: { left?: number; right?: number } = {};
+            if (lens.left !== undefined) out.left = lens.left;
+            if (lens.right !== undefined) out.right = lens.right;
+            return out;
+          },
+          onClearLenSides: (id) => {
+            const note = nodeById(controller.root, id)?.note;
+            const lens = { ...(readLensMap(note) ?? {}) };
+            delete lens.left;
+            delete lens.right;
+            controller.updateNote(id, {
+              lens: Object.keys(lens).length > 0 ? lens : undefined,
+            });
+          },
         },
         // v1.5.0 Section 三态入口（D1：Section ⇒ center，故依赖中心块提供 isCenter）
         sectionActions,
