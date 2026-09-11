@@ -244,6 +244,8 @@ export interface MapViewApi {
   resetZoom(): void;
   /** 定位节点：保持当前 k，将节点中心平移到视口中心 */
   focusNode(id: string): void;
+  /** 节点盒右上角的**客户端坐标**（v1.8.0：环形菜单锚点；节点不存在 → null） */
+  nodeCorner(id: string): { x: number; y: number } | null;
 }
 
 export interface MapStats {
@@ -1013,6 +1015,14 @@ export function MapView({
           { k, x: viewport.viewW / 2 - cx * k, y: viewport.viewH / 2 - cy * k },
           VIEWPORT_ANIM_MS,
         );
+      },
+      nodeCorner: (id) => {
+        const ln = layout.nodes.find((n) => n.node.id === id);
+        const rect = containerRef.current?.getBoundingClientRect();
+        if (!ln || !rect) return null;
+        const { k, x, y } = viewport.transform;
+        // 世界（盒右上角）→ 容器屏幕：screen = world * k + t（toWorld 的逆）
+        return { x: rect.left + (ln.box.x + ln.box.w) * k + x, y: rect.top + ln.box.y * k + y };
       },
     };
     if (apiRef) apiRef.current = api;

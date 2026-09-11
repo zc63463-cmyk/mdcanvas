@@ -217,6 +217,44 @@ export {
   matchEditorKey,
   matchPreDirKey,
 } from './edit/keys.js';
+export type {
+  RadialEffect,
+  RadialEvent,
+  RadialGeometry,
+  RadialGeometryConfig,
+  RadialItem,
+  RadialOrigin,
+  RadialPhase,
+  RadialReduceCtx,
+  RadialSlotKey,
+  RadialState,
+} from './edit/radialActions.js';
+export {
+  hitTest,
+  itemAt,
+  RADIAL_GEOMETRY_DEFAULTS,
+  RADIAL_HOLD_MS,
+  RADIAL_IDLE,
+  RADIAL_ITEMS_V1,
+  RADIAL_SLOTS,
+  radialGeometryFor,
+  radialGeometryOf,
+  radialReduce,
+  slotForArrowKey,
+  visibleArcs,
+} from './edit/radialActions.js';
+export {
+  ChargeArc,
+  floatLabelStyle,
+  RADIAL_ACCENT,
+  RADIAL_DANGER,
+  RADIAL_SURFACE_CSS,
+  RadialRing,
+  RadialStyles,
+  ringArcPath,
+  slotCenterDeg,
+} from './chrome/radialSurface.js';
+export type { RadialRingProps } from './chrome/radialSurface.js';
 export type { OverlayEditorProps } from './edit/OverlayEditor.js';
 export { OverlayEditor } from './edit/OverlayEditor.js';
 export { collapsedAncestors } from './edit/reveal.js';

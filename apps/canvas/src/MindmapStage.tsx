@@ -111,6 +111,7 @@ import { NodeContextMenu } from './NodeContextMenu.js';
 import { RecentDocMenu } from './RecentDocMenu.js';
 import { useEntityPick } from './hooks/useEntityPick.js';
 import { useExportActions } from './hooks/useExportActions.js';
+import { RadialStageOverlay, useRadialStage } from './hooks/useRadialStage.js';
 import { PerfPanel } from './PerfPanel.js';
 import { SidePanels } from './SidePanels.js';
 import { StartupScreen } from './StartupScreen.js';
@@ -495,6 +496,37 @@ function StageContent({
     const timer = setTimeout(() => setPreDirHint(null), 2500);
     return () => clearTimeout(timer);
   }, [preDirHint]);
+
+  // v1.8.0 Phase 2：环形快捷操作（按住 Alt ≥250ms 出环）——与预方向共用键位，
+  // 「快击=手势 / 慢按=菜单」由状态机相位分层；动作与既有命令同路径（单一动作源）。
+  const radial = useRadialStage({
+    getSelectedId: () => controller.selectedId,
+    getAnchor: (id) => apiRef.current?.nodeCorner(id) ?? null,
+    setPreDir: (id, dir) => {
+      preDirsRef.current = new Map(preDirsRef.current).set(id, dir);
+      setPreDirHint({ id, dir });
+    },
+    actions: {
+      addChild: (id) => {
+        // 与 Tab 生长同一条路径（预方向 → 兄弟多数/父方向推断 → 固化 note.dir）
+        const parent = getNode(controller.root, id);
+        const dir = preDirsRef.current.get(id) ?? (parent ? inferChildDir(parent) : null);
+        const newId = controller.addChild(id, undefined, dir ? { dir } : undefined);
+        controller.select(newId);
+        controller.startEdit(newId);
+      },
+      editText: (id) => controller.startEdit(id),
+      removeNode: (id) => {
+        // 环内二次确认气泡即确认步骤（不再叠 window.confirm）
+        controller.removeNode(id);
+        controller.select(null);
+      },
+      openMenu: (id, x, y) => setCtxMenu({ nodeId: id, x, y }),
+    },
+  });
+  // 键处理 effect 依赖只有 [controller]（历史原因带 eslint-disable）——经 ref 读，稳且零 lint 噪声
+  const radialKeyRef = useRef(radial.handleKey);
+  radialKeyRef.current = radial.handleKey;
 
   // v1.3.0 幕布描述（note.desc）：正在编辑描述的节点 id + 已展开全文的节点集合
   const [descEditingId, setDescEditingId] = useState<string | null>(null);
@@ -941,6 +973,8 @@ function StageContent({
     const onKey = (e: KeyboardEvent): void => {
       if (controller.editingId !== null) return; // 输入框内：stopPropagation 已在 OverlayEditor
       if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return; // 搜索/批注输入框内不触发画布快捷键
+      // v1.8.0：环形菜单状态机优先（Alt 蓄力/出环中的方向键漫游、Enter/Esc、二次确认）——未消费落回既有键位
+      if (radialKeyRef.current(e)) return;
       const sel = controller.selectedId;
       // 预方向：Alt+方向键（会话级预设；生长时 Tab/Enter 才把它固化进新节点 note.dir）。
       // 快捷键清单见 ShortcutHelpPanel（'?'）；事后改向走右键「生长方向」。
@@ -1868,6 +1902,9 @@ function StageContent({
         />
       </div>
 
+      {/* v1.8.0 Phase 2：环形快捷操作覆盖层（环/浮标/死区提示/二次确认） */}
+      <RadialStageOverlay radial={radial} />
+
       {/* 批次 2：节点右键菜单 —— 已抽到 NodeContextMenu */}
       {ctxMenu !== null && (
         <NodeContextMenu
@@ -2062,4 +2099,6 @@ type MapViewApi = {
   zoomBy(f: number): void;
   resetZoom(): void;
   focusNode(id: string): void;
+  /** v1.8.0：节点盒右上角客户端坐标（环形菜单锚点） */
+  nodeCorner(id: string): { x: number; y: number } | null;
 };
