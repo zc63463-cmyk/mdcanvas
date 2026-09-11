@@ -246,6 +246,12 @@ export interface MapViewApi {
   focusNode(id: string): void;
   /** 节点盒右上角的**客户端坐标**（v1.8.0：环形菜单锚点；节点不存在 → null） */
   nodeCorner(id: string): { x: number; y: number } | null;
+  /**
+   * 节点盒客户端矩形 + 当前缩放 k（v1.8.0 Phase 3：幽灵预览按布局常量折算屏幕间距；节点不存在 → null）
+   */
+  nodeBox(id: string): { x: number; y: number; w: number; h: number; k: number } | null;
+  /** 可见子树全部节点盒（客户端坐标，含自身；未知 id → 空数组）——「删除预告」描边用 */
+  subtreeBoxes(id: string): Array<{ id: string; x: number; y: number; w: number; h: number }>;
 }
 
 export interface MapStats {
@@ -1023,6 +1029,40 @@ export function MapView({
         const { k, x, y } = viewport.transform;
         // 世界（盒右上角）→ 容器屏幕：screen = world * k + t（toWorld 的逆）
         return { x: rect.left + (ln.box.x + ln.box.w) * k + x, y: rect.top + ln.box.y * k + y };
+      },
+      nodeBox: (id) => {
+        const ln = layout.nodes.find((n) => n.node.id === id);
+        const rect = containerRef.current?.getBoundingClientRect();
+        if (!ln || !rect) return null;
+        const { k, x, y } = viewport.transform;
+        return {
+          x: rect.left + ln.box.x * k + x,
+          y: rect.top + ln.box.y * k + y,
+          w: ln.box.w * k,
+          h: ln.box.h * k,
+          k,
+        };
+      },
+      subtreeBoxes: (id) => {
+        const rootLn = layout.nodes.find((n) => n.node.id === id);
+        const rect = containerRef.current?.getBoundingClientRect();
+        if (!rootLn || !rect) return [];
+        const { k, x, y } = viewport.transform;
+        const left = rect.left;
+        const top = rect.top;
+        const out: Array<{ id: string; x: number; y: number; w: number; h: number }> = [];
+        const walk = (ln: LayoutNode): void => {
+          out.push({
+            id: ln.node.id,
+            x: left + ln.box.x * k + x,
+            y: top + ln.box.y * k + y,
+            w: ln.box.w * k,
+            h: ln.box.h * k,
+          });
+          for (const c of ln.children) walk(c);
+        };
+        walk(rootLn);
+        return out;
       },
     };
     if (apiRef) apiRef.current = api;
