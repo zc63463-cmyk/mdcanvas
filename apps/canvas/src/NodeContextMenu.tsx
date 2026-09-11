@@ -14,8 +14,9 @@
  */
 import { pathOfNode } from '@mindcanvas/kernel';
 import { anchorOfNode, collectCenters, contextMenuItemsFor, ContextMenu, planAttachIsland, readGrowDir, removeCenter, upsertCenter, type EditorController, type SectionMenuActions } from '@mindcanvas/react';
-import { readLensMap, readLinkLen } from '@mindcanvas/kernel';
+import { readLensMap } from '@mindcanvas/kernel';
 import { nodeById } from './hooks/useEdgeActions.js';
+import { applyLen, currentLenOf } from './lenEdit.js';
 
 /** 侧面板标识（与 MindmapStage 的 panel 状态一致；null = 全部关闭） */
 export type PanelId = 'search' | 'relation' | 'outline' | 'assets' | null;
@@ -50,6 +51,8 @@ export interface NodeContextMenuProps {
   setPinnedNotePath: (path: number[], editing?: boolean) => void;
   /** A5：接回/事务失败的告警回调（命令层结构化拒绝 → 用户可见提示） */
   onAttachError?: (message: string) => void;
+  /** v1.8.1：「出线长度 › 自定义…」→ 宿主弹数值气泡（原生 prompt 已退役，裁决 M3） */
+  onRequestLenCustom?: (id: string, x: number, y: number, current: number | null) => void;
   /** v1.5.0 Section 三态菜单动作（D1：Section ⇒ center；写入走 controller 事务通道） */
   sectionActions?: SectionMenuActions;
   onClose: () => void;
@@ -66,6 +69,7 @@ export function NodeContextMenu({
   setDescEditingId,
   setPinnedNotePath,
   onAttachError,
+  onRequestLenCustom,
   sectionActions,
   onClose,
 }: NodeContextMenuProps) {
@@ -173,26 +177,12 @@ export function NodeContextMenu({
           },
           // v1.7.1：出线长度菜单与拖梁同通道——写 `lens.up/lens.down`（拖梁写 lens[dir]）。
           // 此前菜单写 `len`：lens[dir] 优先级更高，**拖过梁后菜单就失效**（实测反馈）。
-          // lenOf 显示「生效中的 up 组缺省」：lens.up ?? len；「缺省」项同时清 len 与 lens.up/down。
-          lenOf: (id) => {
-            const note = nodeById(controller.root, id)?.note;
-            return readLensMap(note)?.up ?? readLinkLen(note);
-          },
-          onSetLen: (id, len) => {
-            const note = nodeById(controller.root, id)?.note;
-            const lens = { ...(readLensMap(note) ?? {}) };
-            if (len === null) {
-              delete lens.up;
-              delete lens.down;
-              controller.updateNote(id, {
-                len: undefined,
-                lens: Object.keys(lens).length > 0 ? lens : undefined,
-              });
-              return;
-            }
-            lens.up = len;
-            lens.down = len;
-            controller.updateNote(id, { lens, len: len ?? undefined });
+          // v1.8.1：写入逻辑抽 `lenEdit.ts`（与数值气泡共用单一实现）。
+          lenOf: (id) => currentLenOf(controller, id),
+          onSetLen: (id, len) => applyLen(controller, id, len),
+          // v1.8.1：自定义值走宿主数值气泡（裁决 M3）
+          onRequestLenCustom: (id) => {
+            onRequestLenCustom?.(id, ctxMenu.x, ctxMenu.y, currentLenOf(controller, id));
           },
           // v1.7.1：lens.left/right 残留复位（拖过梁又取消枢纽后间距会留着——lens 读取与 hub 无关）
           lenSidesOf: (id) => {

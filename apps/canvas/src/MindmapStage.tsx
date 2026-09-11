@@ -115,6 +115,8 @@ import { useEntityPick } from './hooks/useEntityPick.js';
 import { useExportActions } from './hooks/useExportActions.js';
 import { RadialStageOverlay, useRadialStage } from './hooks/useRadialStage.js';
 import { ghostBoxOf } from './radialGhost.js';
+import { LenBubble } from './LenBubble.js';
+import { applyLen } from './lenEdit.js';
 import { PerfPanel } from './PerfPanel.js';
 import { SidePanels } from './SidePanels.js';
 import { StartupScreen } from './StartupScreen.js';
@@ -486,6 +488,13 @@ function StageContent({
   // 文件管理器（文档库 UI）：独立于 `panel` 单态——它是模态浮层，不是侧面板
   const [fileManagerOpen, setFileManagerOpen] = useState(false);
   const [ctxMenu, setCtxMenu] = useState<{ nodeId: string; x: number; y: number } | null>(null);
+  // v1.8.1：「出线长度 › 自定义…」数值气泡（取代原生 prompt——裁决 M3）
+  const [lenBubble, setLenBubble] = useState<{
+    id: string;
+    x: number;
+    y: number;
+    current: number | null;
+  } | null>(null);
   /**
    * PG 式预方向（会话级易失：不落文档，刷新即失；Tab/Enter 生长时才固化进 note.dir）。
    * 用 ref 持有：keydown 的 effect 依赖只有 controller，若用 state 会因闭包陷阱
@@ -1949,8 +1958,23 @@ function StageContent({
           setDescEditingId={setDescEditingId}
           setPinnedNotePath={setPinnedNotePath}
           onAttachError={(message) => setCommandNotice(message)}
+          onRequestLenCustom={(id, x, y, current) => setLenBubble({ id, x, y, current })}
           sectionActions={sectionActions}
           onClose={() => setCtxMenu(null)}
+        />
+      )}
+
+      {/* v1.8.1：出线长度数值气泡（取代原生 prompt——裁决 M3） */}
+      {lenBubble !== null && (
+        <LenBubble
+          x={lenBubble.x}
+          y={lenBubble.y}
+          initial={lenBubble.current}
+          onCommit={(v) => {
+            applyLen(controller, lenBubble.id, v);
+            setLenBubble(null);
+          }}
+          onCancel={() => setLenBubble(null)}
         />
       )}
 
