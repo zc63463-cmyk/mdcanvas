@@ -3,10 +3,21 @@
  * 既有项语义完全保留；N2 追加实体节点专属三项（改引用… / 在关系图中显示 / 转为纯文本）——
  * 实体项的画布侧动作由调用方注入（entityActions），缺省则不追加（向后兼容）。
  *
- * v1.3.0 扩展：可选 descActions —— 在「新建子节点」与「新建同级节点」之间插入「编辑描述」入口，
- * 与 Shift+Enter 同一动作（进入节点下方幕布描述 note.desc 的行内编辑）。
- * v1.4.0 扩展：可选 noteActions —— 追加「编辑 note笔记」，打开节点下方的固定笔记。
+ * v1.3.0 扩展：可选 descActions —— 「编辑描述」入口，与 Shift+Enter 同一动作
+ * （进入节点下方幕布描述 note.desc 的行内编辑）。
+ * v1.4.0 扩展：可选 noteActions —— 「编辑笔记」，打开节点下方的固定笔记。
  * 两种内容不同：desc 常驻节点盒内，固定 note 笔记在节点下方向下生长并参与布局。
+ *
+ * v1.8.1 菜单梳理（右键能力盘点与清理，用户裁决）：
+ *   - **分区**：常用（与环一级对齐置顶：新建/同级/编辑/删除）/ 内容 / 结构 /
+ *     生长与连线 / 岛与区域——分区顺序 = 构造顺序 = 渲染顺序
+ *   - **快捷键提示**（hint）：Tab / Enter / F2 / Del / Space / Shift+Tab 等
+ *   - **删除改直删**：原生 confirm 摩擦太大，撤销（Ctrl+Z）兜底（裁决 M2）；
+ *     环内删除的气泡确认保留（已验收交互，另行裁决）
+ *   - **自定义长度不再弹原生 prompt**：交宿主注入 `onRequestLenCustom`（数值气泡）；
+ *     缺省注入则隐藏「自定义…」项（向后兼容）
+ *   - **副标题消歧**：编辑描述（盒内）/ 编辑笔记（盒下）/ 升为中心（钉住坐标）/
+ *     生长方向（子树往哪边长）
  */
 import {
   findNode,
@@ -19,6 +30,15 @@ import {
 import type { ContextMenuItem } from '../chrome/ContextMenu.js';
 import { inferChildDir } from '../render/growDir.js';
 import type { EditorController } from './controller.js';
+
+/** 菜单分区（v1.8.1；顺序即渲染顺序，渲染端在变化处画标题与分隔线） */
+const SEC = {
+  common: '常用',
+  content: '内容',
+  structure: '结构',
+  growth: '生长与连线',
+  island: '岛与区域',
+} as const;
 
 /** 实体菜单的画布侧动作（picker / 关系面板由调用方持有） */
 export interface EntityMenuActions {
@@ -91,9 +111,14 @@ export interface GrowDirMenuActions {
   /** v1.6.0：设置/清除出线长度（null = 恢复缺省；与 onSetLen 同经 updateNote 可撤销） */
   onSetLen?: (id: string, len: number | null) => void;
   /**
+   * v1.8.1：「出线长度 › 自定义…」的值输入交宿主（数值气泡）。
+   * 缺省不注入 → 不出现「自定义…」项（原实现弹原生 prompt，已退役——裁决 M3）。
+   */
+  onRequestLenCustom?: (id: string) => void;
+  /**
    * v1.7.1：节点 `lens.left/right` 的残留值（拖过梁又取消枢纽后会留着——
    * lens 读取与 hub 无关，非枢纽也生效，表现为「不是枢纽却线很长」）。
-   * 返回非空 → 菜单出现「清除左右出线长度」复位项。可选（缺省不出现该项）。
+   * 返回非空 → 菜单出现「清除左右」复位项。可选（缺省不出现该项）。
    */
   lenSidesOf?: (id: string) => { left?: number; right?: number } | null;
   /** v1.7.1：清除 lens.left/right（保留 up/down 节奏；经 updateNote 可撤销） */
@@ -138,9 +163,13 @@ export function contextMenuItemsFor(
     const d = loc ? inferChildDir(loc.parent) : null;
     return d ? { dir: d } : undefined;
   };
+
+  // ── 常用（v1.8.1：与环一级对齐置顶——新建/同级/编辑/删除）──
   const items: ContextMenuItem[] = [
     {
       label: '新建子节点',
+      hint: 'Tab',
+      section: SEC.common,
       onSelect: () => {
         const cid = controller.addChild(id, undefined, inferDirNoteOf(id));
         controller.select(cid);
@@ -148,23 +177,11 @@ export function contextMenuItemsFor(
       },
     },
   ];
-  // v1.3.0：幕布描述入口（位于「新建子节点」与「新建同级节点」之间；根节点也提供）
-  if (descActions) {
-    items.push({
-      label: '编辑描述',
-      onSelect: () => descActions.onStart(id),
-    });
-  }
-  // note 笔记与「编辑描述」并列 —— 两者是不同内容，不是同一功能的两处入口。
-  if (noteActions) {
-    items.push({
-      label: '编辑 note笔记',
-      onSelect: () => noteActions.onStart(id),
-    });
-  }
   if (!isRoot) {
     items.push({
       label: '新建同级节点',
+      hint: 'Enter',
+      section: SEC.common,
       onSelect: () => {
         const sid = controller.addSibling(id, undefined, inferSiblingDirNoteOf(id));
         if (sid !== null) {
@@ -174,32 +191,189 @@ export function contextMenuItemsFor(
       },
     });
   }
-  items.push(
-    { label: '编辑', onSelect: () => controller.startEdit(id) },
-    { label: '折叠 / 展开', onSelect: () => controller.toggleCollapse(id) },
-  );
+  items.push({
+    label: '编辑',
+    hint: 'F2',
+    section: SEC.common,
+    onSelect: () => controller.startEdit(id),
+  });
+  if (!isRoot) {
+    // v1.8.1（裁决 M2）：直删——原生 confirm 摩擦太大；撤销（Ctrl+Z）兜底
+    items.push({
+      label: '删除节点',
+      hint: 'Del',
+      danger: true,
+      section: SEC.common,
+      onSelect: () => {
+        controller.removeNode(id);
+        controller.select(null);
+      },
+    });
+  }
+
+  // ── 内容 ──
+  // v1.3.0：幕布描述入口（根节点也提供；副标题「盒内」与笔记区分）
+  if (descActions) {
+    items.push({
+      label: '编辑描述（盒内）',
+      hint: 'Shift+Enter',
+      section: SEC.content,
+      onSelect: () => descActions.onStart(id),
+    });
+  }
+  // note 笔记与「编辑描述」并列 —— 两者是不同内容，不是同一功能的两处入口（「盒下」消歧）
+  if (noteActions) {
+    items.push({
+      label: '编辑笔记（盒下）',
+      section: SEC.content,
+      onSelect: () => noteActions.onStart(id),
+    });
+  }
+  // N2：实体节点专属项（改引用 / 关系图定位 / 转纯文本）
+  if (entityActions) {
+    const node = getNode(controller.root, id);
+    if (node && node.type === 'entity' && node.ref) {
+      items.push(
+        { label: '改引用…', section: SEC.content, onSelect: () => entityActions.onEditRef(id) },
+        {
+          label: '在关系图中显示',
+          section: SEC.content,
+          onSelect: () => entityActions.onShowInGraph(id),
+        },
+        {
+          label: '转为纯文本',
+          section: SEC.content,
+          onSelect: () => controller.setEntityRef(id, null),
+        },
+      );
+    }
+  }
+
+  // ── 结构 ──
+  if (!isRoot) {
+    items.push(
+      {
+        label: '缩进',
+        hint: 'Shift+Tab',
+        section: SEC.structure,
+        onSelect: () => controller.indent(id),
+      },
+      {
+        label: '反缩进',
+        hint: 'Ctrl+Shift+Tab',
+        section: SEC.structure,
+        onSelect: () => controller.outdent(id),
+      },
+    );
+  }
+  items.push({
+    label: '折叠 / 展开',
+    hint: 'Space',
+    section: SEC.structure,
+    onSelect: () => controller.toggleCollapse(id),
+  });
   // E3：连线到…（以该节点为源新建自由边；树形之外的语义连接）
   if (edgeActions) {
-    items.push({ label: '连线到…', onSelect: () => edgeActions.onStartLink(id) });
+    items.push({ label: '连线到…', section: SEC.structure, onSelect: () => edgeActions.onStartLink(id) });
   }
-  // G6′：中心升格 / 降格（根节点不可升格 —— 它要么是所有未升格分支的容器，
-  // 要么在全部子节点升格后自然成为空壳）
+
+  // ── 生长与连线（D3′ 生长方向 / 出线长度 / 出线枢纽）──
+  if (growDirActions && !isRoot) {
+    const cur = growDirActions.explicitDirOf(id);
+    for (const [dir, label] of [
+      ['right', '向右'],
+      ['left', '向左'],
+      ['down', '向下'],
+      ['up', '向上'],
+    ] as const) {
+      items.push({
+        label: `生长方向（子树往哪边长） › ${label}${cur === dir ? ' ✓' : ''}`,
+        section: SEC.growth,
+        onSelect: () => growDirActions.onSetGrowDir(id, dir),
+      });
+    }
+    if (cur !== null) {
+      items.push({
+        label: '生长方向（子树往哪边长） › 继承（跟随父级）',
+        section: SEC.growth,
+        onSelect: () => growDirActions.onSetGrowDir(id, null),
+      });
+    }
+    // v1.6.0：出线长度（note.len）——与生长方向同族的软约束：只调本节点连线的
+    // 直线段长度（up/down 垂直 / left/right 水平），不改居中与避让。
+    // 扁平预设 + 自定义，✓ 标当前值；预设外的值（手改文件的）在「自定义」上打 ✓。
+    if (growDirActions.lenOf && growDirActions.onSetLen) {
+      const curLen = growDirActions.lenOf(id);
+      const presets = [14, 32, 60, 100];
+      for (const v of presets) {
+        items.push({
+          label: `出线长度 › ${v}${curLen === v ? ' ✓' : ''}`,
+          section: SEC.growth,
+          onSelect: () => growDirActions.onSetLen?.(id, v),
+        });
+      }
+      items.push({
+        label: `出线长度 › 缺省${curLen === null ? ' ✓' : ''}`,
+        section: SEC.growth,
+        onSelect: () => growDirActions.onSetLen?.(id, null),
+      });
+      // v1.8.1：自定义值走宿主注入的数值气泡（原 window.prompt 退役——裁决 M3）
+      if (growDirActions.onRequestLenCustom) {
+        items.push({
+          label: `出线长度 › 自定义…${
+            curLen !== null && !presets.includes(curLen) ? ' ✓' : ''
+          }`,
+          section: SEC.growth,
+          onSelect: () => growDirActions.onRequestLenCustom?.(id),
+        });
+      }
+    }
+    // v1.7.1：左右出线残留复位（lens.left/right 与 hub 无关——取消枢纽后拖出的长间距会留着；
+    // 出现条件 = 确实有残留值，避免菜单噪音）
+    if (growDirActions.lenSidesOf && growDirActions.onClearLenSides) {
+      const sides = growDirActions.lenSidesOf(id);
+      if (sides && (sides.left !== undefined || sides.right !== undefined)) {
+        const desc = [
+          sides.left !== undefined ? `左 ${sides.left}` : null,
+          sides.right !== undefined ? `右 ${sides.right}` : null,
+        ]
+          .filter(Boolean)
+          .join(' / ');
+        items.push({
+          label: `出线长度 › 清除左右出线残留（${desc}）`,
+          section: SEC.growth,
+          onSelect: () => growDirActions.onClearLenSides?.(id),
+        });
+      }
+    }
+  }
+  // v1.7.0：出线枢纽（note.hub）——左右组从贝塞尔切换为共享竖梁 bus 线型
+  //（与 up/down 共享梁对称；渲染层据此显示箭头与可拖拽的梁）。
+  // 选择性启用：未标记节点一根线不变（逐像素回归闸门依赖于此）。
+  if (!isRoot) {
+    const isHub = getNode(controller.root, id)?.note?.hub === true;
+    items.push({
+      label: isHub ? '取消出线枢纽' : '升级为出线枢纽',
+      section: SEC.growth,
+      onSelect: () => controller.updateNote(id, { hub: isHub ? undefined : true }),
+    });
+  }
+
+  // ── 岛与区域（G6′ 中心 / G2 接回 / G3 父级连接 / C3 编号 / v1.5 Section）──
   if (centerActions && !isRoot) {
     if (centerActions.isCenter(id)) {
       const detached = centerActions.isDetached(id);
       if (detached) {
         // G2（A5）：detached 无有效父级 → 禁普通降格；接回 = 显式命令（选中目标节点后操作）
         const target = controller.selectedId;
-        const attachable =
-          target !== null && target !== id
-            ? { targetId: target }
-            : null;
+        const attachable = target !== null && target !== id ? { targetId: target } : null;
         items.push({
           label:
             attachable !== null
               ? '接为所选节点的子树'
               : '接为子树（先选中目标父节点）',
           disabled: attachable === null,
+          section: SEC.island,
           onSelect: () => {
             if (attachable === null) return;
             centerActions.onAttach(id, attachable.targetId);
@@ -209,6 +383,7 @@ export function contextMenuItemsFor(
         // 非切断中心 → 普通降格出口（坐标进历史区，再升格可吸附回原位）
         items.push({
           label: '降格为普通节点',
+          section: SEC.island,
           onSelect: () => centerActions.onDemote(id),
         });
       }
@@ -217,6 +392,7 @@ export function contextMenuItemsFor(
         const pl = centerActions.parentLinkOf(id);
         items.push({
           label: pl === 'show' ? '隐藏父级连接' : '显示父级连接',
+          section: SEC.island,
           onSelect: () => centerActions.onToggleParentLink(id, pl === 'show' ? 'hide' : 'show'),
         });
       }
@@ -226,6 +402,7 @@ export function contextMenuItemsFor(
       if (cid !== undefined && centerActions.onCopyCid) {
         items.push({
           label: `复制中心编号（${cid}）`,
+          section: SEC.island,
           onSelect: () => centerActions.onCopyCid?.(id),
         });
       }
@@ -240,133 +417,35 @@ export function contextMenuItemsFor(
         ['up', '向上'],
       ] as const) {
         items.push({
-          label: `升为中心 › ${label}`,
+          label: `升为中心（钉住坐标） › ${label}`,
+          section: SEC.island,
           onSelect: () => centerActions.onPromote(id, dir),
         });
       }
     }
   }
-  // v1.5.0：Section 三态入口（紧随中心块之后；D1：Section ⇒ center，不存在非 center 的 Section）
+  // v1.5.0：Section 三态入口（D1：Section ⇒ center，不存在非 center 的 Section）
   if (sectionActions && centerActions && !isRoot) {
     const secId = sectionActions.sectionOf(id);
     if (secId !== undefined) {
       items.push({
         label: '取消 Section',
+        section: SEC.island,
         onSelect: () => sectionActions.onUnmark(id),
       });
     } else if (centerActions.isCenter(id)) {
       items.push({
         label: '标记为 Section',
+        section: SEC.island,
         onSelect: () => sectionActions.onMark(id),
       });
     } else {
       items.push({
         label: '设为 Section（升为中心）',
+        section: SEC.island,
         onSelect: () => sectionActions.onPromoteAndMark(id),
       });
     }
-  }
-  // D3′：生长方向（思想分叉；note.dir 语义意图随子树迁移，四向 + 继承。
-  // 与「升为中心 › 方向」同一扁平模式；✓ 标当前显式方向）
-  if (growDirActions && !isRoot) {
-    const cur = growDirActions.explicitDirOf(id);
-    for (const [dir, label] of [
-      ['right', '向右'],
-      ['left', '向左'],
-      ['down', '向下'],
-      ['up', '向上'],
-    ] as const) {
-      items.push({
-        label: `生长方向 › ${label}${cur === dir ? ' ✓' : ''}`,
-        onSelect: () => growDirActions.onSetGrowDir(id, dir),
-      });
-    }
-    if (cur !== null) {
-      items.push({
-        label: '生长方向 › 继承（跟随父级）',
-        onSelect: () => growDirActions.onSetGrowDir(id, null),
-      });
-    }
-    // v1.6.0：出线长度（note.len）——与生长方向同族的软约束：只调本节点连线的
-    // 直线段长度（up/down 垂直 / left/right 水平），不改居中与避让。
-    // 扁平预设 + 自定义，✓ 标当前值；预设外的值（手改文件的）在「自定义」上打 ✓。
-    if (growDirActions.lenOf && growDirActions.onSetLen) {
-      const curLen = growDirActions.lenOf(id);
-      const presets = [14, 32, 60, 100];
-      for (const v of presets) {
-        items.push({
-          label: `出线长度 › ${v}${curLen === v ? ' ✓' : ''}`,
-          onSelect: () => growDirActions.onSetLen?.(id, v),
-        });
-      }
-      items.push({
-        label: `出线长度 › 缺省${curLen === null ? ' ✓' : ''}`,
-        onSelect: () => growDirActions.onSetLen?.(id, null),
-      });
-      items.push({
-        label: `出线长度 › 自定义…${
-          curLen !== null && !presets.includes(curLen) ? ' ✓' : ''
-        }`,
-        onSelect: () => {
-          const raw = prompt('出线长度（像素，下限 14）', curLen !== null ? String(curLen) : '32');
-          if (raw === null) return; // 取消
-          const v = Math.round(Number(raw));
-          if (!Number.isFinite(v) || v <= 0) return; // 非法输入静默放弃（与内核「非法忽略」同口径）
-          growDirActions.onSetLen?.(id, v);
-        },
-      });
-    }
-    // v1.7.1：左右出线残留复位（lens.left/right 与 hub 无关——取消枢纽后拖出的长间距会留着；
-    // 出现条件 = 确实有残留值，避免菜单噪音）
-    if (growDirActions.lenSidesOf && growDirActions.onClearLenSides) {
-      const sides = growDirActions.lenSidesOf(id);
-      if (sides && (sides.left !== undefined || sides.right !== undefined)) {
-        const desc = [sides.left !== undefined ? `左 ${sides.left}` : null, sides.right !== undefined ? `右 ${sides.right}` : null]
-          .filter(Boolean)
-          .join(' / ');
-        items.push({
-          label: `出线长度 › 清除左右（${desc}）`,
-          onSelect: () => growDirActions.onClearLenSides?.(id),
-        });
-      }
-    }
-  }
-  // v1.7.0：出线枢纽（note.hub）——左右组从贝塞尔切换为共享竖梁 bus 线型
-  //（与 up/down 共享梁对称；渲染层据此显示箭头与可拖拽的梁）。
-  // 选择性启用：未标记节点一根线不变（逐像素回归闸门依赖于此）。
-  if (!isRoot) {
-    const isHub = getNode(controller.root, id)?.note?.hub === true;
-    items.push({
-      label: isHub ? '取消出线枢纽' : '升级为出线枢纽',
-      onSelect: () => controller.updateNote(id, { hub: isHub ? undefined : true }),
-    });
-  }
-  // N2：实体节点专属项（改引用 / 关系图定位 / 转纯文本）
-  if (entityActions) {
-    const node = getNode(controller.root, id);
-    if (node && node.type === 'entity' && node.ref) {
-      items.push(
-        { label: '改引用…', onSelect: () => entityActions.onEditRef(id) },
-        { label: '在关系图中显示', onSelect: () => entityActions.onShowInGraph(id) },
-        { label: '转为纯文本', onSelect: () => controller.setEntityRef(id, null) },
-      );
-    }
-  }
-  if (!isRoot) {
-    items.push(
-      { label: '缩进', onSelect: () => controller.indent(id) },
-      { label: '反缩进', onSelect: () => controller.outdent(id) },
-      {
-        label: '删除节点',
-        danger: true,
-        onSelect: () => {
-          if (confirm(`删除节点「${getNodeLabel(controller.root, id)}」及其全部子节点？`)) {
-            controller.removeNode(id);
-            controller.select(null);
-          }
-        },
-      },
-    );
   }
   return items;
 }

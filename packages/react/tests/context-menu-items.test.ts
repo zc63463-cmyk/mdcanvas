@@ -79,32 +79,30 @@ describe('节点右键菜单项（v1.3.0：幕布描述入口）', () => {
     const c = build(PLAIN);
     const id = c.root.children[0]!.id;
     const labels = contextMenuItemsFor(c, id).map((i) => i.label);
-    expect(labels).not.toContain('编辑描述');
+    expect(labels.some((l) => l.startsWith('编辑描述'))).toBe(false);
   });
 
-  it('传入 descActions → 追加「编辑描述」项且 onStart 被调用', () => {
+  it('传入 descActions → 追加「编辑描述（盒内）」项且 onStart 被调用', () => {
     const c = build(PLAIN);
     const id = c.root.children[0]!.id;
     const onStart = vi.fn();
     const items = contextMenuItemsFor(c, id, undefined, undefined, { onStart });
-    const desc = items.find((i) => i.label === '编辑描述');
+    const desc = items.find((i) => i.label === '编辑描述（盒内）');
     expect(desc).toBeDefined();
     desc!.onSelect();
     expect(onStart).toHaveBeenCalledWith(id);
   });
 
-  it('描述项位置：紧随「新建子节点」之后（在「新建同级节点」之前）', () => {
+  it('v1.8.1 分区：描述项归入「内容」分区（位于「常用」四件之后）', () => {
     const c = build(PLAIN);
     const id = c.root.children[0]!.id;
-    const labels = contextMenuItemsFor(c, id, undefined, undefined, {
+    const items = contextMenuItemsFor(c, id, undefined, undefined, {
       onStart: () => undefined,
-    }).map((i) => i.label);
-    const iNewChild = labels.indexOf('新建子节点');
-    const iDesc = labels.indexOf('编辑描述');
-    const iNewSibling = labels.indexOf('新建同级节点');
-    expect(iNewChild).toBeGreaterThanOrEqual(0);
-    expect(iDesc).toBe(iNewChild + 1);
-    expect(iNewSibling).toBe(iDesc + 1);
+    });
+    const labels = items.map((i) => i.label);
+    const iDesc = labels.indexOf('编辑描述（盒内）');
+    expect(iDesc).toBeGreaterThan(labels.indexOf('删除节点'));
+    expect(items[iDesc]!.section).toBe('内容');
   });
 
   it('根节点也提供「编辑描述」（幕布根节点同样可有描述）', () => {
@@ -112,7 +110,7 @@ describe('节点右键菜单项（v1.3.0：幕布描述入口）', () => {
     const labels = contextMenuItemsFor(c, c.root.id, undefined, undefined, {
       onStart: () => undefined,
     }).map((i) => i.label);
-    expect(labels).toContain('编辑描述');
+    expect(labels).toContain('编辑描述（盒内）');
   });
 });
 
@@ -174,12 +172,12 @@ describe('D3′：生长方向菜单（思想分叉）', () => {
     const labels = contextMenuItemsFor(
       c, id, undefined, undefined, undefined, undefined, undefined, actions,
     ).map((i) => i.label);
-    expect(labels).toContain('生长方向 › 向右');
-    expect(labels).toContain('生长方向 › 向左 ✓');
-    expect(labels).toContain('生长方向 › 向下');
-    expect(labels).toContain('生长方向 › 向上');
+    expect(labels).toContain('生长方向（子树往哪边长） › 向右');
+    expect(labels).toContain('生长方向（子树往哪边长） › 向左 ✓');
+    expect(labels).toContain('生长方向（子树往哪边长） › 向下');
+    expect(labels).toContain('生长方向（子树往哪边长） › 向上');
     // 显式状态下提供「继承」出口
-    expect(labels).toContain('生长方向 › 继承（跟随父级）');
+    expect(labels).toContain('生长方向（子树往哪边长） › 继承（跟随父级）');
   });
 
   it('继承状态（无显式 dir）→ 无 ✓、无「继承」项（已在继承）', () => {
@@ -188,9 +186,9 @@ describe('D3′：生长方向菜单（思想分叉）', () => {
     const labels = contextMenuItemsFor(
       c, id, undefined, undefined, undefined, undefined, undefined, growDirFixture(null),
     ).map((i) => i.label);
-    expect(labels).toContain('生长方向 › 向右');
+    expect(labels).toContain('生长方向（子树往哪边长） › 向右');
     expect(labels.some((l) => l.includes('✓'))).toBe(false);
-    expect(labels).not.toContain('生长方向 › 继承（跟随父级）');
+    expect(labels).not.toContain('生长方向（子树往哪边长） › 继承（跟随父级）');
   });
 
   it('点选方向 → onSetGrowDir 回调携带目标 dir；继承 → null', () => {
@@ -200,9 +198,9 @@ describe('D3′：生长方向菜单（思想分叉）', () => {
     const items = contextMenuItemsFor(
       c, id, undefined, undefined, undefined, undefined, undefined, actions,
     );
-    items.find((i) => i.label === '生长方向 › 向上')!.onSelect();
+    items.find((i) => i.label === '生长方向（子树往哪边长） › 向上')!.onSelect();
     expect(actions.onSetGrowDir).toHaveBeenCalledWith(id, 'up');
-    items.find((i) => i.label === '生长方向 › 继承（跟随父级）')!.onSelect();
+    items.find((i) => i.label === '生长方向（子树往哪边长） › 继承（跟随父级）')!.onSelect();
     expect(actions.onSetGrowDir).toHaveBeenCalledWith(id, null);
   });
 
@@ -221,6 +219,7 @@ describe('v1.6.0：出线长度菜单（note.len 软约束）', () => {
     onSetGrowDir: vi.fn(),
     lenOf: () => cur,
     onSetLen: vi.fn(),
+    onRequestLenCustom: vi.fn(),
   });
 
   it('未设置 → 预设全出现、「缺省」带 ✓；点选回调携带数值 / null', () => {
@@ -257,7 +256,7 @@ describe('v1.6.0：出线长度菜单（note.len 软约束）', () => {
     expect(labels2).toContain('出线长度 › 自定义… ✓');
   });
 
-  it('自定义…：prompt 合法输入写回；取消/非法静默放弃', () => {
+  it('自定义…：走宿主 onRequestLenCustom 回调（原生 prompt 已退役，裁决 M3）', () => {
     const c = build(PLAIN);
     const id = c.root.children[0]!.id;
     const actions = lenFixture(null);
@@ -265,26 +264,20 @@ describe('v1.6.0：出线长度菜单（note.len 软约束）', () => {
       c, id, undefined, undefined, undefined, undefined, undefined, actions,
     );
     const custom = items.find((i) => i.label === '出线长度 › 自定义…')!;
-    // node 环境无 window.prompt：手动桩（jsdom 亦无确定语义，直接赋值最稳）
-    const g = globalThis as { prompt?: (m?: string, d?: string) => string | null };
-    const prev = g.prompt;
-    let reply: string | null = '80';
-    g.prompt = () => reply;
-    try {
-      custom.onSelect();
-      expect(actions.onSetLen).toHaveBeenCalledWith(id, 80);
-      reply = null; // 取消
-      custom.onSelect();
-      expect(actions.onSetLen).toHaveBeenCalledTimes(1);
-      reply = 'abc'; // 非数字
-      custom.onSelect();
-      expect(actions.onSetLen).toHaveBeenCalledTimes(1);
-      reply = '-3'; // 非法值
-      custom.onSelect();
-      expect(actions.onSetLen).toHaveBeenCalledTimes(1);
-    } finally {
-      g.prompt = prev;
-    }
+    custom.onSelect();
+    expect(actions.onRequestLenCustom).toHaveBeenCalledWith(id);
+    expect(actions.onSetLen).not.toHaveBeenCalled();
+  });
+
+  it('缺省 onRequestLenCustom（向后兼容）→ 不出现「自定义…」项', () => {
+    const c = build(PLAIN);
+    const id = c.root.children[0]!.id;
+    const labels = contextMenuItemsFor(
+      c, id, undefined, undefined, undefined, undefined, undefined,
+      { explicitDirOf: () => null, onSetGrowDir: vi.fn(), lenOf: () => null, onSetLen: vi.fn() },
+    ).map((i) => i.label);
+    expect(labels).toContain('出线长度 › 缺省 ✓');
+    expect(labels.some((l) => l.startsWith('出线长度 › 自定义'))).toBe(false);
   });
 
   it('lenOf/onSetLen 缺省（向后兼容）→ 不追加出线长度项', () => {
@@ -295,5 +288,39 @@ describe('v1.6.0：出线长度菜单（note.len 软约束）', () => {
       { explicitDirOf: () => null, onSetGrowDir: vi.fn() },
     ).map((i) => i.label);
     expect(labels.some((l) => l.startsWith('出线长度'))).toBe(false);
+  });
+});
+
+describe('v1.8.1 菜单梳理（分区 / 提示 / 直删）', () => {
+  it('「常用」置顶且与环一级对齐；关键项带快捷键提示', () => {
+    const c = build(PLAIN);
+    const id = c.root.children[0]!.id;
+    const items = contextMenuItemsFor(c, id);
+    const labels = items.map((i) => i.label);
+    expect(labels.slice(0, 4)).toEqual(['新建子节点', '新建同级节点', '编辑', '删除节点']);
+    expect(items[0]!.hint).toBe('Tab');
+    expect(items[1]!.hint).toBe('Enter');
+    expect(items[2]!.hint).toBe('F2');
+    expect(items[3]!.hint).toBe('Del');
+    expect(items[3]!.section).toBe('常用');
+    expect(items[3]!.danger).toBe(true);
+  });
+
+  it('删除为直删（撤销兜底）：onSelect 不再走阻塞确认', () => {
+    const c = build(PLAIN);
+    const id = c.root.children[0]!.id;
+    const items = contextMenuItemsFor(c, id);
+    // node 环境无 window.confirm —— 直删路径不得调用它（调用即抛错）
+    const g = globalThis as { confirm?: (m?: string) => boolean };
+    const prev = g.confirm;
+    g.confirm = () => {
+      throw new Error('直删路径不应调用 confirm');
+    };
+    try {
+      items.find((i) => i.label === '删除节点')!.onSelect();
+      expect(c.root.children.some((n) => n.id === id)).toBe(false);
+    } finally {
+      g.confirm = prev;
+    }
   });
 });

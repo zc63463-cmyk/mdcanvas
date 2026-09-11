@@ -50,4 +50,20 @@ describe('ContextMenu：右键菜单', () => {
     fireEvent.pointerDown(container.querySelector('[data-menu-backdrop]') as HTMLElement);
     expect(onClose).toHaveBeenCalledTimes(1);
   });
+
+  it('v1.8.1：section 变化处渲染分区标题；hint 显示在行内', () => {
+    const items = [
+      { label: '新建子节点', section: '常用', hint: 'Tab', onSelect: vi.fn() },
+      { label: '编辑', section: '常用', hint: 'F2', onSelect: vi.fn() },
+      { label: '生长方向（子树往哪边长） › 向右', section: '生长与连线', onSelect: vi.fn() },
+    ];
+    const { container } = render(<ContextMenu x={0} y={0} items={items} onClose={() => {}} />);
+    // 两个分区标题（常用 / 生长与连线）——同 section 连续项只出一个标题
+    const sections = container.querySelectorAll('[data-menu-section]');
+    expect(sections).toHaveLength(2);
+    expect(sections[0]!.textContent).toBe('常用');
+    expect(sections[1]!.textContent).toBe('生长与连线');
+    expect(container.textContent).toContain('Tab');
+    expect(container.textContent).toContain('F2');
+  });
 });
