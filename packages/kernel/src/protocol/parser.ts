@@ -347,13 +347,7 @@ export function parseMm(text: string): ParseResult {
       if (RE_NOTE_CLOSE.test(line)) {
         inNote = false;
         const note = parseNoteYaml(noteBody.join('\n'));
-        if (note === null) {
-          diagnostics.push({
-            code: 'E-INVALID-NOTE-YAML',
-            line: noteOpenLine,
-            message: '笔记块体不是合法 YAML mapping，笔记丢弃',
-          });
-        } else {
+        if (note !== null) {
           if (pendingNote !== null) {
             diagnostics.push({
               code: 'W-NOTE-SHADOWED',
@@ -362,7 +356,16 @@ export function parseMm(text: string): ParseResult {
             });
           }
           pendingNote = { note, line: noteOpenLine };
+        } else if (noteBody.some((l) => l.trim() !== '')) {
+          diagnostics.push({
+            code: 'E-INVALID-NOTE-YAML',
+            line: noteOpenLine,
+            message: '笔记块体不是合法 YAML mapping，笔记丢弃',
+          });
         }
+        // else 分支：空块（`<!--` `-->` 之间全空白）容忍为「无笔记」，不出诊断。
+        // v1.7.1：历史写端曾为空 note（{}）落空块，旧文件重解析不该报「非法 YAML」；
+        // 下次保存后空块自然消失（serializer 已不落空块）。
         noteBody = [];
       } else {
         noteBody.push(line);

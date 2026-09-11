@@ -105,9 +105,15 @@ function emitNode(
   // 若放在笔记之后，空行会插到「笔记 ↔ 所属节点」之间，把两者拆开。
   if (mode === 'heading' && out.length > 0) out.push('');
   if (node.note) {
-    out.push('<!--');
-    out.push(...noteToLines(node.note));
-    out.push('-->');
+    // v1.7.1：空 note（{} / 全 undefined / 空数组）不落块——此前会写出 `<!--` `-->`
+    // 空块，重解析判 E-INVALID-NOTE-YAML（往返自伤：清空字段的节点保存后报「非法 YAML」）。
+    // 门禁侧 strip 用同一判据（noteToLines 空即视为无 note），三处口径一致。
+    const noteLines = noteToLines(node.note);
+    if (noteLines.length > 0) {
+      out.push('<!--');
+      out.push(...noteLines);
+      out.push('-->');
+    }
   }
   if (mode === 'heading') {
     out.push(`${'#'.repeat(headingLevel)} ${node.type === 'text' ? (node.text ?? '') : ''}`);
@@ -191,7 +197,9 @@ function strip(n: MindNode | null): unknown {
   if (n.type === 'text' && n.text !== undefined) out.text = n.text;
   if (n.type === 'image' && n.url !== undefined) out.url = n.url;
   if (n.type === 'entity' && n.ref !== undefined) out.ref = { kind: n.ref.kind, id: n.ref.id };
-  if (n.note !== undefined) out.note = n.note;
+  // 与写端同判据（noteToLines 空 = 不落块）：空 note 在往返比较中等同于「无 note」，
+  // 否则内存里的 {}（清空字段的遗留）会被安全闸误判为「往返有损」而拦住保存。
+  if (n.note !== undefined && noteToLines(n.note).length > 0) out.note = n.note;
   out.children = n.children.map(strip);
   return out;
 }

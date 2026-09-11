@@ -164,8 +164,8 @@ export function layoutMindmapBranched(
   }
 
   // ② 递归：先放置各子树的局部布局（子根在原点），再按方向分组挂到父节点四周
-  const ancestorStack: BBox[] = []; // 祖先链盒栈：方向组落点必须避开这些既成障碍
-  const place = (ln: LayoutNode, inheritedDir: GrowDir): void => {
+  //    ancestors = 有效祖先盒集（判据见 occ 注释）：仅锚定链累积，被叉节点传 []。
+  const place = (ln: LayoutNode, inheritedDir: GrowDir, ancestors: readonly BBox[]): void => {
     if (ln.children.length === 0) return;
 
     // 分组规则（局部性优先）：
@@ -196,19 +196,19 @@ export function layoutMindmapBranched(
       }
     }
 
-    // 递归展开（基于已有基准位置；本节点入栈后即成为下层的既成障碍）。
-    ancestorStack.push(toBBox(nb));
+    // 递归展开（基于已有基准位置）：分叉子节点传 []（上方祖先盒失效）；
+    // 锚定子节点继承有效集 + 父盒（锚定链不移动，基线即终局）。
     for (const dir of ['right', 'left', 'down', 'up'] as const) {
-      for (const c of groups[dir]) place(c, dir);
+      for (const c of groups[dir]) place(c, dir, []);
     }
     for (const k of anchored) {
-      if (subtreeHasDir.get(k.node.id) === true) place(k, dirOf.get(k.node.id) ?? inheritedDir);
+      if (subtreeHasDir.get(k.node.id) === true) place(k, dirOf.get(k.node.id) ?? inheritedDir, [...ancestors, toBBox(nb)]);
     }
-    ancestorStack.pop();
 
-    // 避让基准 = 父盒 + 保持原位的子树 + **祖先链盒**（落位期避开；事后外推会破坏 B″ 局部性）。
+    // 避让基准 = 父盒 + 保持原位的子树 + **有效祖先盒**（O 有效 ⟺ 路径 (O, 本节点] 上无分叉
+    // 节点，被同样平移刚性携带时才与基线一致）。分叉链上方是幽灵盒（实测 242px 级撑远）。
     const occ: BBox = toBBox(nb);
-    for (const b of [...anchored.map(subtreeBBox), ...ancestorStack]) {
+    for (const b of [...anchored.map(subtreeBBox), ...ancestors]) {
       occ.minX = Math.min(occ.minX, b.minX);
       occ.minY = Math.min(occ.minY, b.minY);
       occ.maxX = Math.max(occ.maxX, b.maxX);
@@ -297,14 +297,9 @@ export function layoutMindmapBranched(
   };
 
   /**
-   * 把 down/up 组水平钳制在左右组的内侧窗口里（仅与梁高程带相交的侧组参与）。
-   *
-   * 左右组已在前面落位（right/left 先于 down/up 处理），取其内侧边界作窗口；
-   * down/up 组若越界就整组水平平移（子树相对布局不变），窗口放不下则居中。
-   *
-   * 「梁高程带」= 组盒朝父侧外扩半程最小层距（覆盖共享梁的 y）：
-   * 侧组子树盒与该带**纵向不相交**时，梁线/组盒都碰不到它，不参与收口——
-   * 这保住了「下方子树居中正下、连线竖直」的常见形态。
+   * 把 down/up 组水平钳制在左右组的内侧窗口里（仅与梁高程带相交的侧组参与）：左右组
+   * 已在前落位，取其内侧边界；越界整组平移，窗口放不下则居中。「梁高程带」= 组盒朝父侧
+   * 外扩半程最小层距（覆盖共享梁 y）；与该带纵向不相交的侧组不参与（保住「居中正下」）。
    */
   function clampGroupToSideWindow(
     dir: 'down' | 'up',
@@ -369,7 +364,7 @@ export function layoutMindmapBranched(
     }
   }
 
-  place(rootLN, islandDir);
+  place(rootLN, islandDir, []); // 根：无祖先可避
 
   // ④ 碰撞消解（自底向上刚体分离）：
   //    D2′ 原本的「邻侧防叠」只在同层相邻组之间做一次 bbox 推开、不迭代，三向以上
@@ -497,9 +492,9 @@ function beamVariants(
   // （实测：up 链的梁位缝被 anchored 兄弟占住 → 梁线横段直接穿盒）。
   // 此时把梁位抬到障碍物上缘之上 / 压到下缘之下，绕开它——是否真的干净
   // 由 pickClearGeometry 用节点索引复检，脏候选自然被淘汰。
+  const pcx = parent.box.x + parent.box.w / 2;
+  const ccx = child.box.x + child.box.w / 2;
   if (index !== undefined) {
-    const pcx = parent.box.x + parent.box.w / 2;
-    const ccx = child.box.x + child.box.w / 2;
     const corridor: Box = {
       x: Math.min(pcx, ccx),
       y: Math.min(pEdge, cEdge),
@@ -510,9 +505,14 @@ function beamVariants(
       if (o === parent || o === child) continue;
       ys.push(o.box.y - pad, o.box.y + o.box.h + pad);
     }
+    // 细分采样：相邻候选（>1px）补中点——8+6=14 的算术让推挤位踩着邻盒膨胀边界，粗候选全被
+    // 复检淘汰；中点能命中「盒间正缝」（实测 -198 缝，此前贴边判穿 → 走廊用例红）
+    const sorted = [...ys].sort((x, y) => y - x);
+    for (let i = 0; i + 1 < sorted.length; i++) {
+      const [a, b] = [sorted[i] ?? 0, sorted[i + 1] ?? 0];
+      if (a - b > 1) ys.push((a + b) / 2);
+    }
   }
-  const pcx = parent.box.x + parent.box.w / 2;
-  const ccx = child.box.x + child.box.w / 2;
   const at = (px: number, cx: number, y: number): LinkGeometry => {
     if (px === cx) {
       const pts = [
