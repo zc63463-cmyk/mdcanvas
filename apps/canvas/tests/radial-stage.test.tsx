@@ -9,9 +9,10 @@
  * 环境：canvas 套件统一 jsdom + pretendToBeVisual:false（无 rAF）——蓄力弧的 rAF
  * 循环补最小实现（走假定时器），与 hold(250ms) / 确认(1600ms) 同钟推进。
  */
-import { act, cleanup, renderHook } from '@testing-library/react';
+import { act, cleanup, render, renderHook } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { useRadialStage } from '../src/hooks/useRadialStage';
+import { RADIAL_IDLE } from '@mindcanvas/react';
+import { RadialStageOverlay, useRadialStage } from '../src/hooks/useRadialStage';
 import type { RadialStage } from '../src/hooks/useRadialStage';
 
 /** 造一个 keydown（宿主 MindmapStage.onKey 会把它转给 handleKey） */
@@ -317,5 +318,31 @@ describe('useRadialStage · P1 打磨（边缘钳制 / 撤销白名单）', () =
     });
     expect(copy).toBe(true); // 其余组合键仍吞
     expect(result.current.state.phase).toBe('ring');
+  });
+});
+
+describe('RadialStageOverlay · ① 幽灵/删除预告渲染', () => {
+  const mkRadial = (): RadialStage => ({
+    state: RADIAL_IDLE,
+    charge: 0,
+    inDead: false,
+    confirm: null,
+    settleConfirm: () => {},
+    handleKey: () => false,
+  });
+
+  it('缺省零渲染；传入 ghost/dangerBoxes 即显', () => {
+    const { container, rerender } = render(<RadialStageOverlay radial={mkRadial()} />);
+    expect(container.querySelector('.ghost-node')).toBeNull();
+    expect(container.querySelectorAll('.danger-box')).toHaveLength(0);
+    rerender(
+      <RadialStageOverlay
+        radial={mkRadial()}
+        ghost={{ x: 10, y: 20, w: 120, h: 30, label: '新节点' }}
+        dangerBoxes={[{ x: 1, y: 2, w: 30, h: 10 }]}
+      />,
+    );
+    expect(container.querySelector('.ghost-node')?.textContent).toContain('新节点');
+    expect(container.querySelectorAll('.danger-box')).toHaveLength(1);
   });
 });

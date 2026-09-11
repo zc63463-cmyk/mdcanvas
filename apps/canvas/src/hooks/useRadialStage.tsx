@@ -376,8 +376,21 @@ export function useRadialStage(opts: RadialStageOptions): RadialStage {
   return { state, charge, inDead, confirm, settleConfirm, handleKey };
 }
 
-/** 覆盖层：环 + 浮动说明 + 死区提示 + 二次确认气泡（挂画布上层；样式随 RadialStyles） */
-export function RadialStageOverlay({ radial }: { radial: RadialStage }) {
+/**
+ * 覆盖层：环 + 浮动说明 + 死区提示 + 二次确认气泡 + 幽灵/删除预告
+ * （挂画布上层；样式随 RadialStyles；z 序：预告 59 < 环 60）
+ */
+export function RadialStageOverlay({
+  radial,
+  ghost = null,
+  dangerBoxes = [],
+}: {
+  radial: RadialStage;
+  /** ① 幽灵预览：高亮「新建子节点」时的落点预告（客户端坐标盒 + 文案） */
+  ghost?: { x: number; y: number; w: number; h: number; label: string } | null;
+  /** ① 删除预告：高亮「删除节点」时可见子树的全部盒（红虚描边） */
+  dangerBoxes?: ReadonlyArray<{ x: number; y: number; w: number; h: number }>;
+}) {
   const { state, charge, inDead, confirm, settleConfirm } = radial;
   const geo = state.phase === 'ring' ? radialGeometryOf(state) : null;
   const chargeGeo = state.phase === 'arming' ? radialGeometryOf(state) : null;
@@ -386,6 +399,14 @@ export function RadialStageOverlay({ radial }: { radial: RadialStage }) {
   return (
     <>
       <RadialStyles />
+      {dangerBoxes.map((b, i) => (
+        <div key={`dg-${i}`} className="danger-box" style={{ left: b.x, top: b.y, width: b.w, height: b.h }} />
+      ))}
+      {ghost !== null && (
+        <div className="ghost-node" style={{ left: ghost.x, top: ghost.y, width: ghost.w, height: ghost.h }}>
+          <span>{ghost.label}</span>
+        </div>
+      )}
       {chargeGeo && <ChargeArc geo={chargeGeo} progress={charge} />}
       {geo && <RadialRing geo={geo} highlight={state.highlight} items={RADIAL_ITEMS_V1} />}
       {geo && highlightItem && state.highlight && (

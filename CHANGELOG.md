@@ -26,7 +26,9 @@
 
 | **P1 体验打磨三件（用户实测后）** | ① **环锚点视口钳制**：Alt 按下时锚点收进视口安全边距（外环 52 + 余量 40 = 92px）——贴右/上边缘不再出屏，中央节点零位移；② **帮助面板补条目**：`EDITOR_KEY_BINDINGS` 增「按住 Alt（≥250ms）→ 环形快捷操作」行（`?` 面板可见，补齐此前只有预方向行的缺口）；③ **撤销白名单**：环开时 Ctrl+Z / Ctrl+Shift+Z / Ctrl+Y **先撤环、按键照常落画布**（不再被模态吞掉），其余组合键仍吞 | 五项新行为用户实测通过后的打磨批；radial-stage 测试 73 例（+3：越界钳制 / 中央不动 / Ctrl+Z 让路且 Ctrl+C 仍吞）；手感参数（按住阈值/缺口/外环半径）待用户滑杆反馈后固化 |
 
-**在途**：Phase 2 已落地并深审收口（2026-09-11）；P1 打磨已批（边缘钳制 / 帮助条目 / 撤销白名单）；Phase 3 = 二级环 / 动作频率学习 / 触屏长按；幽灵预览与节点删除预览目前在预览页（画布版待 `nodeBox` API 后补）。
+| **Phase 3 ① 幽灵预览（画布版）** | `MapViewApi` 补 `nodeBox`（客户端矩形 + 缩放 k）/ `subtreeBoxes`（可见子树全部盒）；纯函数 `ghostBoxOf`（四向落点 = 水平 `H_GAP` / 垂直 `V_GAP` × k + 视口内收，决策 A1）；`RadialStageOverlay` 增 `ghost` / `dangerBoxes` 可选层（z 59，环 60 之下）；`MindmapStage` 按环高亮**同源派生**（方向推断与 addChild 命令一致） | 高亮「新建子节点」显示生长方向虚线幽灵节点、高亮「删除节点」红虚描边可见子树；缺省零渲染。测试：react +2（nodeBox/subtreeBoxes 客户端坐标与子树遍历）/ canvas +6（ghostBoxOf ×5、覆盖层渲染 ×1）；套件 canvas 79 / react 928 / kernel 456 全绿；tsc ×3 / lint / 预算全绿。设计与计划：`docs/specs/2026-09-11-radial-phase3-design.md` + `docs/dispatch/2026-09-11-radial-ghost-preview-plan.md` |
+
+**在途**：Phase 2 已落地并深审收口；P1 打磨已批（边缘钳制 / 帮助条目 / 撤销白名单）；**Phase 3 ① 幽灵预览已实现**；余下 ② 二级环 / ③ 动作频率学习 / ④ 触屏长按 待选型（建议按序，决策点见设计文档 §6）。
 
 ## [1.7.0] — 2026-09-11 · 四向分叉碰撞消解 + 出线枢纽 / 逐向层距 + 拖共享梁（kernel/react minor）
 

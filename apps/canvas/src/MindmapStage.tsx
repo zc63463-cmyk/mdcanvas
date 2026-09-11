@@ -76,6 +76,8 @@ import {
   MapView,
   matchEditorKey,
   matchPreDirKey,
+  itemAt,
+  RADIAL_ITEMS_V1,
   OutlinePanel,
   PluginHost,
   QaEditor,
@@ -112,6 +114,7 @@ import { RecentDocMenu } from './RecentDocMenu.js';
 import { useEntityPick } from './hooks/useEntityPick.js';
 import { useExportActions } from './hooks/useExportActions.js';
 import { RadialStageOverlay, useRadialStage } from './hooks/useRadialStage.js';
+import { ghostBoxOf } from './radialGhost.js';
 import { PerfPanel } from './PerfPanel.js';
 import { SidePanels } from './SidePanels.js';
 import { StartupScreen } from './StartupScreen.js';
@@ -527,6 +530,33 @@ function StageContent({
   // 键处理 effect 依赖只有 [controller]（历史原因带 eslint-disable）——经 ref 读，稳且零 lint 噪声
   const radialKeyRef = useRef(radial.handleKey);
   radialKeyRef.current = radial.handleKey;
+
+  // ① 幽灵预览（Phase 3）：高亮「新建」→ 落点幽灵（方向与 addChild 命令同源）；
+  //    高亮「删除」→ 可见子树红虚描边。环开期间节点/视口被守卫冻结，按高亮派生一次即稳定。
+  const radialPreview = useMemo(() => {
+    const none: {
+      ghost: { x: number; y: number; w: number; h: number; label: string } | null;
+      dangerBoxes: Array<{ x: number; y: number; w: number; h: number }>;
+    } = { ghost: null, dangerBoxes: [] };
+    const sel = controller.selectedId;
+    if (radial.state.phase !== 'ring' || radial.state.highlight === null || sel === null) return none;
+    const item = itemAt(RADIAL_ITEMS_V1, radial.state.highlight);
+    if (item?.id === 'add-child') {
+      const nb = apiRef.current?.nodeBox(sel);
+      if (!nb) return none;
+      const parent = getNode(controller.root, sel);
+      const dir = preDirsRef.current.get(sel) ?? (parent ? inferChildDir(parent) : null) ?? 'right';
+      return {
+        ghost: { ...ghostBoxOf(nb, dir, window.innerWidth, window.innerHeight), label: '新节点' },
+        dangerBoxes: [],
+      };
+    }
+    if (item?.id === 'delete') {
+      return { ghost: null, dangerBoxes: apiRef.current?.subtreeBoxes(sel) ?? [] };
+    }
+    return none;
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- 环开期间布局冻结；高亮/选中变化即可重派生
+  }, [radial.state.phase, radial.state.highlight, controller.selectedId]);
 
   // v1.3.0 幕布描述（note.desc）：正在编辑描述的节点 id + 已展开全文的节点集合
   const [descEditingId, setDescEditingId] = useState<string | null>(null);
@@ -1902,8 +1932,9 @@ function StageContent({
         />
       </div>
 
-      {/* v1.8.0 Phase 2：环形快捷操作覆盖层（环/浮标/死区提示/二次确认） */}
-      <RadialStageOverlay radial={radial} />
+      {/* v1.8.0 Phase 2：环形快捷操作覆盖层（环/浮标/死区提示/二次确认）；
+          Phase 3 ①：幽灵预览（高亮「新建」落点）与删除预告（高亮「删除」子树描边） */}
+      <RadialStageOverlay radial={radial} ghost={radialPreview.ghost} dangerBoxes={radialPreview.dangerBoxes} />
 
       {/* 批次 2：节点右键菜单 —— 已抽到 NodeContextMenu */}
       {ctxMenu !== null && (
@@ -2101,4 +2132,8 @@ type MapViewApi = {
   focusNode(id: string): void;
   /** v1.8.0：节点盒右上角客户端坐标（环形菜单锚点） */
   nodeCorner(id: string): { x: number; y: number } | null;
+  /** v1.8.0 Phase 3：节点盒客户端矩形 + 缩放 k（幽灵预览） */
+  nodeBox(id: string): { x: number; y: number; w: number; h: number; k: number } | null;
+  /** v1.8.0 Phase 3：可见子树全部节点盒（删除预告描边） */
+  subtreeBoxes(id: string): Array<{ id: string; x: number; y: number; w: number; h: number }>;
 };

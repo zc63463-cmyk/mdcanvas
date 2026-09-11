@@ -170,4 +170,14 @@ export const RADIAL_SURFACE_CSS = `
   background: rgba(255,107,107,.28); }
 .confirm-chip button.ghost { border-color: rgba(255,255,255,.18); background: rgba(255,255,255,.06); color: #d7c8c6; }
 .confirm-chip button:hover { filter: brightness(1.15); }
+
+/* ① 幽灵预览 / 删除预告（v1.8.0 Phase 3；z-index 59——在环 60 之下、画布之上） */
+.ghost-node { position: fixed; z-index: 59; pointer-events: none; box-sizing: border-box;
+  display: flex; align-items: center; justify-content: center;
+  border: 1.5px dashed rgba(61,211,160,.6); border-radius: 12px; background: rgba(61,211,160,.06);
+  animation: ghost-in .16s ease-out both; }
+.ghost-node span { font-size: 13px; color: rgba(190,235,220,.55); }
+@keyframes ghost-in { from { opacity: 0; transform: translateY(-3px) scale(.97); } to { opacity: 1; transform: none; } }
+.danger-box { position: fixed; z-index: 59; pointer-events: none; box-sizing: border-box;
+  border: 1.5px dashed rgba(255,107,107,.75); border-radius: 12px; background: rgba(255,107,107,.08); }
 `;
