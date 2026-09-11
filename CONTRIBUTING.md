@@ -77,11 +77,11 @@ node scripts/analyze-export-classification.mjs
 |---|---|---|
 | 不用 `any` | biome + review | 0 处 ✅ |
 | 不用 `@ts-ignore` / `@ts-expect-error` | review | 0 处 ✅ |
-| 非空断言 `!`：生产代码**只减不增** | `node scripts/analyze-codebase.mjs` | 94 处 |
-| 类型断言 `as`：谨慎，优先类型收窄 | 同上 | 40 处（2.4/千行）✅ |
+| 非空断言 `!`：生产代码**只减不增** | `pnpm budget`（**生产口径**；`analyze-codebase.mjs` 含 import 重命名误报） | 90 处 |
+| 类型断言 `as`：谨慎，优先类型收窄 | 同上 | 31 处 ✅ |
 
-**非空断言为什么定"只减不增"而不是"清零"**：测试里有 676 处 `!` 是合理的
-（测试要断言"这里必非空"），生产侧 94 处多为历史遗留。清零需要大量类型重构，
+**非空断言为什么定"只减不增"而不是"清零"**：测试里有大量 `!` 是合理的
+（测试要断言"这里必非空"），生产侧 90 处多为历史遗留。清零需要大量类型重构，
 收益不匹配成本——所以定基线冻结，新增代码不使用即可。
 
 ---
@@ -92,20 +92,20 @@ node scripts/analyze-export-classification.mjs
 |---|---|
 | 单一职责：一个文件一件事 | review |
 | 文件 ≤ 600 行；超出需说明或拆分 | `analyze-codebase.mjs` 的复杂度热点表 |
-| 一律具名导出，`export default` 仅限入口组件 | 现 5 处，目标 0 |
+| 一律具名导出，`export default` 仅限入口组件 | 现 2 处（仅入口组件，预算锁死） |
 | 每个模块顶部有职责注释（是什么 / **不是什么**） | review |
 
 当前超限文件（**拆分候选，别再往里加**）：
 
 | 文件 | 行数 | 备注 |
 |---|---|---|
-| `apps/canvas/src/MindmapStage.tsx` | 1,691 | `StageContent` 1,343 行，管着 10 个面板（已抽 2 个 hook，持续拆分中） |
-| `packages/react/src/render/MapView.tsx` | 1,455 | `MapView` 1,093 行，43 Hooks |
-| `packages/react/src/render/edgeRouting.ts` | 809 | 23 函数均 35 行，**函数粒度健康，暂不拆** |
-| `packages/react/src/chrome/EdgeEditor.tsx` | 785 | 20 函数均 39 行，**同上** |
+| `apps/canvas/src/MindmapStage.tsx` | 2,066 | `StageContent` 1,637 行，管着 10 个面板（已抽 4 个 hook + 5 个浮层组件，持续拆分中） |
+| `packages/react/src/render/MapView.tsx` | 1,880 | `MapView` 1,562 行、Hooks 密集；手势层已抽 useMapGestures / beamDrag |
+| `packages/react/src/render/edgeRouting.ts` | 1,152 | 33 函数均 35 行，**函数粒度健康，暂不拆** |
+| `packages/react/src/chrome/EdgeEditor.tsx` | 809 | 20 函数均 40 行，**同上** |
 
 > 判断是否该拆，看**函数均长**而不是文件行数。
-> `edgeRouting` / `EdgeEditor` 均长 35–39 行，属"大而清晰"；
+> `edgeRouting` / `EdgeEditor` 均长 35–40 行，属"大而清晰"；
 > `StageContent` / `MapView` 是单个函数上千行，才需要拆。
 
 **序列化格式契约**：`.mm.md` 的 canonical 输出在分支（heading）之间保留一个空行

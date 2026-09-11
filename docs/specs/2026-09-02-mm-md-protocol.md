@@ -187,6 +187,11 @@ one_liner → decisions → status → next → reminder
 | `note` | string[] | 节点注释 · 序列区域（v1.4.0，§5.4） |
 | `note_text` | string | 节点注释 · 纯文本区域（v1.4.0，§5.4） |
 | `qa` | string[] | 快速注释，多条目按需展开 |
+| `cid` | string | 子树持久身份 id（09-05 批次；文档根另有 `next_cid` 单调计数器） |
+| `dir` | string | 生长方向：`right/left/down/up`（09-06 批次，ADR-0009 第一步） |
+| `len` | number | 出线长度：本节点与父节点连线的直线段长度（v1.6.0） |
+| `lens` | `{up?/down?/left?/right?}` | 父节点四个方向组的缺省出线层距（v1.7.0） |
+| `hub` | boolean | 出线枢纽：left/right 组走共享竖梁 bus（v1.7.0） |
 | `links` | 对象列表 | 节点级关系（§6.1） |
 | `decisions` | string[] | 决策记录 |
 
@@ -494,6 +499,8 @@ cd apps/canvas && npx vite-node scripts/diag-roundtrip-real.mts     # 真实文�
 
 | 版本 | 变更 |
 |---|---|
+| v1.7.0 | `Note.lens`（逐方向组缺省层距）/ `Note.hub`（出线枢纽共享竖梁）；布局侧四向分叉碰撞消解与连线避障（不改协议语义） |
+| v1.6.0 | `Note.len` 出线长度（层次节奏软约束；up/down 组缺省归父） |
 | v1.5.0 | 文档级 `sections` 空间分区（子树锚定 + `cid:` 锚 + `W-SECTION-DANGLING` 数据无损幽灵态） |
 | v1.4.0 | `Note.note`（序列）/ `Note.note_text`（纯文本）节点注释双区域；读取兼容旧 `qa` |
 | v1.3.1 | canonical 输出保留分支分段空行（格式改进，数据语义等价） |
