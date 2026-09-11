@@ -229,7 +229,9 @@ export type {
 } from './edit/save.js';
 export {
   installBeforeUnload,
+  isEmbeddedFrame,
   MM_FILE_TYPES,
+  MM_OPEN_TYPES,
   saveMarkdown,
   writeToHandle,
 } from './edit/save.js';

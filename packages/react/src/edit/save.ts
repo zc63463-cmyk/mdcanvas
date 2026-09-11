@@ -67,23 +67,55 @@ declare global {
   }
 }
 
-/** .mm 文件类型描述（打开/保存共用） */
+/** .mm 文件类型描述（保存用：保留 `.mm.md` 命名提示） */
 export const MM_FILE_TYPES = [
   { description: 'mindcanvas 画布', accept: { 'text/markdown': ['.mm.md', '.md'] } },
 ];
 
 /**
+ * 打开对话框的文件类型：**宽松过滤**。
+ *
+ * 为什么不用 MM_FILE_TYPES：`.mm.md` 是**双段扩展名**——部分浏览器/平台在 accept 里
+ * 无法正确匹配（文件在选择器中灰显、不可选，表现为「打不开某个 .mm.md」）。
+ * `.md` 已覆盖 `.mm.md`（后缀匹配），故打开侧只列单段扩展名。
+ */
+export const MM_OPEN_TYPES = [
+  { description: 'Markdown / mindcanvas 画布', accept: { 'text/markdown': ['.md', '.markdown'] } },
+];
+
+/**
+ * 是否运行在**嵌入 frame**（iframe / IDE 预览 webview）里。
+ *
+ * 为什么需要：FS Access 的打开/保存对话框在跨源子 frame 中被权限策略禁用
+ * （SecurityError），在部分 webview 中甚至**不抛错也不返回**（Promise 永不 settle）——
+ * 两种表现都是「点打开/保存毫无反应」。嵌入场景一律跳过 FS API 走兜底：
+ * 打开 → 隐藏 file input；保存 → 下载。
+ */
+export function isEmbeddedFrame(): boolean {
+  try {
+    return window.self !== window.top;
+  } catch {
+    return true; // 访问 window.top 被安全策略拒绝 → 保守视为嵌入
+  }
+}
+
+/**
  * 保存 .mm.md 文本：
  * - 浏览器支持 FS Access API → 弹出保存对话框写入文件（用户可指定路径）
- * - 不支持 / 非 fs 场景 → 触发下载兜底
+ * - 不支持 / 非 fs / **嵌入 frame** → 触发下载兜底
  * - 用户在 FS 对话框取消 → 返回 'cancelled'（不视为错误）
  * - FA1-T1：成功写入后**回传 handle**，供调用方写回 doc（后续保存静默写回，不再弹框）
+ *
+ * @param opts.embedded 覆盖嵌入判定（测试注入；缺省 `isEmbeddedFrame()`）
  */
 export async function saveMarkdown(
   text: string,
   defaultName: string,
+  opts?: { embedded?: boolean },
 ): Promise<SaveOutcome> {
-  if (typeof window.showSaveFilePicker === 'function') {
+  // 嵌入 frame：FS 对话框被禁/挂起 → 直接下载兜底（见 isEmbeddedFrame 注释）
+  const embedded = opts?.embedded ?? isEmbeddedFrame();
+  if (!embedded && typeof window.showSaveFilePicker === 'function') {
     try {
       const handle = await window.showSaveFilePicker({
         suggestedName: defaultName,

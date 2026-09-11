@@ -13,7 +13,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { LocalDocHost } from '../src/edit/document.js';
 import type { MindDoc } from '../src/edit/document.js';
-import { saveMarkdown, writeToHandle } from '../src/edit/save.js';
+import { isEmbeddedFrame, MM_OPEN_TYPES, saveMarkdown, writeToHandle } from '../src/edit/save.js';
 import type { FsFileHandle, FsWritable } from '../src/edit/save.js';
 
 /** 记录写入内容的可控句柄（测试替身：不碰真实文件系统） */
@@ -81,6 +81,23 @@ describe('saveMarkdown：句柄回传（FA1-T1）', () => {
     const outcome = await saveMarkdown('# 正文', 'a.mm.md');
     expect(outcome.result).toBe('download');
     expect(outcome.handle).toBeUndefined();
+  });
+
+  it('嵌入 frame（IDE 预览）：跳过 FS 对话框直接下载（webview 里系统对话框会挂起）', async () => {
+    const picker = stubPicker(async () => fakeHandle());
+    const outcome = await saveMarkdown('# 正文', 'a.mm.md', { embedded: true });
+    expect(outcome.result).toBe('download');
+    expect(picker).not.toHaveBeenCalled();
+  });
+
+  it('isEmbeddedFrame：顶层窗口 → false（不误判为嵌入）', () => {
+    expect(isEmbeddedFrame()).toBe(false);
+  });
+
+  it('打开对话框类型不含双段扩展名（.mm.md 在部分浏览器里让文件灰显不可选）', () => {
+    const accept = MM_OPEN_TYPES[0]?.accept['text/markdown'] ?? [];
+    expect(accept.length).toBeGreaterThan(0);
+    for (const ext of accept) expect(ext.split('.').length).toBeLessThanOrEqual(2);
   });
 
   it('句柄写回抛错（文件被移走）→ 回落下载，不静默吞掉失败', async () => {

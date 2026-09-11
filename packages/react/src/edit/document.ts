@@ -10,7 +10,8 @@ import { DocLibrary } from './docLibrary.js';
 import { isAbortError } from './fsError.js';
 import { getFileHandle, setFileHandle, verifyPermission } from './handleStore.js';
 import {
-  MM_FILE_TYPES,
+  isEmbeddedFrame,
+  MM_OPEN_TYPES,
   saveMarkdown,
   writeToHandle,
   type FsFileHandle,
@@ -84,10 +85,14 @@ export class LocalDocHost implements DocumentHost {
   }
 
   async open(): Promise<MindDoc | null> {
+    // 嵌入 frame（IDE 预览/webview）：FS 对话框被权限策略禁用甚至挂起 →
+    // **抛错而非返回 null**——null 的语义是「用户取消」，调用方不会兜底；
+    // 抛错后 useDocumentActions 走隐藏 file input（嵌入场景唯一可用的打开路径）。
+    if (isEmbeddedFrame()) throw new Error('embedded-frame: fs-access-unavailable');
     // window.showOpenFilePicker 已声明到全局（见 save.ts 的 declare global），无需断言
     if (typeof window.showOpenFilePicker !== 'function') return null;
     try {
-      const [handle] = await window.showOpenFilePicker({ multiple: false, types: MM_FILE_TYPES });
+      const [handle] = await window.showOpenFilePicker({ multiple: false, types: MM_OPEN_TYPES });
       if (!handle) return null;
       const file = (await handle.getFile?.()) ?? new File([], handle.name ?? 'untitled.mm.md');
       const source = await file.text();
