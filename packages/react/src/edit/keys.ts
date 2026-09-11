@@ -81,6 +81,11 @@ export const EDITOR_KEY_BINDINGS: ReadonlyArray<{
     label: '预方向：先按方向，再 Tab/Enter 生长（固化进新节点）',
     action: 'help',
   },
+  {
+    key: '按住 Alt（≥250ms）',
+    label: '环形快捷操作：节点右上角出环（方向键/悬停漫游，松键提交，Esc 取消）',
+    action: 'help',
+  },
 ];
 
 /** 键盘事件 → 动作（无匹配 → null；组合键优先于裸键，裸键要求无任何修饰） */

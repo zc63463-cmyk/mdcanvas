@@ -23,7 +23,10 @@ function altUp(): void {
   window.dispatchEvent(new KeyboardEvent('keyup', { key: 'Alt' }));
 }
 
-function setup(sel: () => string | null = () => 'A') {
+function setup(
+  sel: () => string | null = () => 'A',
+  anchor: () => { x: number; y: number } = () => ({ x: 100, y: 100 }),
+) {
   const setPreDir = vi.fn();
   const addChild = vi.fn();
   const editText = vi.fn();
@@ -32,7 +35,7 @@ function setup(sel: () => string | null = () => 'A') {
   const { result } = renderHook(() =>
     useRadialStage({
       getSelectedId: sel,
-      getAnchor: () => ({ x: 100, y: 100 }),
+      getAnchor: anchor,
       setPreDir,
       actions: { addChild, editText, removeNode, openMenu },
     }),
@@ -272,5 +275,47 @@ describe('useRadialStage · 删除二次确认（深审高危修复）', () => {
     });
     expect(result.current.confirm).toBeNull();
     expect(removeNode).not.toHaveBeenCalled();
+  });
+});
+
+describe('useRadialStage · P1 打磨（边缘钳制 / 撤销白名单）', () => {
+  it('锚点越出视口（右下）→ 收进安全边距（jsdom 视口 1024×768）', () => {
+    const { result } = setup(
+      () => 'A',
+      () => ({ x: 5000, y: 5000 }),
+    );
+    act(() => {
+      result.current.handleKey(kd('Alt'));
+    });
+    const pad = 92; // VIEWPORT_PAD = outerR(52) + 40
+    expect(result.current.state.origin?.cx).toBe(window.innerWidth - pad);
+    expect(result.current.state.origin?.cy).toBe(window.innerHeight - pad);
+  });
+
+  it('中央锚点不被钳制（环仍贴节点角）', () => {
+    const { result } = setup();
+    act(() => {
+      result.current.handleKey(kd('Alt'));
+    });
+    expect(result.current.state.origin?.cx).toBe(100);
+    expect(result.current.state.origin?.cy).toBe(100);
+  });
+
+  it('环开时 Ctrl+Z → 撤环让路（撤销落画布）；Ctrl+C 仍被吞（模态）', () => {
+    const { result } = setup();
+    openRing(result);
+    let undo = true;
+    act(() => {
+      undo = result.current.handleKey(kd('z', { ctrlKey: true }));
+    });
+    expect(undo).toBe(false); // 未消费 → 宿主的撤销路径接管
+    expect(result.current.state.phase).toBe('idle'); // 环已撤
+    openRing(result);
+    let copy = false;
+    act(() => {
+      copy = result.current.handleKey(kd('c', { ctrlKey: true }));
+    });
+    expect(copy).toBe(true); // 其余组合键仍吞
+    expect(result.current.state.phase).toBe('ring');
   });
 });

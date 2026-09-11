@@ -17,6 +17,7 @@ import {
   itemAt,
   RADIAL_ACCENT,
   RADIAL_DANGER,
+  RADIAL_GEOMETRY_DEFAULTS,
   RADIAL_HOLD_MS,
   RADIAL_IDLE,
   RADIAL_ITEMS_V1,
@@ -32,6 +33,17 @@ import {
   type RadialSlotKey,
   type RadialState,
 } from '@mindcanvas/react';
+
+/** 视口安全边距：外环 + 浮标/确认气泡的余量（环贴边时把锚点收进来） */
+const VIEWPORT_PAD = RADIAL_GEOMETRY_DEFAULTS.outerR + 40;
+
+/** 环锚点视口钳制：贴右/上等边缘时向内收（视口小于两边距时取尽力值） */
+function clampToViewport(p: { x: number; y: number }): { x: number; y: number } {
+  const lo = VIEWPORT_PAD;
+  const hiX = Math.max(lo, window.innerWidth - VIEWPORT_PAD);
+  const hiY = Math.max(lo, window.innerHeight - VIEWPORT_PAD);
+  return { x: Math.min(Math.max(p.x, lo), hiX), y: Math.min(Math.max(p.y, lo), hiY) };
+}
 
 export interface RadialStageActions {
   addChild: (id: string) => void;
@@ -202,9 +214,10 @@ export function useRadialStage(opts: RadialStageOptions): RadialStage {
         const anchor = optsRef.current.getAnchor(sel);
         if (!anchor) return false;
         e.preventDefault(); // 避免浏览器把 Alt 焦点切到菜单栏
+        const clamped = clampToViewport(anchor); // 贴视口边缘 → 锚点收进来（环不出屏）
         selRef.current = sel;
-        anchorRef.current = anchor;
-        pressDown({ nodeId: sel, cx: anchor.x, cy: anchor.y });
+        anchorRef.current = clamped;
+        pressDown({ nodeId: sel, cx: clamped.x, cy: clamped.y });
         return true;
       }
       if (phase === 'arming' || phase === 'pre-dir' || phase === 'ring') {
@@ -230,6 +243,13 @@ export function useRadialStage(opts: RadialStageOptions): RadialStage {
         if (phase === 'pre-dir') return false; // 手势通道：其余键照常落画布（Tab 消费预方向）
         if (phase === 'arming') {
           // 蓄力中改变意图（如直接按 Tab）：撤会话、按键照常落画布——防「操作后环弹在旧锚点」
+          clearHold();
+          dispatch({ t: 'cancel' });
+          return false;
+        }
+        // 撤销/重做白名单：先撤环（会话引用的节点可能被改动），按键照常落画布
+        const k = e.key.toLowerCase();
+        if ((e.ctrlKey || e.metaKey) && (k === 'z' || k === 'y')) {
           clearHold();
           dispatch({ t: 'cancel' });
           return false;
