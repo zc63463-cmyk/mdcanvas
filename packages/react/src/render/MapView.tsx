@@ -48,6 +48,7 @@ import { cubicMidNormal, EdgeLabel } from './EdgeLabel.js';
 import type { EdgeRouteEntry } from './FreeEdgeLayer.js';
 import { type EdgeManual, FreeEdgeLayer } from './FreeEdgeLayer.js';
 import { collectFreeEdges, type FreeEdge } from './freeEdges.js';
+import { stableByKeys } from './stableArray.js';
 import { collectDeclaredGrowDir } from './growDir.js';
 import {
   beamRailDuringDrag,
@@ -922,9 +923,12 @@ export function MapView({
   // 若不 memo，任何重渲染（hover / 选中 / 面板开关）都会产出新数组，
   // 导致**全部边重算路由**（100 条边 ≈ 0.5s），并使路由回调自我触发成死循环。
   // 依赖取 view 的原始数值而非 view 对象 —— view 由 viewport.worldRect() 每次新建。
+  // G-P1（自由边路由治理）：出口经 stableByKeys 按 edge.key 稳定化 —— 平移只改裁剪窗口、
+  // 成员未变时返回上一引用，下游 FreeEdgeLayer 路由 memo 不再被击穿（详见本 memo 内注释）。
+  const freeEdgesStableRef = useRef<readonly FreeEdge[] | null>(null);
   const visibleFreeEdges = useMemo(() => {
     if (freeEdges.length === 0) return freeEdges;
-    return freeEdges.filter((e) => {
+    const next = freeEdges.filter((e) => {
       const sb = e.sourceId !== null ? derived.boxes.get(e.sourceId) : undefined;
       const tb = e.targetId !== null ? derived.boxes.get(e.targetId) : undefined;
       if (!sb && !tb) return true; // ghost / 端点未解析：数量少，恒渲染
@@ -937,6 +941,8 @@ export function MapView({
       // 仅一端有盒（ghost 靶点）：按该端点判定
       return inView(sb ?? tb!);
     });
+    freeEdgesStableRef.current = stableByKeys(freeEdgesStableRef.current, next, (e) => e.key);
+    return freeEdgesStableRef.current;
   }, [freeEdges, derived, view.x, view.y, view.w, view.h]);
 
   // C2：Canvas 模式（强制 或 >CANVAS_AUTO_NODES 自动降级）——场景树构建（世界坐标）
