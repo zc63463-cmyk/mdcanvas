@@ -19,7 +19,6 @@ const SRC_DIR = new URL('../src/', import.meta.url).pathname.replace(/^\/([A-Za-
 /** 存量例外：各有替代计划，勿再新增 */
 const ALLOW = new Set([
   'hooks/useDocumentActions.ts', // 未保存修改时切换文档确认 → 待自定义模态（涉及数据丢失语义，需产品决策）
-  'FileManager.tsx', // 文件/文件夹删除与新建命名 → 待自定义模态
 ]);
 
 /** 裸调用（排除 `settleConfirm(` / `window.confirm(` 这类：前一个字符是词字符或点号即不算裸调用） */

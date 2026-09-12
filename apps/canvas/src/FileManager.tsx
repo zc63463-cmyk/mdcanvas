@@ -34,14 +34,15 @@ import {
 } from './fileTreeModel.js';
 import { ContextMenu } from './FileManagerContextMenu.js';
 import { FlatDocRow, StorageBar, ViewTabs, type FileManagerTab } from './FileManagerChrome.js';
+import { FileManagerTree, type FileManagerTreeCtx } from './FileManagerTree.js';
 import {
   NEW_DOC_TEMPLATE,
   SEP,
   btnBase,
   collectDocs,
   formatRelative,
+  inlineBarStyle,
   inputStyle,
-  rowBtn,
   useStarredKeys,
   type MenuState,
 } from './fileManagerShared.js';
@@ -107,6 +108,12 @@ export function FileManager({
   const [dropTarget, setDropTarget] = useState<string | null>(null);
   const [dragKey, setDragKey] = useState<string | null>(null);
   const [tab, setTab] = useState<FileManagerTab>('tree');
+  /** A-D3：待删除确认目标（内联确认条；替代被 webview 静默吞掉的 window.confirm） */
+  const [pendingDelete, setPendingDelete] = useState<TreeNode | null>(null);
+  /** A-D3：新建文件夹内联命名目标（替代 window.prompt）；node 供将来在行内锚定输入用 */
+  const [namingTarget, setNamingTarget] = useState<{ parentPath: string; node?: TreeNode } | null>(
+    null,
+  );
   const { starredKeys, toggleStar } = useStarredKeys();
 
   const [, forceRender] = useState(0);
@@ -181,9 +188,12 @@ export function FileManager({
     await reload();
   };
 
-  const removeNode = async (node: TreeNode): Promise<void> => {
-    const label = node.type === 'dir' ? `文件夹「${node.name}」及其全部内容` : `文件「${node.name}」`;
-    if (!window.confirm(`确定删除${label}？\n（${useWorkspace ? '工作区模式下会真实删除磁盘文件' : '删除后所含文档将退回根目录'}）`)) return;
+  /** A-D3：删除确认入口——置入待确认目标（window.confirm 在 webview 会被静默吞掉） */
+  const confirmTarget = (node: TreeNode): void => setPendingDelete(node);
+
+  /** 删除主体（确认条点「删除」后调用；逻辑与拆分前逐行一致） */
+  const doRemove = async (node: TreeNode): Promise<void> => {
+    setPendingDelete(null);
     if (useWorkspace && workspace) {
       if (node.type === 'dir' && node.wsDir) await workspace.removeDir(node.wsDir);
       if (node.type === 'doc' && node.wsFile) await workspace.removeFile(node.wsFile);
@@ -227,130 +237,11 @@ export function FileManager({
 
   // ---------------------------------------------------------------- 渲染
 
-  const renderRows = (nodes: readonly TreeNode[], depth: number): React.ReactNode =>
-    nodes.map((n) => {
-      const pad = 8 + depth * 14;
-      const open = expanded.has(n.key) || query.trim() !== '';
-      if (n.type === 'dir') {
-        const isDrop = dropTarget === n.key;
-        return (
-          <div key={n.key}>
-            <div
-              data-dir-row
-              data-dir-path={n.fullPath}
-              data-drop-active={isDrop || undefined}
-              onDragOver={(e) => {
-                if (!dragKey || !canDropInto(dragKey, n.fullPath, tree)) return;
-                e.preventDefault();
-                setDropTarget(n.key);
-              }}
-              onDragLeave={() => setDropTarget((p) => (p === n.key ? null : p))}
-              onDrop={(e) => {
-                e.preventDefault();
-                const key = dragKey;
-                setDragKey(null);
-                if (!key) return;
-                const dragged = findNode(tree, key);
-                if (dragged) void dropInto(dragged, n);
-              }}
-              onContextMenu={(e) => {
-                e.preventDefault();
-                setMenu({ key: n.key, x: e.clientX, y: e.clientY });
-              }}
-              style={{
-                display: 'flex',
-                alignItems: 'center',
-                gap: 6,
-                padding: `5px 8px 5px ${pad}px`,
-                borderRadius: 6,
-                background: isDrop ? CHROME.neonSoft : undefined,
-                outline: isDrop ? `1px dashed ${CHROME.neon}` : undefined,
-              }}
-            >
-              <button
-                type="button"
-                onClick={() => toggle(n.key)}
-                style={{ ...rowBtn, flex: 1 }}
-                title={n.fullPath}
-              >
-                <span style={{ color: CHROME.textMuted }}>{open ? '▾' : '▸'}</span>
-                <span>{isDrop ? '📂' : '📁'}</span>
-                <span>{n.name}</span>
-              </button>
-            </div>
-            {open && renderRows(n.children, depth + 1)}
-          </div>
-        );
-      }
-
-      const renaming = renamingKey === n.key;
-      return (
-        <div
-          key={n.key}
-          data-doc-row
-          data-doc-name={n.name}
-          draggable={!renaming}
-          onDragStart={() => setDragKey(n.key)}
-          onDragEnd={() => {
-            setDragKey(null);
-            setDropTarget(null);
-          }}
-          onContextMenu={(e) => {
-            e.preventDefault();
-            setMenu({ key: n.key, x: e.clientX, y: e.clientY });
-          }}
-          style={{ paddingLeft: pad + 14 }}
-        >
-          <div style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '4px 8px' }}>
-            {renaming ? (
-              <input
-                autoFocus
-                data-rename-input
-                defaultValue={n.name}
-                onBlur={(ev) => void commitRename(n, ev.target.value)}
-                onKeyDown={(ev) => {
-                  if (ev.key === 'Enter') ev.currentTarget.blur();
-                  if (ev.key === 'Escape') setRenamingKey(null);
-                }}
-                style={inputStyle()}
-              />
-            ) : (
-              <>
-                <button
-                  type="button"
-                  data-doc-star
-                  onClick={(e) => toggleStar(n.fullPath || n.key, e)}
-                  style={{
-                    background: 'none',
-                    border: 'none',
-                    color: starredKeys.has(n.fullPath) || starredKeys.has(n.key) ? '#eab308' : CHROME.textMuted,
-                    cursor: 'pointer',
-                    padding: '0 2px',
-                    fontSize: 13,
-                  }}
-                  title={starredKeys.has(n.fullPath) || starredKeys.has(n.key) ? '取消收藏' : '加为星标'}
-                >
-                  {starredKeys.has(n.fullPath) || starredKeys.has(n.key) ? '★' : '☆'}
-                </button>
-                <button
-                  type="button"
-                  onClick={() => (n.wsFile ? onOpenFile(n.wsFile) : n.entry ? onOpenEntry(n.entry) : undefined)}
-                  title={n.stale ? '源码快照已过期，打开时需重新选文件' : n.fullPath}
-                  style={{ ...rowBtn, flex: 1 }}
-                >
-                  <span>📄</span>
-                  <span>{n.name}</span>
-                  {n.stale && <span style={{ color: CHROME.textMuted }}> ↻</span>}
-                </button>
-                <span style={{ fontSize: CHROME.fontSizeSmall, color: CHROME.textMuted }}>
-                  {formatRelative(n.ts)}
-                </span>
-              </>
-            )}
-          </div>
-        </div>
-      );
-    });
+  const treeCtx: FileManagerTreeCtx = {
+    tree, expanded, query, dropTarget, dragKey, renamingKey, starredKeys,
+    toggle, setDropTarget, setDragKey, setMenu, dropInto, commitRename,
+    setRenamingKey, toggleStar, onOpenFile, onOpenEntry,
+  };
 
   const menuNode = menu ? findNode(tree, menu.key) : null;
   const widths = variant === 'drawer' ? 320 : 680;
@@ -408,10 +299,7 @@ export function FileManager({
           type="button"
           data-fm-new-folder
           style={btnBase}
-          onClick={() => {
-            const name = window.prompt('新建文件夹名称:', '新文件夹');
-            if (name && name.trim()) void createDirIn('', name.trim());
-          }}
+          onClick={() => setNamingTarget({ parentPath: '' })}
         >
           📁 新建文件夹
         </button>
@@ -486,6 +374,68 @@ export function FileManager({
         </span>
       </div>
 
+      {/* A-D3：删除内联确认条（替代 window.confirm——webview 下会被静默吞掉） */}
+      {pendingDelete !== null && (
+        <div
+          data-fm-confirm
+          style={{
+            ...inlineBarStyle,
+            border: `1px solid ${CHROME.warn}`,
+            background: 'rgba(226,75,74,0.08)',
+          }}
+        >
+          <span style={{ flex: 1 }}>
+            删除{pendingDelete.type === 'dir' ? `文件夹「${pendingDelete.name}」及其全部内容` : `文件「${pendingDelete.name}」`}？{' '}
+            <span style={{ color: CHROME.textMuted }}>
+              （{useWorkspace ? '会真实删除磁盘文件' : '所含文档将退回根目录'}）
+            </span>
+          </span>
+          <button
+            type="button"
+            data-fm-confirm-ok
+            style={{ ...btnBase, borderColor: CHROME.warn, color: CHROME.warn }}
+            onClick={() => void doRemove(pendingDelete)}
+          >
+            删除
+          </button>
+          <button
+            type="button"
+            data-fm-confirm-cancel
+            style={btnBase}
+            onClick={() => setPendingDelete(null)}
+          >
+            取消
+          </button>
+        </div>
+      )}
+
+      {/* A-D3：新建文件夹内联命名（替代 window.prompt；Enter 提交 / Esc 取消） */}
+      {namingTarget !== null && (
+        <div
+          data-fm-name
+          style={{ ...inlineBarStyle, border: `1px solid ${CHROME.panelBorderStrong}` }}
+        >
+          <span style={{ color: CHROME.textMuted, whiteSpace: 'nowrap' }}>
+            新建文件夹{namingTarget.parentPath === '' ? '' : `于「${namingTarget.parentPath}」`}：
+          </span>
+          <input
+            autoFocus
+            data-fm-name-input
+            defaultValue="新文件夹"
+            onFocus={(e) => e.currentTarget.select()}
+            onKeyDown={(ev) => {
+              if (ev.key === 'Enter') {
+                const name = ev.currentTarget.value;
+                setNamingTarget(null);
+                void createDirIn(namingTarget.parentPath, name);
+              }
+              if (ev.key === 'Escape') setNamingTarget(null);
+            }}
+            style={inputStyle()}
+          />
+        </div>
+      )}
+
       {error && (
         <div
           style={{
@@ -511,7 +461,7 @@ export function FileManager({
               {query !== '' ? `没有匹配「${query}」的文件。` : '还没有文档。点「＋ 新建导图」开始。'}
             </div>
           ) : (
-            renderRows(filtered, 0)
+            <FileManagerTree nodes={filtered} depth={0} ctx={treeCtx} />
           )
         ) : tab === 'recent' ? (
           recentDocs.length === 0 ? (
@@ -575,8 +525,9 @@ export function FileManager({
           onNewDoc={() => void createDocIn(menuNode.type === 'dir' ? menuNode.fullPath : menuNode.path)}
           onNewDir={() => {
             closeMenu();
-            const name = window.prompt('新文件夹名称', '新文件夹');
-            if (name) void createDirIn(menuNode.type === 'dir' ? menuNode.fullPath : menuNode.path, name);
+            setNamingTarget({
+              parentPath: menuNode.type === 'dir' ? menuNode.fullPath : menuNode.path,
+            });
           }}
           onRename={() => {
             closeMenu();
@@ -584,7 +535,7 @@ export function FileManager({
           }}
           onDelete={() => {
             closeMenu();
-            void removeNode(menuNode);
+            confirmTarget(menuNode);
           }}
         />
       )}

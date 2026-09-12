@@ -57,6 +57,17 @@ export const btnBase: React.CSSProperties = {
   whiteSpace: 'nowrap',
 };
 
+/** 内联操作条（A-D3：删除确认 / 新建命名的公共外观；各自再覆写 border/background） */
+export const inlineBarStyle: React.CSSProperties = {
+  margin: '0 12px 8px',
+  padding: '6px 8px',
+  borderRadius: 6,
+  fontSize: CHROME.fontSizeSmall,
+  display: 'flex',
+  alignItems: 'center',
+  gap: 8,
+};
+
 /** 递归收集子树内所有文档节点 */
 export function collectDocs(nodes: readonly TreeNode[]): TreeNode[] {
   const result: TreeNode[] = [];

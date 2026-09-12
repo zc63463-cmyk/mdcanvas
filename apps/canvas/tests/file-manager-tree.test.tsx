@@ -238,13 +238,18 @@ describe('文件工作台 · 右键菜单', () => {
     expect(container.querySelector('[data-menu-delete]')).not.toBeNull();
   });
 
-  it('新建文件夹 → 走工作区 createDir（真实落盘）', async () => {
-    vi.spyOn(window, 'prompt').mockReturnValue('新项目');
+  it('新建文件夹 → 内联命名 + Enter → 走工作区 createDir（真实落盘）', async () => {
     const { container, calls } = setup();
     await waitFor(() => expect(screen.getByText('首页.mm.md')).toBeDefined());
     fireEvent.contextMenu(dirRow(container, '研发'));
     await waitFor(() => expect(container.querySelector('[data-menu-new-dir]')).not.toBeNull());
     fireEvent.click(container.querySelector('[data-menu-new-dir]')!);
+    // A-D3：原 window.prompt 改为内联命名输入（data-fm-name）
+    const input = await waitFor(
+      () => container.querySelector('[data-fm-name] input') as HTMLInputElement,
+    );
+    fireEvent.change(input, { target: { value: '新项目' } });
+    fireEvent.keyDown(input, { key: 'Enter' });
     await waitFor(() => expect(calls.dirs.length).toBe(1));
     expect(calls.dirs[0]).toEqual({ parent: '研发', name: '新项目' });
   });
@@ -259,22 +264,24 @@ describe('文件工作台 · 右键菜单', () => {
     expect(calls.created[0]?.dir).toBe('日记');
   });
 
-  it('删除带确认：取消 → 不删；确认 → 删', async () => {
-    const confirmSpy = vi.spyOn(window, 'confirm');
+  it('删除：确认条「取消」→ 不删；「删除」→ 删', async () => {
     const { container, calls } = setup();
     await waitFor(() => expect(screen.getByText('首页.mm.md')).toBeDefined());
 
-    confirmSpy.mockReturnValue(false);
+    // A-D3：原 window.confirm 改为内联确认条（data-fm-confirm）
     fireEvent.contextMenu(docRow(container, '首页.mm.md'));
     await waitFor(() => expect(container.querySelector('[data-menu-delete]')).not.toBeNull());
     fireEvent.click(container.querySelector('[data-menu-delete]')!);
-    await new Promise((r) => setTimeout(r, 20));
+    await waitFor(() => expect(container.querySelector('[data-fm-confirm]')).not.toBeNull());
+    fireEvent.click(container.querySelector('[data-fm-confirm-cancel]')!);
+    await waitFor(() => expect(container.querySelector('[data-fm-confirm]')).toBeNull());
     expect(calls.removed.length).toBe(0);
 
-    confirmSpy.mockReturnValue(true);
     fireEvent.contextMenu(docRow(container, '首页.mm.md'));
     await waitFor(() => expect(container.querySelector('[data-menu-delete]')).not.toBeNull());
     fireEvent.click(container.querySelector('[data-menu-delete]')!);
+    await waitFor(() => expect(container.querySelector('[data-fm-confirm]')).not.toBeNull());
+    fireEvent.click(container.querySelector('[data-fm-confirm-ok]')!);
     await waitFor(() => expect(calls.removed.length).toBe(1));
     expect(calls.removed[0]).toBe('首页.mm.md');
   });
@@ -401,9 +408,8 @@ describe('文件工作台 · 预设目录与分类 Tab 与星标', () => {
     expect(screen.getByText('灵感草稿')).toBeDefined();
   });
 
-  it('点击「+ 新建文件夹」可创建空目录并在树中呈现', async () => {
+  it('点击「+ 新建文件夹」→ 内联命名 + Enter → 创建空目录并在树中呈现', async () => {
     const lib = new DocLibrary();
-    const promptSpy = vi.spyOn(window, 'prompt').mockReturnValue('新项目文件夹');
 
     const { container } = render(
       <FileManager
@@ -420,9 +426,14 @@ describe('文件工作台 · 预设目录与分类 Tab 与星标', () => {
     expect(btn).not.toBeNull();
     fireEvent.click(btn);
 
-    expect(promptSpy).toHaveBeenCalled();
+    // A-D3：原 window.prompt 改为内联命名输入（data-fm-name）
+    const input = await waitFor(
+      () => container.querySelector('[data-fm-name] input') as HTMLInputElement,
+    );
+    fireEvent.change(input, { target: { value: '新项目文件夹' } });
+    fireEvent.keyDown(input, { key: 'Enter' });
+
     expect(await screen.findByText('新项目文件夹')).toBeDefined();
-    promptSpy.mockRestore();
   });
 
   it('分类 Tab 切换：全部目录 ↔ 最近修改 ↔ 收藏星标', async () => {
