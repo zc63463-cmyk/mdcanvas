@@ -78,7 +78,12 @@ export function SidePanels({
 }: SidePanelsProps) {
   // B-P6：search 闭包稳定化 —— SearchPanel 内部按 [query, search] memo 检索结果，
   // 内联 lambda 每渲染换身份会把 memo 打穿；controller 长寿命，调用时实时读 controller.root。
-  const searchFn = useCallback((q: string) => searchMind(controller.root, q), [controller]);
+  // deps 补 controller.root：kernel 纯函数，编辑产出**新 root 引用**（同 layout 的 useMemo 口径）——
+  // 否则「面板开着、query 不变时编辑节点 → 结果不刷新」（P6 伴随回归，tests/side-panels-search-refresh）。
+  const searchFn = useCallback(
+    (q: string) => searchMind(controller.root, q),
+    [controller, controller.root],
+  );
   if (panel === null) return null;
 
   return (
