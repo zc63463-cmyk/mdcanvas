@@ -23,6 +23,7 @@ import {
   type AnchorRef,
   type EditableNode,
   type Note,
+  type ReferenceDiagnostic,
   type TreeOp,
 } from '@mindcanvas/kernel';
 import { collectCenters, ensureNodeCid, isRec, removeCenter, upsertCenter } from '../render/centers.js';
@@ -42,7 +43,7 @@ export type CutAttachErrorCode =
   | 'reference-conflict';
 
 export type CutAttachPlan =
-  | { ok: true; ops: TreeOp[] }
+  | { ok: true; ops: TreeOp[]; diagnostics: ReferenceDiagnostic[] }
   | { ok: false; error: { code: CutAttachErrorCode; message: string } };
 
 /** 节点子树内的最大相对深度（叶子 = 0） */
@@ -208,6 +209,23 @@ function migrationOps(
   return { staged: cur, conflicts: false };
 }
 
+/**
+ * R0-4：迁移诊断 → 用户提示文案（一行汇总）。
+ * planReferenceMigration 的诊断全是「迁移前即坏」类（dangling-kept /
+ * pre-existing-ambiguous / unparsable-anchor）→ 语义统一为「本来就是坏，
+ * 已保留原值，非本次操作造成」，与冲突类「本次操作没改成」明确区分。
+ * 空数组 → null（无提示）。
+ */
+export function summarizeReferenceDiagnostics(
+  diagnostics: readonly ReferenceDiagnostic[],
+): string | null {
+  if (diagnostics.length === 0) return null;
+  const byCode = new Map<string, number>();
+  for (const d of diagnostics) byCode.set(d.code, (byCode.get(d.code) ?? 0) + 1);
+  const parts = [...byCode.entries()].map(([code, n]) => `${code} ×${n}`);
+  return `引用迁移提示：${diagnostics.length} 条引用本来就是坏的，已保留原值（${parts.join('，')}）——非本次操作造成`;
+}
+
 /** 模拟应用 ops（事务预演——与 applyTransaction 同一套 applyOp 语义） */
 function simulate(root: EditableNode, ops: readonly TreeOp[]): EditableNode {
   let cur = root;
@@ -309,7 +327,7 @@ export function planCutTreeEdge(
       }
     }
   }
-  return { ok: true, ops };
+  return { ok: true, ops, diagnostics: plan.diagnostics };
 }
 
 /**
@@ -382,5 +400,5 @@ export function planAttachIsland(
   }
   const mig = migrationOps(staged, plan.updates, ops);
   staged = mig.staged;
-  return { ok: true, ops };
+  return { ok: true, ops, diagnostics: plan.diagnostics };
 }

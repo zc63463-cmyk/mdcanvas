@@ -9,6 +9,7 @@ import {
   applyOp,
   astToEditable,
   editableToAst,
+  makeEntityNode,
   makeTextNode,
   OpHistory,
   parseMm,
@@ -23,6 +24,7 @@ import {
   planAttachIsland,
   planCutTreeEdge,
   subtreeMaxDepth,
+  summarizeReferenceDiagnostics,
 } from '../src/index.js';
 
 function makeTree(): EditableNode {
@@ -293,5 +295,69 @@ describe('A5 引用收集（collectReferenceAnchors）', () => {
     const pathRef = refs.find((r) => r.field === 'sections[1].root')!;
     expect(cidRef.anchor).toBe('cid:c-work');
     expect(pathRef.anchor).toBe('node:根/任务');
+  });
+});
+
+describe('A5 引用迁移诊断上报（R0-4）', () => {
+  it('切断：旧文件已有 dangling 边 → diagnostics 非空（dangling-kept）且不阻断提交', () => {
+    const root = makeTree();
+    // 旧文件遗留：指向不存在节点的边（迁移前即失效，非本次切断造成）
+    root.note = { edges: [{ from: 'node:根/任务', to: 'node:根/不存在', rel: 'relates-to' }] };
+    const k3 = idOf(root, 'K3');
+    const plan = planCutTreeEdge(root, k3);
+    expect(plan.ok).toBe(true);
+    if (!plan.ok) return;
+    expect(plan.diagnostics).toContainEqual(
+      expect.objectContaining({
+        code: 'dangling-kept',
+        field: 'edges[0].to',
+        anchor: 'node:根/不存在',
+      }),
+    );
+    // 不阻断：结构移动仍在 ops 中，事务可提交
+    expect(plan.ops.some((op) => op.type === 'move-node')).toBe(true);
+  });
+
+  it('切断：旧文件已有歧义实体锚 → pre-existing-ambiguous', () => {
+    const built = astToEditable(
+      makeTextNode('根', [
+        makeTextNode('任务', [makeTextNode('K3', [makeTextNode('K3子')])]),
+        makeEntityNode({ kind: 'issue', id: '8' }),
+        makeEntityNode({ kind: 'issue', id: '8' }),
+      ]),
+    );
+    if (built === null) throw new Error('fixture broken: astToEditable returned null');
+    const root = built;
+    root.note = { edges: [{ from: 'node:根/任务', to: '@issue:8', rel: 'relates-to' }] };
+    const k3 = idOf(root, 'K3');
+    const plan = planCutTreeEdge(root, k3);
+    expect(plan.ok).toBe(true);
+    if (!plan.ok) return;
+    expect(plan.diagnostics).toContainEqual(
+      expect.objectContaining({ code: 'pre-existing-ambiguous', anchor: '@issue:8' }),
+    );
+  });
+
+  it('summarizeReferenceDiagnostics：空 → null；多码聚合一行，语义=「本来就是坏」', () => {
+    expect(summarizeReferenceDiagnostics([])).toBeNull();
+    const one = summarizeReferenceDiagnostics([
+      {
+        code: 'dangling-kept',
+        noteKey: 'n1',
+        field: 'edges[0].to',
+        anchor: 'node:根/不存在',
+        message: 'x',
+      },
+    ]);
+    expect(one).toContain('1 条');
+    expect(one).toContain('本来就是坏');
+    const mixed = summarizeReferenceDiagnostics([
+      { code: 'dangling-kept', noteKey: 'n1', field: 'edges[0].to', anchor: 'a' },
+      { code: 'dangling-kept', noteKey: 'n2', field: 'edges[1].to', anchor: 'b' },
+      { code: 'pre-existing-ambiguous', noteKey: 'n3', field: 'edges[2].to', anchor: 'c' },
+    ]);
+    expect(mixed).toContain('3 条');
+    expect(mixed).toContain('dangling-kept ×2');
+    expect(mixed).toContain('pre-existing-ambiguous ×1');
   });
 });

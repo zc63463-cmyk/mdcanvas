@@ -15,6 +15,7 @@ import {
   collectCenters,
   planAttachIsland,
   removeCenter,
+  summarizeReferenceDiagnostics,
   upsertCenter,
   type CenterMenuActions,
   type DescMenuActions,
@@ -80,6 +81,9 @@ export function makeCenterActions(
         host.onAttachError?.(plan.error.message);
         return;
       }
+      // R0-4：迁移诊断不再被吞——「本来就是坏」的引用保留原值时给用户可见提示（不阻断）
+      const diag = summarizeReferenceDiagnostics(plan.diagnostics);
+      if (diag !== null) host.onAttachError?.(diag);
       const result = controller.applyTransaction(plan.ops);
       if (!result.ok) host.onAttachError?.(result.error.message);
     },

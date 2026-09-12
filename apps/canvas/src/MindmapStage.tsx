@@ -88,6 +88,7 @@ import {
   SearchPanel,
   ShortcutHelpPanel,
   scaleNoticeFor,
+  summarizeReferenceDiagnostics,
   inferChildDir,
   searchMind,
   ThemeProvider,
@@ -929,6 +930,8 @@ function StageContent({
         setCommandNotice(plan.error.message);
         return;
       }
+      // R0-4：迁移诊断不再被吞——「本来就是坏」的引用保留原值时给用户可见提示（不阻断）
+      if (plan.diagnostics.length > 0) setCommandNotice(summarizeReferenceDiagnostics(plan.diagnostics) ?? null);
       const result = controller.applyTransaction(plan.ops);
       if (!result.ok) setCommandNotice(`切断未提交：${result.error.message}`);
     },

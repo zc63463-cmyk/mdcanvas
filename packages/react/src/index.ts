@@ -202,6 +202,7 @@ export {
   planAttachIsland,
   planCutTreeEdge,
   subtreeMaxDepth,
+  summarizeReferenceDiagnostics,
 } from './edit/cutAttach.js';
 export type { CutAttachErrorCode, CutAttachPlan } from './edit/cutAttach.js';
 export type { DocEntry } from './edit/docLibrary.js';
