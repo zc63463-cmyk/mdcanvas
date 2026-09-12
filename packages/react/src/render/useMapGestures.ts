@@ -17,7 +17,7 @@
  * 本模块只负责「指针事件 → 手势状态 / 节点拖拽状态」这一层。
  */
 
-import type { LayoutResult } from '@mindcanvas/kernel';
+import { type BoxIndex, type LayoutResult, queryBoxIndex } from '@mindcanvas/kernel';
 import type { Dispatch, PointerEvent as ReactPointerEvent, SetStateAction } from 'react';
 import { useRef } from 'react';
 import {
@@ -72,33 +72,61 @@ export function worldPointOf(
   return viewport.toWorld(e.clientX - rect.left, e.clientY - rect.top);
 }
 
+/** 命中容差（世界单位）：hitNodeAt 精判与索引粗筛的查询矩形共用同一常量 */
+export const HIT_PAD = 6;
+
 /**
  * 自后向前命中可见节点（后绘制的在上，故倒序遍历），返回最顶层的命中项。
  *
  * `skip` 用于排除：拖拽时跳过根节点（depth===0 不可拖）、
  * 以及拖拽中被排除的节点自身（dragExcluded）。
+ *
+ * B-P1：传入 `index`（调用方按可见集建好、跨帧复用）时先做**索引粗筛**再精判 ——
+ * 语义与原线性路径逐字节一致（同样的倒序「取最大下标命中」、同样的 skip 过滤、同样的 6px pad）；
+ * `index` 缺省 / null 时走原线性路径（小图零回归）。
  */
 export function hitNodeAt(
   visible: readonly VisibleNode[],
   w: { x: number; y: number },
   skip?: (ln: VisibleNode) => boolean,
+  index?: BoxIndex | null,
 ): VisibleNode | null {
-  for (let i = visible.length - 1; i >= 0; i--) {
-    const ln = visible[i]!;
-    if (skip?.(ln)) continue;
-    if (worldHitPad(ln.box, w)) return ln;
+  if (!index) {
+    for (let i = visible.length - 1; i >= 0; i--) {
+      const ln = visible[i]!;
+      if (skip?.(ln)) continue;
+      if (worldHitPad(ln.box, w)) return ln;
+    }
+    return null;
   }
-  return null;
+  // 粗筛：查询矩形 = 命中点 ± HIT_PAD（与精判同口径；queryBoxIndex 结果按下标升序）
+  const candidates = queryBoxIndex(index, {
+    x: w.x - HIT_PAD,
+    y: w.y - HIT_PAD,
+    w: HIT_PAD * 2,
+    h: HIT_PAD * 2,
+  });
+  let best: VisibleNode | null = null;
+  let bestIdx = -1;
+  for (const i of candidates) {
+    if (i <= bestIdx) continue; // 升序遍历 → 取通过精判的最大下标（= 线性版倒序的首个命中）
+    const ln = visible[i];
+    if (!ln || skip?.(ln)) continue;
+    if (worldHitPad(ln.box, w)) {
+      best = ln;
+      bestIdx = i;
+    }
+  }
+  return best;
 }
 
-/** 命中判定（含 6px 容差）——抽出来只为让 hitNodeAt 保持单一职责 */
+/** 命中判定（含 `HIT_PAD` 容差）——抽出来只为让 hitNodeAt 保持单一职责 */
 function worldHitPad(box: VisibleNode['box'], w: { x: number; y: number }): boolean {
-  const pad = 6;
   return (
-    w.x >= box.x - pad &&
-    w.x <= box.x + box.w + pad &&
-    w.y >= box.y - pad &&
-    w.y <= box.y + box.h + pad
+    w.x >= box.x - HIT_PAD &&
+    w.x <= box.x + box.w + HIT_PAD &&
+    w.y >= box.y - HIT_PAD &&
+    w.y <= box.y + box.h + HIT_PAD
   );
 }
 
@@ -107,6 +135,11 @@ export interface UseMapGesturesParams {
   layout: LayoutResult;
   /** 视口裁剪后的可见节点（命中测试只遍历它，不遍历全量） */
   visibleNodes: readonly VisibleNode[];
+  /**
+   * B-P1：可见集的网格索引（MapView 在节点数 ≥ INDEX_MIN_NODES 时建好、跨帧复用）。
+   * 传入后命中测试先粗筛再精判；缺省 / null = 原线性路径。
+   */
+  hitIndex?: BoxIndex | null;
   nodeDrag: NodeDragState | null;
   setNodeDrag: Dispatch<SetStateAction<NodeDragState | null>>;
   /** 拖拽中需排除的节点（被拖节点及其子树），避免命中自身 */
@@ -141,6 +174,7 @@ export function useMapGestures({
   viewport,
   layout,
   visibleNodes,
+  hitIndex,
   nodeDrag,
   setNodeDrag,
   dragExcluded,
@@ -177,8 +211,12 @@ export function useMapGestures({
     // 但它们是中心（拖拽 = 移动坐标）——不得被排除，否则中心岛永远拖不动
     // （A4 修复：此前中心岛根被跳过后落入 pan 分支，拖动变成平移画布）。
     const hitId =
-      hitNodeAt(visibleNodes, w, (ln) => ln.depth === 0 && !isCenter?.(ln.node.id))?.node.id ??
-      null;
+      hitNodeAt(
+        visibleNodes,
+        w,
+        (ln) => ln.depth === 0 && !isCenter?.(ln.node.id),
+        hitIndex,
+      )?.node.id ?? null;
     if (hitId !== null) {
       onBeamHover?.(null); // 节点命中优先 → 清梁悬停（光标回默认）
       setNodeDrag({
@@ -253,7 +291,12 @@ export function useMapGestures({
       const w = worldPointOf(e, e.currentTarget, viewport);
       let targetId: string | null = null;
       let mode: DropMode = 'child';
-      const target = hitNodeAt(visibleNodes, w, (ln) => dragExcluded?.has(ln.node.id) ?? false);
+      const target = hitNodeAt(
+        visibleNodes,
+        w,
+        (ln) => dragExcluded?.has(ln.node.id) ?? false,
+        hitIndex,
+      );
       if (target) {
         targetId = target.node.id;
         mode = dropModeFor(target.box, w);
@@ -284,7 +327,7 @@ export function useMapGestures({
     // 未按下时（纯移动）也要做命中检测 —— 供上层显示节点注释浮窗（悬停预览）
     if (!d) {
       const w = worldPointOf(e, e.currentTarget, viewport);
-      const hit = hitNodeAt(visibleNodes, w);
+      const hit = hitNodeAt(visibleNodes, w, undefined, hitIndex);
       onNodeHover?.(hit ? hit.node.id : null, { x: e.clientX, y: e.clientY });
       // v1.7.0：梁悬停方向（节点命中优先 → null）——上层据此切换 ns/ew-resize 光标
       const bh = hit === null && beamHandles ? hitBeamAt(beamHandles, w) : null;
@@ -349,7 +392,7 @@ export function useMapGestures({
     }
     // 点击：世界坐标命中检测（可见节点自后向前取顶）
     const w = worldPointOf(e, e.currentTarget, viewport);
-    const ln = hitNodeAt(visibleNodes, w);
+    const ln = hitNodeAt(visibleNodes, w, undefined, hitIndex);
     if (ln) onNodeClick?.(ln, { shift: e.shiftKey, sx: e.clientX, sy: e.clientY });
     else onBlankClick?.();
   };

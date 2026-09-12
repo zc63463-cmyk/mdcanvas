@@ -60,6 +60,13 @@ export type {
   Transform2D,
 } from './layout/cull.js';
 
+export {
+  buildBoxIndex,
+  DEFAULT_CELL_SIZE,
+  queryBoxIndex,
+} from './layout/spatialIndex.js';
+export type { BoxIndex } from './layout/spatialIndex.js';
+
 export { fitIntoView } from './layout/fit.js';
 export type {
   FitOptions,

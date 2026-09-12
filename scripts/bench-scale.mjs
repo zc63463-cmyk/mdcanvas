@@ -18,6 +18,8 @@ import {
   filterVisibleLinks,
   isBoxInView,
   bezierLink,
+  buildBoxIndex,
+  queryBoxIndex,
 } from '../packages/kernel/dist/index.js'
 
 /** 构造 N 节点树（4 叉：深度 6/7/8 → 5461/21845/87381，与 K 基线同构） */
@@ -57,6 +59,20 @@ function renderBodyCost(layout, samples = 20) {
   const view = { x: b.minX, y: b.minY, w: b.maxX - b.minX, h: b.maxY - b.minY }
   const cullTimes = []
   const linkTimes = []
+  // B-P1：典型交互视口（1280×800 @ k≈0.74 ≈ 1730×1080 世界单位，取包围盒中心）+ 128 外扩，
+  // 与 MapView 的双重 margin 用法一致（view 先外扩一次 → 粗筛；精判再传 margin）。
+  const vw = 1280 / 0.74
+  const vh = 800 / 0.74
+  const viewT = {
+    x: (b.minX + b.maxX) / 2 - vw / 2,
+    y: (b.minY + b.maxY) / 2 - vh / 2,
+    w: vw,
+    h: vh,
+  }
+  const viewM = { x: viewT.x - 128, y: viewT.y - 128, w: viewT.w + 256, h: viewT.h + 256 }
+  const viewIndex = buildBoxIndex(layout.nodes.map((n) => n.box))
+  const cullViewTimes = []
+  const cullViewIndexTimes = []
   for (let i = 0; i < samples; i++) {
     let a = performance.now()
     const visibleNodes = layout.nodes.filter((n) => isBoxInView(n.box, view, 0))
@@ -77,14 +93,38 @@ function renderBodyCost(layout, samples = 20) {
     }
     b2 = performance.now()
     linkTimes.push(b2 - a)
+    // 典型视口 · 线性路径
+    a = performance.now()
+    const visLinear = layout.nodes.filter((n) => isBoxInView(n.box, viewM, 128))
+    b2 = performance.now()
+    cullViewTimes.push(b2 - a)
+    // 典型视口 · 索引路径（粗筛 + 原精判）
+    a = performance.now()
+    const visIndexed = []
+    for (const j of queryBoxIndex(viewIndex, viewM)) {
+      const n = layout.nodes[j]
+      if (n && isBoxInView(n.box, viewM, 128)) visIndexed.push(n)
+    }
+    b2 = performance.now()
+    cullViewIndexTimes.push(b2 - a)
     void visibleNodes
     void built
+    void visLinear
+    void visIndexed
   }
-  return { cullMs: median(cullTimes), linkBuildMs: median(linkTimes), visible: layout.nodes.length }
+  return {
+    cullMs: median(cullTimes),
+    linkBuildMs: median(linkTimes),
+    visible: layout.nodes.length,
+    cullViewMs: median(cullViewTimes),
+    cullViewIndexMs: median(cullViewIndexTimes),
+  }
 }
 
 const SIZES = [6, 7, 8] // 4 叉深度 → 5461 / 21845 / 87381 节点
-console.log('nodes,fullLayoutMs,cullMs,linkBuildMs,firstFrameMs,fpsBound,incEditMs,incVsFullPct')
+console.log(
+  'nodes,fullLayoutMs,cullMs,linkBuildMs,firstFrameMs,fpsBound,incEditMs,incVsFullPct,cullViewMs,cullViewIndexMs,viewSpeedup',
+)
 for (const depth of SIZES) {
   const root = buildTree(depth)
   let count = 0
@@ -129,6 +169,12 @@ for (const depth of SIZES) {
       ',' +
       inc.toFixed(2) +
       ',' +
-      ((inc / full) * 100).toFixed(1) + '%',
+      ((inc / full) * 100).toFixed(1) + '%' +
+      ',' +
+      rb.cullViewMs.toFixed(2) +
+      ',' +
+      rb.cullViewIndexMs.toFixed(2) +
+      ',' +
+      (rb.cullViewMs / Math.max(rb.cullViewIndexMs, 0.001)).toFixed(2) + 'x',
   )
 }

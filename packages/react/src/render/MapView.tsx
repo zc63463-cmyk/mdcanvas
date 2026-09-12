@@ -13,10 +13,12 @@ import { readHubFlag } from '@mindcanvas/kernel';
 import {
   type Box,
   type BoundaryLink,
+  buildBoxIndex,
   filterVisibleLinks,
   isBoxInView,
   type LayoutNode,
   type LayoutResult,
+  queryBoxIndex,
   type TreeOp,
 } from '@mindcanvas/kernel';
 import {
@@ -265,6 +267,11 @@ export interface MapStats {
 
 /** 裁剪外扩（世界 px；缓冲防边缘闪烁） */
 const CULL_MARGIN = 128;
+/**
+ * B-P1：节点数 ≥ 此值时才建网格索引（裁剪 + 命中粗筛）。
+ * 小图零回归：低于阈值走原线性路径，既有 jsdom 夹具与契约测试不受影响。
+ */
+const INDEX_MIN_NODES = 1000;
 /** 空折叠集常量。
  * 原先写 `collapsedIds ?? new Set()` —— 每次渲染都造一个新 Set，
  * 会让 `FreeEdgeLayer` 的路由 useMemo 依赖失效，**每次重渲染都把全部边重算一遍路由**
@@ -743,15 +750,45 @@ export function MapView({
     e.stopPropagation();
   };
   // A4：节点卡（NodeG）直接读 ln.box——预览成员在此产出偏移副本（浅拷贝，children 引用共享）。
-  const visibleNodes = layout.nodes
-    .filter((n) => isBoxInView(renderBoxOf(n.node.id, n.box), view, CULL_MARGIN))
-    .map((ln) => {
+  // B-P1：可见集过滤走网格索引（节点数 ≥ INDEX_MIN_NODES 时）——索引粗筛 + 原 isBoxInView 精判，
+  //        输出与线性路径同序同集；小图（低于阈值）保持原线性路径（零回归）。
+  const cullBoxes = useMemo(
+    () => layout.nodes.map((n) => renderBoxOf(n.node.id, n.box)),
+    [layout, animBoxes, centerPreview],
+  );
+  const cullIndex = useMemo(
+    () => (cullBoxes.length >= INDEX_MIN_NODES ? buildBoxIndex(cullBoxes) : null),
+    [cullBoxes],
+  );
+  const visibleNodes = useMemo(() => {
+    const picked: LayoutNode[] = [];
+    if (cullIndex) {
+      for (const i of queryBoxIndex(cullIndex, view)) {
+        const ln = layout.nodes[i];
+        const box = cullBoxes[i];
+        if (ln && box && isBoxInView(box, view, CULL_MARGIN)) picked.push(ln);
+      }
+    } else {
+      layout.nodes.forEach((ln, i) => {
+        const box = cullBoxes[i];
+        if (box && isBoxInView(box, view, CULL_MARGIN)) picked.push(ln);
+      });
+    }
+    return picked.map((ln) => {
       if (!centerPreview || !centerPreview.members.has(ln.node.id)) return ln;
       return {
         ...ln,
         box: { ...ln.box, x: ln.box.x + centerPreview.dx, y: ln.box.y + centerPreview.dy },
       };
     });
+    // view 用 primitive：viewport.transform 是原地 mutate 的稳定引用，进 deps 等于永不失效（§1 第 6 条）
+  }, [layout, cullBoxes, cullIndex, view.x, view.y, view.w, view.h, centerPreview]);
+  /** B-P1：命中粗筛索引（建在 visibleNodes 上、跨帧复用；低于阈值 → null = 原线性路径） */
+  const hitIndex = useMemo(
+    () =>
+      visibleNodes.length >= INDEX_MIN_NODES ? buildBoxIndex(visibleNodes.map((v) => v.box)) : null,
+    [visibleNodes],
+  );
   visibleNodesRef.current = visibleNodes;
   // 淡出中的被删节点（ghost）：仅动画期间存在，参与裁剪但不计入 stats
   const visibleGhosts =
@@ -1082,6 +1119,7 @@ export function MapView({
       viewport,
       layout,
       visibleNodes,
+      hitIndex,
       nodeDrag,
       setNodeDrag,
       dragExcluded,
@@ -1259,13 +1297,13 @@ export function MapView({
           e.preventDefault();
           const w = worldPointOf(e, e.currentTarget, viewport);
           // 命中节点 → 传该节点；空白 → 传 null（两条分支合并为一）
-          const ln = hitNodeAt(visibleNodes, w);
+          const ln = hitNodeAt(visibleNodes, w, undefined, hitIndex);
           onNodeContextRef.current?.(ln, e.clientX, e.clientY);
         }}
         onDoubleClick={(e) => {
           // 双击：命中 text 节点 → 请求进入编辑；空白/非 text → 平滑适配视图
           const w = worldPointOf(e, e.currentTarget, viewport);
-          const ln = hitNodeAt(visibleNodes, w);
+          const ln = hitNodeAt(visibleNodes, w, undefined, hitIndex);
           if (ln) {
             if (ln.node.type === 'text') onEditStartRef.current?.(ln.node.id);
             return;
