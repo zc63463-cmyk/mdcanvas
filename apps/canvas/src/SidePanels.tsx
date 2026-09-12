@@ -26,6 +26,7 @@ import {
   searchMind,
   svgToDataUrl,
 } from '@mindcanvas/react';
+import { useCallback } from 'react';
 import type { ComponentProps, Dispatch, SetStateAction } from 'react';
 
 /**
@@ -75,13 +76,16 @@ export function SidePanels({
   onSelectNode,
   onClose,
 }: SidePanelsProps) {
+  // B-P6：search 闭包稳定化 —— SearchPanel 内部按 [query, search] memo 检索结果，
+  // 内联 lambda 每渲染换身份会把 memo 打穿；controller 长寿命，调用时实时读 controller.root。
+  const searchFn = useCallback((q: string) => searchMind(controller.root, q), [controller]);
   if (panel === null) return null;
 
   return (
     <>
       {panel === 'search' && (
         <SearchPanel
-          search={(q) => searchMind(controller.root, q)}
+          search={searchFn}
           onSelect={onSelectNode}
           onClose={onClose}
         />

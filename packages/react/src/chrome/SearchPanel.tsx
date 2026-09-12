@@ -3,7 +3,7 @@
  * 顶部居中浮层：输入即搜；↑/↓ 或 Enter/Shift+Enter 轮换激活项；点击结果或再次 Enter 跳转选中；
  * Esc → onClose。视觉值全部来自 CHROME。
  */
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { CHROME } from '../theme/tokens.js';
 import type { SearchHit } from '../search/search.js';
 
@@ -17,7 +17,10 @@ export interface SearchPanelProps {
 export function SearchPanel({ search, onSelect, onClose }: SearchPanelProps) {
   const [query, setQuery] = useState('');
   const [active, setActive] = useState(0);
-  const results = query.trim() ? search(query) : [];
+  // B-P6：检索结果按 [query, search] memo —— search 是全树 walk（O(全树)），
+  // 原先渲染体内直算：父组件每帧重渲、甚至 ↑/↓ 的 setActive 都会重跑一次。
+  // deps 含 search 引用 → 注入方须提供稳定闭包（SidePanels 已用 useCallback 固定）。
+  const results = useMemo(() => (query.trim() ? search(query) : []), [query, search]);
   const inputRef = useRef<HTMLInputElement | null>(null);
 
   useEffect(() => {
