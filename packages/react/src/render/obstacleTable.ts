@@ -49,7 +49,7 @@ export const EMPTY_OBSTACLE_TABLE: ObstacleTable = {
 
 export function buildObstacleTable(
   obstacles: readonly { id: string; box: Box }[],
-  opts?: { indexMinNodes?: number },
+  opts?: { indexMinNodes?: number; cellSize?: number },
 ): ObstacleTable {
   if (obstacles.length === 0) return EMPTY_OBSTACLE_TABLE;
   const boxes = obstacles.map((o) => o.box);
@@ -60,7 +60,7 @@ export function buildObstacleTable(
   }
   const index =
     obstacles.length >= (opts?.indexMinNodes ?? OBSTACLE_INDEX_MIN_NODES)
-      ? buildBoxIndex(boxes)
+      ? buildBoxIndex(boxes, opts?.cellSize)
       : null;
   return {
     boxes,

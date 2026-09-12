@@ -11,6 +11,10 @@
  *     → 全部 RouteResult 逐位相等（d 字符串 / points / mid / nx / ny / routed）；
  *     并加索引粗筛管线（G-P3b：near() 命中 / 收益不足回退两分支）同断言。
  *  ④ 索引粗筛两分支确定性用例（1200 障碍网格）：短边命中（结果等价）/ 长边回退 null。
+ *  ⑤ G-P9b 保守界**充分性** property test：大场域随机场景 × 强制开索引（indexMinNodes: 0）→
+ *     「near() 剪枝 vs 全量」RouteResult 逐位相等（200+ 边对拍，含贴弦 threading 边）；
+ *  ⑥ G-P9b 界内缘对抗几何：障碍置于推导界内缘（1.65·chordMax + 180 + ε）必须被 near() 纳入
+ *     —— R 保守界一缩（低于推导必要界）本用例即红。
  */
 import { describe, expect, it } from 'vitest';
 import { makeTextNode, type EditableNode } from '@mindcanvas/kernel';
@@ -248,5 +252,129 @@ describe('G-P3 等价性守护', () => {
     const l1 = obstacles[1170];
     if (!l0 || !l1) throw new Error('scene incomplete');
     expect(table.near(l0.box, l1.box, l0.id, l1.id)).toBeNull();
+  });
+
+  it('⑤ G-P9b 保守界充分性 property test：near() 剪枝 vs 全量 RouteResult 逐位相等（200+ 边，强制开索引）', () => {
+    const rnd = mulberry32(0x5eed);
+    let comparisons = 0;
+    let prunedHits = 0;
+    for (let s = 0; s < 50; s++) {
+      // 大场域稀疏障碍（24000×14000 撒 120~240 盒）→ 短边 near() 窗口子集远小于 60%，
+      // 真正走剪枝路径而非回退；端点取自障碍集（生产口径：端点自身在障碍集内按 id 排除）。
+      const obstacles: { id: string; box: Box }[] = [];
+      const n = 120 + Math.floor(rnd() * 120);
+      for (let i = 0; i < n; i++) {
+        obstacles.push({
+          id: `o${s}-${i}`,
+          box: { x: rnd() * 24000, y: rnd() * 14000, w: 30 + rnd() * 120, h: 20 + rnd() * 60 },
+        });
+      }
+      // 强制开索引（生产阈值 1000，本测 indexMinNodes: 0）——判别对象是 near() 本身
+      const edges: { a: Box; b: Box; fromId: string; toId: string }[] = [];
+      for (let j = 0; j < 5; j++) {
+        const o1 = obstacles[Math.floor(rnd() * obstacles.length)]!;
+        // 近端点（同场景随机找距离 <1600 的伴侣 → 短边，near() 命中为主）与远端点（长边 → 回退分支）混合
+        let o2 = obstacles[Math.floor(rnd() * obstacles.length)]!;
+        if (j < 3) {
+          for (let t = 0; t < 40; t++) {
+            const cand = obstacles[Math.floor(rnd() * obstacles.length)]!;
+            const d = Math.hypot(
+              cand.box.x - o1.box.x,
+              cand.box.y - o1.box.y,
+            );
+            if (cand !== o1 && d < 1600) {
+              o2 = cand;
+              break;
+            }
+          }
+        }
+        if (o1 === o2) continue;
+        edges.push({ a: o1.box, b: o2.box, fromId: o1.id, toId: o2.id });
+      }
+      // 每场景一条贴弦 threading 边：障碍压在两盒中心连线中点上（必须经 corridor/threading 判定分支）。
+      // 先入障碍全集、后建表 —— 保证剪枝/全量两条路径都能看到它。
+      if (edges.length > 0) {
+        const e0 = edges[0]!;
+        const midC = {
+          x: (e0.a.x + e0.a.w / 2 + e0.b.x + e0.b.w / 2) / 2 - 40,
+          y: (e0.a.y + e0.a.h / 2 + e0.b.y + e0.b.h / 2) / 2 - 20,
+        };
+        obstacles.push({ id: `thread-${s}`, box: { ...midC, w: 80, h: 40 } });
+        edges.push({
+          a: e0.a,
+          b: e0.b,
+          fromId: e0.fromId,
+          toId: e0.toId,
+        });
+      }
+      const table = buildObstacleTable(obstacles, { indexMinNodes: 0 });
+
+      const runWith = (
+        pick: (e: { a: Box; b: Box; fromId: string; toId: string }) => readonly Box[],
+      ): ReturnType<typeof routeAesthetic>[] => {
+        const out: ReturnType<typeof routeAesthetic>[] = [];
+        const polylines: { x: number; y: number }[][] = [];
+        for (const e of edges) {
+          const route = routeAesthetic(e.a, e.b, pick(e), polylines, {});
+          out.push(route);
+          if (route.points.length >= 2) polylines.push([...route.points]);
+        }
+        return out;
+      };
+
+      const full = runWith((e) => table.without(e.fromId, e.toId));
+      const pruned = runWith((e) => {
+        const near = table.near(e.a, e.b, e.fromId, e.toId);
+        if (near !== null) prunedHits++;
+        return near ?? table.without(e.fromId, e.toId);
+      });
+      comparisons += edges.length;
+      expect(pruned).toEqual(full);
+    }
+    // 非空转双守卫：对拍规模 ≥ 200；且确实存在走剪枝路径的边（回退分支不计数）
+    expect(comparisons).toBeGreaterThanOrEqual(200);
+    expect(prunedHits, `剪枝命中 ${prunedHits} 次——用例未真正覆盖 near() 路径`).toBeGreaterThan(100);
+  }, 60000);
+
+  it('⑥ G-P9b 界内缘对抗几何：障碍在推导界内缘（1.65·chordMax + 180 + ε）必须被 near() 纳入', () => {
+    // 端点盒极小（halfDiag 贡献小）→ chordMax ≈ 中心距，界余量全部暴露给判别：
+    // R = 2·chordMax + 210 vs 对抗障碍距离 d = 1.65·chordMax + 180 + ε（ε = 1）。
+    // R 收缩到推导必要界以下（如去掉 2× 系数、或砍掉 210 余量至 <181）→ 障碍出窗 → 本用例红。
+    const a: Box = { x: 0, y: 0, w: 20, h: 10 };
+    const b: Box = { x: 600, y: 0, w: 20, h: 10 };
+    const halfDiag = (x: Box): number => Math.hypot(x.w, x.h) / 2;
+    const chordMax =
+      Math.hypot(a.x + a.w / 2 - (b.x + b.w / 2), a.y + a.h / 2 - (b.y + b.h / 2)) +
+      halfDiag(a) +
+      halfDiag(b);
+    const spanYMax = Math.max(a.y + a.h, b.y + b.h);
+    const d = 1.65 * chordMax + 180 + 1; // 推导界内缘（ε = 1，必要界 = …+183）
+    const adv: Box = { x: 290, y: spanYMax + d, w: 20, h: 20 };
+
+    // 背景障碍网（间距 2500、避开弦线 y=0 ±1800）→ near() 窗口子集 ≪ 60%，不触发回退
+    const obstacles: { id: string; box: Box }[] = [
+      { id: 'ep-a', box: a },
+      { id: 'ep-b', box: b },
+      { id: 'adv', box: adv },
+    ];
+    for (let gy = -8; gy <= 8; gy++) {
+      if (Math.abs(gy) < 1) continue; // 弦线走廊留空：本用例只判纳入，不让背景参与路由
+      for (let gx = -12; gx <= 12; gx++) {
+        obstacles.push({
+          id: `bg-${gx}-${gy}`,
+          box: { x: gx * 2500, y: gy * 2500, w: 200, h: 120 },
+        });
+      }
+    }
+    const table = buildObstacleTable(obstacles, { indexMinNodes: 0, cellSize: 32 });
+    // cellSize 收小：queryBoxIndex 按 1 格膨胀（默认 512px）会把「窗口外 < 512px」的障碍也捞回，
+    // 掩盖 R 收缩 ≤512px 的突变——小格径让判别锐利到推导界内缘（生产默认 512 不受影响）。
+    const near = table.near(a, b, 'ep-a', 'ep-b');
+    expect(near, 'near() 回退了 null——背景网密度不足以让窗口子集 < 60%').not.toBeNull();
+    if (!near) return;
+    expect(
+      near.includes(adv),
+      `界内缘障碍（距 span ${d.toFixed(1)}px）未被纳入——R 保守界被收缩`,
+    ).toBe(true);
   });
 });
