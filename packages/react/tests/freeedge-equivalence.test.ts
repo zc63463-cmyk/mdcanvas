@@ -8,7 +8,9 @@
  *     旧路径 vs resolve 注入路径**逐字段相等**（含 renderable / ghost / from / to）；
  *  ② ObstacleTable.without：与旧 filter+map 逐项**同序同引用**相等；
  *  ③ 整表重算管线模拟：旧管线（每端点 DFS + 每边 filter/map）vs 新管线（解析器 + 表复用）
- *     → 全部 RouteResult 逐位相等（d 字符串 / points / mid / nx / ny / routed）。
+ *     → 全部 RouteResult 逐位相等（d 字符串 / points / mid / nx / ny / routed）；
+ *     并加索引粗筛管线（G-P3b：near() 命中 / 收益不足回退两分支）同断言。
+ *  ④ 索引粗筛两分支确定性用例（1200 障碍网格）：短边命中（结果等价）/ 长边回退 null。
  */
 import { describe, expect, it } from 'vitest';
 import { makeTextNode, type EditableNode } from '@mindcanvas/kernel';
@@ -195,6 +197,56 @@ describe('G-P3 等价性守护', () => {
       };
 
       expect(runNew()).toEqual(runOld());
+
+      // ④ 索引粗筛管线（G-P3b）：indexMinNodes=0 强制走 near()（null 时自动回退）——
+      //    与旧管线逐位相等（覆盖：粗筛命中 / 收益不足回退 两种分支）。
+      const runIndexed = (): { key: string; route: ReturnType<typeof routeAesthetic> }[] => {
+        const out: { key: string; route: ReturnType<typeof routeAesthetic> }[] = [];
+        const resolver = edgeResolverOf(scene.root, scene.collapsed, scene.boxOf);
+        const table = buildObstacleTable(obstacles, { indexMinNodes: 0 });
+        const polylines: { x: number; y: number }[][] = [];
+        for (const e of edges) {
+          const eps = freeEdgeEndpoints(e, scene.boxOf, scene.root, scene.collapsed, resolver);
+          if (!eps.renderable) continue;
+          const obs =
+            table.near(eps.from, eps.to, eps.fromId, eps.toId) ??
+            table.without(eps.fromId, eps.toId);
+          const route = routeAesthetic(eps.from, eps.to, obs, polylines, {});
+          out.push({ key: e.key, route });
+          if (route.points.length >= 2) polylines.push([...route.points]);
+        }
+        return out;
+      };
+      expect(runIndexed()).toEqual(runOld());
     }
+  });
+
+  it('④ 索引粗筛两分支：短边粗筛命中（子集小）、长边回退 null —— 路由结果逐位等价', () => {
+    // 1200 障碍网格（40 列 × 30 行）→ 默认阈值 1000 建索引
+    const COLS = 40;
+    const obstacles: { id: string; box: Box }[] = [];
+    for (let i = 0; i < 1200; i++) {
+      obstacles.push({
+        id: 'g' + i,
+        box: { x: (i % COLS) * 160, y: Math.floor(i / COLS) * 56, w: 100, h: 30 },
+      });
+    }
+    const table = buildObstacleTable(obstacles);
+    // 短边（同区邻列，窗口小 → 粗筛命中）
+    const s0 = obstacles[520];
+    const s1 = obstacles[521];
+    if (!s0 || !s1) throw new Error('scene incomplete');
+    const nearShort = table.near(s0.box, s1.box, s0.id, s1.id);
+    expect(nearShort).not.toBeNull();
+    if (nearShort) {
+      const full = routeAesthetic(s0.box, s1.box, table.without(s0.id, s1.id), [], {});
+      const pruned = routeAesthetic(s0.box, s1.box, nearShort, [], {});
+      expect(pruned).toEqual(full);
+    }
+    // 长边（跨约 3/4 图高 → 窗口≈全图 → 收益不足回退）
+    const l0 = obstacles[30];
+    const l1 = obstacles[1170];
+    if (!l0 || !l1) throw new Error('scene incomplete');
+    expect(table.near(l0.box, l1.box, l0.id, l1.id)).toBeNull();
   });
 });

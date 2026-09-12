@@ -90,7 +90,7 @@ function runOnce(scene) {
     const eps = freeEdgeEndpoints(e, boxOf, root, collapsed, resolver)
     if (!eps.renderable) continue
     const obs = table
-      ? table.without(eps.fromId, eps.toId)
+      ? (table.near(eps.from, eps.to, eps.fromId, eps.toId) ?? table.without(eps.fromId, eps.toId))
       : obstacles.filter((o) => o.id !== eps.fromId && o.id !== eps.toId).map((o) => o.box)
     const route = routeAesthetic(eps.from, eps.to, obs, routedPolylines, {})
     m.set(e.key, { eps, route })

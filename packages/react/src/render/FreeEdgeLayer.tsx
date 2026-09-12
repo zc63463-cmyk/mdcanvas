@@ -138,10 +138,11 @@ export function FreeEdgeLayer({
   // pan/zoom 不触发——路由在世界坐标系，且 boxOf 与 obstacles 已在 MapView 侧稳定化。
   // 仅节点过渡动画期间（animBoxes 逐帧变化）才会逐帧重算，动画结束即回到缓存态。
   //
-  // G-P3（每边成本）：整表重算的内层两处 O(N) 降为「每次重算一次 + 每边 O(1)/O(N) 轻量」：
+  // G-P3（每边成本）：整表重算的内层 O(N) 降为「每次重算一次 + 每边 O(1)/轻量」：
   //  ① 端点解析器：一次 O(N) 树遍历摊薄到全部边（旧：每端点一次 collapsedAncestors DFS）；
-  //  ② 障碍预构建表：盒数组与 id→下标建一次，端点排除只做整数比较（旧：每边 filter+map 两次遍历 + 两个数组）。
-  //  两条路径逐字段等价由 tests/freeedge-equivalence.test.ts 钉死（接线前后均绿）。
+  //  ② 障碍预构建表：盒数组与 id→下标建一次，端点排除只做整数比较（旧：每边 filter+map 两次遍历 + 两个数组）；
+  //  ③ G-P3b 索引粗筛：大图按「外扩 R 保守界」查询障碍子集（短边大赢；长边窗口≈全图时自动回退②）。
+  //  各路径逐字段等价由 tests/freeedge-equivalence.test.ts 钉死（接线前后均绿）。
   const resolveEndpoint = useMemo(
     () => edgeResolverOf(root, collapsed, boxOf),
     [root, collapsed, boxOf],
@@ -163,8 +164,12 @@ export function FreeEdgeLayer({
       const seq = eps.toId === '' ? 0 : (staggerSeen.get(eps.toId) ?? 0);
       if (eps.toId !== '') staggerSeen.set(eps.toId, seq + 1);
       // 按 id 排除两端自身卡片（动画期间坐标不可靠，见 obstacles 注释）；
-      // G-P3：经预构建表排除（等价性：与 filter+map 逐项同序，测试钉死）。
-      const obs = obstacleTable.without(eps.fromId, eps.toId);
+      // G-P3：经预构建表排除（等价性：与 filter+map 逐项同序，测试钉死）；
+      // G-P3b：大图时先索引粗筛（保守界推导见 obstacleTable.near 注释），收益不足（长边窗口≈全图）
+      // 自动回退完整路径——两条路径结果逐位等价（freeedge-equivalence.test.ts 钉死）。
+      const obs =
+        obstacleTable.near(eps.from, eps.to, eps.fromId, eps.toId) ??
+        obstacleTable.without(eps.fromId, eps.toId);
       // 新主路由：曲率自适应贝塞尔（外围绕行优先，见 edgeRouting.ts 顶部说明）。
       // 人工锁定的边跳过自动路由 —— 见 Issue #3 的 manual 字段约定。
       const route = edge.manual
