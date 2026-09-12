@@ -403,6 +403,10 @@ export {
   splitEntityAnchor,
 } from './render/freeEdges.js';
 
+// R0 观测先行：边健康度纯函数（独立于 collectFreeEdges 的计数 + 病例定位）
+export type { EdgeHealth, EdgeHealthItem } from './render/edgeHealth.js';
+export { edgeHealthOf } from './render/edgeHealth.js';
+
 // G6′ 中心（升格节点）数据层：root.note.centers + 历史坐标 root.note.center_pos
 export {
   collectCenterHistory,
