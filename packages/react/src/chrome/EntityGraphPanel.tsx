@@ -5,7 +5,7 @@
  * 数据源 collectEntityRelations（公共 API，主仓 RelationGraph 同源）。
  */
 import { useState } from 'react';
-import { refKey, type EntityRef } from '@mindcanvas/kernel';
+import { refKey, type AnchorResolutionState, type EntityRef } from '@mindcanvas/kernel';
 import { CHROME } from '../theme/tokens.js';
 import { radialLayout, type EntityRelation } from './entityGraph.js';
 
@@ -32,6 +32,36 @@ export interface EdgeListItem {
   /** E6.1：软失效/来源标记（行尾呈现） */
   invalidAt?: string;
   source?: string;
+  /** R0-3：锚定三态（未传 = 旧调用方，全部按正常区处理） */
+  state?: AnchorResolutionState;
+}
+
+/** 边状态分区（R0-3）：每区标题带计数；空区不渲染。
+ *  同一行可同时悬空 + 失效 → invalidAt 是更强病理，分区优先级最高。 */
+interface EdgeGroup {
+  id: 'ok' | 'dangling' | 'stale' | 'invalid';
+  title: string;
+  items: EdgeListItem[];
+}
+
+function groupEdges(edges: readonly EdgeListItem[]): EdgeGroup[] {
+  const ok: EdgeListItem[] = [];
+  const dangling: EdgeListItem[] = [];
+  const stale: EdgeListItem[] = [];
+  const invalid: EdgeListItem[] = [];
+  for (const e of edges) {
+    if (e.invalidAt !== undefined) invalid.push(e);
+    else if (e.state === 'dangling') dangling.push(e);
+    else if (e.state === 'stale') stale.push(e);
+    else ok.push(e);
+  }
+  const groups: EdgeGroup[] = [
+    { id: 'ok', title: '正常', items: ok },
+    { id: 'dangling', title: '悬空', items: dangling },
+    { id: 'stale', title: '陈旧', items: stale },
+    { id: 'invalid', title: '已失效', items: invalid },
+  ];
+  return groups.filter((g) => g.items.length > 0);
 }
 
 const GRAPH_SIZE = 200;
@@ -93,7 +123,8 @@ export function EntityGraphPanel({
             ×
           </span>
         </div>
-        {/* E4：语义边区（连线一等公民——按 rel 分组，点行定位源节点） */}
+        {/* E4：语义边区（连线一等公民——R0-3 按状态分区：正常/悬空/陈旧/已失效，
+            每区标题带计数；源锚未解析的行不再触发 onFocusNode('') 静默 no-op） */}
         {edges !== undefined && edges.length > 0 && (
           <div data-edge-section style={{ marginBottom: 8 }}>
             <div
@@ -105,66 +136,94 @@ export function EntityGraphPanel({
             >
               连线 {edges.length}
             </div>
-            {edges.map((e) => (
-              <div
-                key={e.key}
-                data-edge-item={e.rel}
-                data-edge-invalidated={e.invalidAt !== undefined || undefined}
-                onClick={() => onFocusNode(e.sourceId)}
-                style={{
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: 4,
-                  padding: '3px 6px',
-                  borderRadius: 6,
-                  cursor: 'pointer',
-                  opacity: e.invalidAt !== undefined ? 0.5 : 1,
-                }}
-              >
-                <span
+            {groupEdges(edges).map((group) => (
+              <div key={group.id} data-edge-group={group.id}>
+                <div
                   style={{
+                    color: group.id === 'ok' ? CHROME.textMuted : CHROME.warn,
                     fontSize: CHROME.fontSizeSmall,
-                    color: CHROME.neon,
-                    fontWeight: 600,
-                    flex: 'none',
+                    padding: '2px 4px',
                   }}
                 >
-                  {e.rel}
-                </span>
-                <span
-                  style={{
-                    fontSize: CHROME.fontSizeSmall,
-                    flex: 1,
-                    overflow: 'hidden',
-                    textOverflow: 'ellipsis',
-                    whiteSpace: 'nowrap',
-                    color: CHROME.text,
-                  }}
-                >
-                  {e.sourceText} {e.dir === 'back' ? '←' : '→'} {e.targetText}
-                </span>
-                {e.source === 'inferred' && (
-                  <span
-                    style={{
-                      fontSize: CHROME.fontSizeSmall,
-                      color: CHROME.textMuted,
-                      flex: 'none',
-                    }}
-                  >
-                    🤖
-                  </span>
-                )}
-                {e.invalidAt !== undefined && (
-                  <span
-                    style={{
-                      fontSize: CHROME.fontSizeSmall,
-                      color: CHROME.textMuted,
-                      flex: 'none',
-                    }}
-                  >
-                    已失效
-                  </span>
-                )}
+                  {group.title} {group.items.length}
+                </div>
+                {group.items.map((e) => {
+                  // 源锚未解析（sourceId === ''）→ 聚焦必然 no-op：呈禁用态而非静默吞点击
+                  const unresolved = e.sourceId === '';
+                  return (
+                    <div
+                      key={e.key}
+                      data-edge-item={e.rel}
+                      data-edge-invalidated={e.invalidAt !== undefined || undefined}
+                      onClick={unresolved ? undefined : () => onFocusNode(e.sourceId)}
+                      style={{
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: 4,
+                        padding: '3px 6px',
+                        borderRadius: 6,
+                        cursor: unresolved ? 'default' : 'pointer',
+                        opacity: e.invalidAt !== undefined || unresolved ? 0.5 : 1,
+                      }}
+                    >
+                      <span
+                        style={{
+                          fontSize: CHROME.fontSizeSmall,
+                          color: CHROME.neon,
+                          fontWeight: 600,
+                          flex: 'none',
+                        }}
+                      >
+                        {e.rel}
+                      </span>
+                      <span
+                        style={{
+                          fontSize: CHROME.fontSizeSmall,
+                          flex: 1,
+                          overflow: 'hidden',
+                          textOverflow: 'ellipsis',
+                          whiteSpace: 'nowrap',
+                          color: CHROME.text,
+                        }}
+                      >
+                        {e.sourceText} {e.dir === 'back' ? '←' : '→'} {e.targetText}
+                      </span>
+                      {e.source === 'inferred' && (
+                        <span
+                          style={{
+                            fontSize: CHROME.fontSizeSmall,
+                            color: CHROME.textMuted,
+                            flex: 'none',
+                          }}
+                        >
+                          🤖
+                        </span>
+                      )}
+                      {unresolved && (
+                        <span
+                          style={{
+                            fontSize: CHROME.fontSizeSmall,
+                            color: CHROME.warn,
+                            flex: 'none',
+                          }}
+                        >
+                          源锚未解析
+                        </span>
+                      )}
+                      {e.invalidAt !== undefined && (
+                        <span
+                          style={{
+                            fontSize: CHROME.fontSizeSmall,
+                            color: CHROME.textMuted,
+                            flex: 'none',
+                          }}
+                        >
+                          已失效
+                        </span>
+                      )}
+                    </div>
+                  );
+                })}
               </div>
             ))}
           </div>

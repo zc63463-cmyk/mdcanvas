@@ -671,6 +671,8 @@ function StageContent({
       sourceText: e.sourceId ? textOf(e.sourceId) || e.from : e.from,
       targetId: e.targetId,
       targetText: e.targetId ? textOf(e.targetId) : e.to,
+      // R0-3：锚定三态透传 → 面板按状态分区（悬空/陈旧不再与正常行混排）
+      state: e.state,
       ...(e.invalidAt !== undefined ? { invalidAt: e.invalidAt } : {}),
       ...(e.source !== undefined ? { source: e.source } : {}),
     }));
