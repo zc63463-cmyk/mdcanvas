@@ -7,6 +7,21 @@
 > （09-05~09-06）与「图引擎适配 / 文件工作台」（09-10）等批次未单独标号，
 > 按完成时间归入对应段落末尾的「同批」小节。
 
+## [1.8.2] — 2026-09-12 · 性能地基批次 B（P0–P4；react/kernel 内部性能，no-API）
+
+**触发**：pan/zoom 每帧重算整棵渲染体与父壳、裁剪与命中与节点总数耦合。本批先建可对照基线（P0），再做索引（P1）/memo（P2）/节流与 LOD 冻结（P3），最后复测并决策 P5。
+
+| 项 | 内容 | 说明 |
+|---|---|---|
+| **P0 交互基线** | 新增 `tools/bench-interaction.mjs`（真浏览器：`nodeMutations` 节点 DOM 变更 + 帧间隔）；`perf-baseline.md` §6 落档 | 侦察证伪计划预期：基线 `nodeMutations` 已为 0（React 结构复用本就避免节点 DOM 重挂）→ 机制指标改用**节点组件渲染次数**（jsdom 计数） |
+| **P1 网格索引** | kernel 新增 `layout/spatialIndex.ts`（`buildBoxIndex`/`queryBoxIndex`，半开分桶 + 查询膨胀 1 格保证不漏）；MapView 裁剪与 `hitNodeAt` 接入（≥1000 节点启用，以下线性零回归） | 等价性钉死（kernel 13 例 + react「索引 vs 线性」7 例含 skip/6px pad）；**典型视口裁剪 ↓85%~98%** |
+| **P2 memo 化** | `NodeG` 包 `memo`；MapView 稳定 `visibleNodes`（useMemo）/`style`（按色板键缓存）/`onToggleCollapse`（useCallback + 传 id）/`resolveAssetUrl`（ref 转发） | jsdom 机制断言：纯平移 `NodeG` 渲染 **10 → 0**；真浏览器 `nodeMutations` 恒 0 |
+| **P3 父壳降载** | `onStats` 节流（≥200ms 且材料字段变化才回调，`viewMs` 不作触发）；缩放手势期冻结 LOD（`onGestureActive`，平移不冻结） | 窗口内 10 次 epoch → **1 次**回调；手势内跨 0.5 阈值不再抖档 |
+| **P4 复测与决策** | `perf-baseline.md` §7 四列对照（P0/P1/P2/P3）+ 门禁对照 | **决策：P5（transform-only）不做** —— 机制指标已归零、典型视口裁剪 ↓≥85%、门禁无劣化，收益面不存在而视觉回归风险仍在 |
+
+**验收**：kernel 478 / react 978 / canvas 118 全绿；tsc ×3 / depcruise / lint / budget 全绿；既有性能门禁一条未放宽（多数优于基线）。
+计划：`docs/dispatch/2026-09-12-debt-and-perf-foundation-plan.md`（P6 可选 / P7 收口待做）。
+
 ## [1.8.1] — 2026-09-12 · 债务腾挪批次 A（工程 · no-API：bigFiles 4→3 + 原生对话框清零）
 
 **触发**：`bigFiles` 预算 4/4 零余量，同时画布壳还残留三处「IDE webview 静默吞掉原生对话框」的假死点（09-11 修的是键盘删除那处）。本批只做两件事：拆出共享层腾出预算一格；三处对话框全部替换为内联 UI / 宿主通知 / 自定义模态。
