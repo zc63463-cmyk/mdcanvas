@@ -7,6 +7,19 @@
 > （09-05~09-06）与「图引擎适配 / 文件工作台」（09-10）等批次未单独标号，
 > 按完成时间归入对应段落末尾的「同批」小节。
 
+## [1.8.1] — 2026-09-12 · 债务腾挪批次 A（工程 · no-API：bigFiles 4→3 + 原生对话框清零）
+
+**触发**：`bigFiles` 预算 4/4 零余量，同时画布壳还残留三处「IDE webview 静默吞掉原生对话框」的假死点（09-11 修的是键盘删除那处）。本批只做两件事：拆出共享层腾出预算一格；三处对话框全部替换为内联 UI / 宿主通知 / 自定义模态。
+
+| 项 | 内容 | 说明 |
+|---|---|---|
+| **A-D1 EdgeEditor 拆分** | 新增 `chrome/edgeEditorShared.tsx`（纯函数 / 紧凑样式 / DirToggle·RoutingSideToggle·StyleRow）；`EdgeEditor.tsx` 显式具名 re-export，既有 import 路径零改动（808 → **531** 行） | 搬迁块 vs git HEAD 逐字节 diff 仅差 `export` 关键字（组件区 diff=0）；**`bigFiles 4 → 3`**，为后续性能批次腾出余量 |
+| **A-D2 PNG 导出降级提示去 `alert`** | `useExportActions` 增 `onNotice?` 注入（缺省静默降级）；`MindmapStage` 接 `setCommandNotice` 走命令告警条 | 新增 `useExportActions.test.tsx` ×3（`alert` 换抛错 spy，实现回退即红） |
+| **A-D3 文件工作台删除/命名去 `confirm`/`prompt`** | 删除改内联确认条（`data-fm-confirm`：删除/取消）；新建文件夹改内联命名（`data-fm-name`，Enter 提交 / Esc 取消）；树行递归渲染抽 `FileManagerTree.tsx`（ctx 透传，`data-*` 不变；598 → **549** 行） | 新增 `file-manager-dialogs.test.tsx` ×7；`file-manager-tree.test.tsx` 3 例旧契约（confirm/prompt mock）同步迁移 |
+| **A-D4 未保存切换确认去 `confirm`** | 新增 `UnsavedPrompt.tsx`（玻璃模态：放弃修改并切换 / 取消；Enter/Esc 与 LenBubble 同语义）；`useDocumentActions` 增 `confirmDiscard?` 注入（缺省保守 false，绝不静默丢数据）；`MindmapStage` 组装 asker | 白名单**清空**；`useDocumentActions.test.tsx` 24 例（applyDoc 契约 4 + 模态 5） |
+
+**验收**：`no-native-dialogs.test.ts` 空集 + 两条自检保留（画布壳零裸 `confirm/prompt/alert`）；kernel 465 / react 966 / canvas **118** 全绿；tsc ×3 / depcruise / lint / budget 全绿。计划：`docs/dispatch/2026-09-12-debt-and-perf-foundation-plan.md`（批次 B 性能地基待做）。
+
 ## [1.8.0] — 2026-09-11 · 环形快捷操作 Phase 1：纯逻辑 + 静态预览（react minor）
 
 **触发**：右键菜单逐项选择太重，设计「选中节点 → 按住 Alt → 节点右上角浮现四分之三圆环」的一级快捷操作；本批只做纯逻辑模块与静态预览页（未接画布）。
