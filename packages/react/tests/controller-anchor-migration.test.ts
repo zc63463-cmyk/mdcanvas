@@ -396,3 +396,26 @@ describe('R1-2 结构编辑入口全枚举：操作后边锚存活（表驱动�
     expect(collectFreeEdges(controller.root)[0]?.state).toBe('well-formed');
   });
 });
+
+describe('R1-3 契约分层：数据层旧锚 vs 管线编辑（dangling 语义边界）', () => {
+  it('数据层：旧文件/外部手改的失效锚 → dangling 仍是正确语义（R1-1 不波及）', () => {
+    const controller = makeController(makeTree());
+    // 模拟外部手改/旧文件遗留：边锚指向不存在的路径（未经管线写入，
+    // collectFreeEdges 按锚解析三态直判——该语义与 §1.7 第 22 条的保留清单一致）
+    controller.root.note = {
+      edges: [{ from: 'node:根/任务', to: 'node:根/任务/不存在', rel: 'relates-to' }],
+    };
+    expect(collectFreeEdges(controller.root)[0]?.state).toBe('dangling');
+    expect(edgeHealthOf(controller.root).byState.dangling).toBe(1);
+  });
+
+  it('管线层：同一契约下经 controller 改名 → 锚重写、不再 dangling（新契约）', () => {
+    const controller = makeController(makeTree());
+    const k3 = idOf(controller.root, 'K3');
+    // R1-1 之前：改名后此处 dangling（旧契约）；之后：重写 + well-formed
+    controller.updateText(k3, 'K33');
+    expect(edgeTexts(controller.root)[0]?.to).toBe('node:根/任务/K33');
+    expect(collectFreeEdges(controller.root)[0]?.state).toBe('well-formed');
+    expect(edgeHealthOf(controller.root).byState.dangling).toBe(0);
+  });
+});
