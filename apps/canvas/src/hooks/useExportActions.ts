@@ -48,11 +48,11 @@ export function useExportActions({
     a.download = docName.replace(/\.mm\.md$/i, '') + '.svg';
     a.click();
     URL.revokeObjectURL(url);
-  }, [layout, token, docName]);
+  }, [layout, token, docName, boundaryLinks]);
 
   const handleExportPng = useCallback(async (): Promise<void> => {
     if (!layout) return;
-    const svg = exportSvg(layout, token, { title: docName });
+    const svg = exportSvg(layout, token, { title: docName, boundaryLinks }); // B-P9：降级 SVG 与直出 SVG 同口径
     const name = docName.replace(/\.mm\.md$/i, '');
     const download = (blob: Blob, ext: string): void => {
       const url = URL.createObjectURL(blob);
@@ -70,7 +70,7 @@ export function useExportActions({
     download(new Blob([svg], { type: 'image/svg+xml' }), '.svg');
     if (r.reason === 'tainted') onNotice?.('画布含外部图片，无法导出 PNG，已改为导出 SVG。');
     else onNotice?.('当前环境不支持导出 PNG，已改为导出 SVG。');
-  }, [layout, token, docName, onNotice]);
+  }, [layout, token, docName, onNotice, boundaryLinks]);
 
   return { handleExport, handleExportPng };
 }

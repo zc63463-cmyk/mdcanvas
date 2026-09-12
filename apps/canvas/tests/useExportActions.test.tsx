@@ -9,7 +9,7 @@
  */
 import { act, renderHook } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { exportPng } from '@mindcanvas/react';
+import { exportPng, exportSvg } from '@mindcanvas/react';
 import { useExportActions } from '../src/hooks/useExportActions';
 
 vi.mock('@mindcanvas/react', async (importOriginal) => {
@@ -89,5 +89,80 @@ describe('useExportActions · handleExportPng 降级提示（A-D2）', () => {
     });
 
     expect(window.alert).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * B-P9（复核追加）：deps 完整性 —— `handleExport` / `handleExportPng` 的 useCallback
+ * 此前缺 `boundaryLinks`（lint useExhaustiveDependencies 告警 ×2）。
+ * 现状不可触发（boundaryLinks 与 layout 同源同变），属防御性修补：
+ * 同 layout、只换 boundaryLinks → 回调必须把**新值**传给 exportSvg / exportPng。
+ */
+describe('useExportActions · deps 完整性（B-P9）', () => {
+  it('同 layout、换 boundaryLinks → exportSvg / exportPng 收到新值（回调不陈旧）', async () => {
+    vi.mocked(exportSvg).mockImplementation(() => '<svg data-stub />');
+    vi.mocked(exportPng).mockResolvedValue({ ok: true, blob: new Blob(['x']) });
+
+    const layout = {} as NonNullable<Deps['layout']>;
+    const token = {} as Deps['token'];
+    const onNotice = vi.fn<(m: string) => void>();
+    const blA = [{ fromId: 'a', toId: 'b' }];
+    const blB = [{ fromId: 'c', toId: 'd' }];
+
+    const { result, rerender } = renderHook(
+      ({ bl }: { bl: Deps['boundaryLinks'] }) =>
+        useExportActions({ layout, token, docName: '画布.mm.md', boundaryLinks: bl, onNotice }),
+      { initialProps: { bl: blA as Deps['boundaryLinks'] } },
+    );
+
+    await act(async () => {
+      result.current.handleExport();
+    });
+    expect(vi.mocked(exportSvg)).toHaveBeenLastCalledWith(
+      layout,
+      token,
+      expect.objectContaining({ boundaryLinks: blA }),
+    );
+
+    await act(async () => {
+      await result.current.handleExportPng();
+    });
+    expect(vi.mocked(exportPng)).toHaveBeenLastCalledWith(
+      layout,
+      token,
+      expect.objectContaining({ boundaryLinks: blA }),
+    );
+    // handleExportPng 内部的降级 SVG 与直出同口径（也携带 boundaryLinks）
+    expect(vi.mocked(exportSvg)).toHaveBeenLastCalledWith(
+      layout,
+      token,
+      expect.objectContaining({ boundaryLinks: blA }),
+    );
+
+    rerender({ bl: blB as Deps['boundaryLinks'] }); // 只换 boundaryLinks，其余 props 引用不变
+
+    await act(async () => {
+      result.current.handleExport();
+    });
+    // 修复前：回调被 memo 在旧闭包上 → 仍收到 blA（此处红）
+    expect(vi.mocked(exportSvg)).toHaveBeenLastCalledWith(
+      layout,
+      token,
+      expect.objectContaining({ boundaryLinks: blB }),
+    );
+
+    await act(async () => {
+      await result.current.handleExportPng();
+    });
+    expect(vi.mocked(exportPng)).toHaveBeenLastCalledWith(
+      layout,
+      token,
+      expect.objectContaining({ boundaryLinks: blB }),
+    );
+    expect(vi.mocked(exportSvg)).toHaveBeenLastCalledWith(
+      layout,
+      token,
+      expect.objectContaining({ boundaryLinks: blB }),
+    );
   });
 });
