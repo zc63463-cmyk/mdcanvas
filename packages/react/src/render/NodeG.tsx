@@ -3,7 +3,7 @@
  * 纯展示：几何与样式结论来自 geometry.nodeCardStyle，文本来自内核 displayMetrics。
  * 组件内零视觉值（无 #hex / rgba 字面量）。
  */
-import { useEffect, useState } from 'react';
+import { memo, useEffect, useState } from 'react';
 import type { DisplayMetrics, LayoutNode } from '@mindcanvas/kernel';
 import type { TokenSet } from '../theme/types.js';
 import type { NodeCardStyle } from './geometry.js';
@@ -29,7 +29,8 @@ export interface NodeGProps {
   /** 有子节点时显示折叠指示三角（供折叠/展开） */
   hasChildren?: boolean;
   collapsed?: boolean;
-  onToggleCollapse?: () => void;
+  /** 折叠/展开回调（B-P2：传节点 id —— 回调由 MapView 用 useCallback 提供，避免每渲染新闭包击穿 memo） */
+  onToggleCollapse?: (id: string) => void;
   /** 展开态（快速注释生长）：本体 rect 只画 bodyHeight 高，下方注释区背景由 SVG 画 */
   expanded?: boolean;
   /**
@@ -65,7 +66,7 @@ const COLLAPSE_R = 6;
 /** 资产区与文本区的垂直间隙（与内核 nodeLayout 的 ASSET_GAP 对齐） */
 const ASSET_GAP = 8;
 
-export function NodeG({
+function NodeGImpl({
   node,
   style,
   metrics,
@@ -223,7 +224,7 @@ export function NodeG({
           onPointerDown={(e) => e.stopPropagation() /* 阻止触发画布拖拽/选择 */}
           onClick={(e) => {
             e.stopPropagation();
-            onToggleCollapse();
+            onToggleCollapse(node.node.id);
           }}
           style={{ cursor: 'pointer' }}
           transform={`translate(${b.w - COLLAPSE_R * 2} ${bodyH / 2})`}
@@ -338,3 +339,10 @@ function WarnDot({ token, x, y }: { token: TokenSet; x: number; y: number }) {
     />
   );
 }
+
+/**
+ * B-P2：memo 化节点渲染 —— pan/zoom 期间只要 props 引用稳定
+ * （MapView 侧已稳定化 style / onToggleCollapse / resolveAssetUrl 与可见集元素引用）
+ * 就不再重渲染节点子树（机制指标：纯平移 0 次渲染，见 tests/mapview-pan-memo.test.tsx）。
+ */
+export const NodeG = memo(NodeGImpl);

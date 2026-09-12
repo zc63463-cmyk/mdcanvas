@@ -482,6 +482,20 @@ export function MapView({
   onToggleCollapseRef.current = onToggleCollapse;
   const onToggleExpandRef = useRef(onToggleExpand);
   onToggleExpandRef.current = onToggleExpand;
+
+  /**
+   * B-P2：NodeG memo 的 props 稳定化（引用恒定才算「props 稳定」）——
+   * ① 折叠回调：ref 转发 + 传 id（NodeG 用自己的节点 id 调用），原先每渲染新建闭包 → memo 永不命中；
+   */
+  const handleToggleCollapse = useCallback((id: string) => onToggleCollapseRef.current?.(id), []);
+
+  /** ② resolveAssetUrl：app 层常传内联 lambda → 经 ref 转发后引用恒定（B-P2） */
+  const resolveAssetUrlRef = useRef(resolveAssetUrl);
+  resolveAssetUrlRef.current = resolveAssetUrl;
+  const resolveAssetUrlStable = useCallback(
+    (assetRef: { kind: string; id: string }) => resolveAssetUrlRef.current?.(assetRef),
+    [],
+  );
   const onQaChangeRef = useRef(onQaChange);
   onQaChangeRef.current = onQaChange;
   const onEditStartRef = useRef(onEditStart);
@@ -629,6 +643,15 @@ export function MapView({
     }
     return { boxes, metrics, branchIndex, metricFn: metric };
   }, [layout, char, entities]);
+
+  /**
+   * B-P2：节点卡样式缓存（键 = 色板索引|档位|实体类型）——style 引用稳定是 NodeG memo 命中的前提
+   * （原先每渲染 nodeCardStyle 都新建对象 → memo 永不命中）。换主题时随 token 重建。
+   */
+  const cardStyleCache = useMemo(
+    () => new Map<string, ReturnType<typeof nodeCardStyle>>(),
+    [token],
+  );
 
   // E7 审查：节点 id → node 索引（树边 overlay 每帧查 child 标注，避免 O(links×nodes) 扫描）
   const nodeByIdx = useMemo(() => {
@@ -1530,16 +1553,17 @@ export function MapView({
                   const m = derived.metrics.get(ln.node.id);
                   if (!m) return null;
                   // 附属区（快速注释 / 固定 note 笔记）从节点盒底部生长，正文只画剩余高度。
-                  const palette =
-                    token.color.branches[derived.branchIndex.get(ln.node.id) ?? 0] ??
-                    token.color.branches[0]!;
+                  const branchIdx = derived.branchIndex.get(ln.node.id) ?? 0;
+                  const palette = token.color.branches[branchIdx] ?? token.color.branches[0]!;
                   const entityKind = ln.node.type === 'entity' ? (ln.node.ref?.kind ?? null) : null;
-                  const style = nodeCardStyle(
-                    token,
-                    palette,
-                    ln.depth >= 2 ? 'leaf' : 'branch',
-                    entityKind,
-                  );
+                  const tier = ln.depth >= 2 ? 'leaf' : 'branch';
+                  // B-P2：样式按缓存键取稳定引用（同键 ⇒ 同值；引用稳定是 memo 命中的前提）
+                  const styleKey = `${branchIdx}|${tier}|${entityKind ?? ''}`;
+                  let style = cardStyleCache.get(styleKey);
+                  if (!style) {
+                    style = nodeCardStyle(token, palette, tier, entityKind);
+                    cardStyleCache.set(styleKey, style);
+                  }
                   // A4：中心岛拖动 = 整岛偏移预览（成员已在原位平移渲染）——
                   // 不走「单节点置灰 + 浮空克隆」的改结构拖拽表现
                   const isDragged = nodeDrag?.nodeId === ln.node.id && !centerPreview;
@@ -1565,9 +1589,7 @@ export function MapView({
                       hasChildren={ln.node.children.length > 0}
                       collapsed={collapsedIds?.has(ln.node.id) ?? false}
                       onToggleCollapse={
-                        onToggleCollapseRef.current && ln.node.children.length > 0 && ln.depth > 0
-                          ? () => onToggleCollapseRef.current?.(ln.node.id)
-                          : undefined
+                        ln.node.children.length > 0 && ln.depth > 0 ? handleToggleCollapse : undefined
                       }
                       // expanded 仅代表快速注释展开；固定 note 笔记由独立 HTML 卡片绘制，
                       // 仍通过 bodyHeight 让出布局空间，但不能触发节点内的整块附属背景。
@@ -1577,7 +1599,7 @@ export function MapView({
                         fixedNoteHeight: fixedNoteIds.has(ln.node.id) ? estimateNoteAreaHeight() : 0,
                       }).body.h}
                       assetBaseUrl={assetBaseUrl}
-                      resolveAssetUrl={resolveAssetUrl}
+                      resolveAssetUrl={resolveAssetUrlStable}
                       // 拖拽中：原节点置灰（透明度降），浮空克隆跟随光标；落点目标高亮（合法/拒绝）
                       anim={
                         isDragged
@@ -1687,7 +1709,7 @@ export function MapView({
                       hasChildren={draggedLn.node.children.length > 0}
                       collapsed={collapsedIds?.has(draggedLn.node.id) ?? false}
                       assetBaseUrl={assetBaseUrl}
-                      resolveAssetUrl={resolveAssetUrl}
+                      resolveAssetUrl={resolveAssetUrlStable}
                       anim={{
                         x: draggedLn.box.x + nodeDrag.dx / k,
                         y: draggedLn.box.y + nodeDrag.dy / k,
