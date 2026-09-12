@@ -18,9 +18,12 @@
 | **P2 memo 化** | `NodeG` 包 `memo`；MapView 稳定 `visibleNodes`（useMemo）/`style`（按色板键缓存）/`onToggleCollapse`（useCallback + 传 id）/`resolveAssetUrl`（ref 转发） | jsdom 机制断言：纯平移 `NodeG` 渲染 **10 → 0**；真浏览器 `nodeMutations` 恒 0 |
 | **P3 父壳降载** | `onStats` 节流（≥200ms 且材料字段变化才回调，`viewMs` 不作触发）；缩放手势期冻结 LOD（`onGestureActive`，平移不冻结） | 窗口内 10 次 epoch → **1 次**回调；手势内跨 0.5 阈值不再抖档 |
 | **P4 复测与决策** | `perf-baseline.md` §7 四列对照（P0/P1/P2/P3）+ 门禁对照 | **决策：P5（transform-only）不做** —— 机制指标已归零、典型视口裁剪 ↓≥85%、门禁无劣化，收益面不存在而视觉回归风险仍在 |
+| **P6 搜索面板检索 memo**（收口轮追加） | `SearchPanel` 的 `results` 改 `useMemo([query, search])`（原先渲染体内直算全树 walk：父组件每帧重渲、甚至 ↑/↓ 的 `setActive` 都重跑）；注入方 `SidePanels` 的 search 闭包 `useCallback` 稳定 | jsdom 判别 ×2：同 props 重渲染 / setActive 的 walk 次数 **+1 → 0**；改 query / 换 search 引用才重算。**OutlinePanel 递归整树渲染只记录**（计划明令不虚拟化，另立批次） |
+| **P8 NodeG 生产 memo 守卫**（复核追加·必做） | 新增 `tests/nodeg-memo-guard.test.ts`（无 vi.mock，直断言生产导出 `$$typeof === react.memo`） | 复核阴性对照发现缺口：pan-memo 用例的 mock 自带 memo，摘掉生产 memo 后**仍全绿**；本守卫阴性对照「删 memo 必红」（`expected 'function' to be 'object'`）→ 恢复复绿 |
+| **P9 导出 deps 防御修补**（lint 告警升级必做） | `useExportActions` 两个 `useCallback` deps 补 `boundaryLinks`（`useExhaustiveDependencies` ×2 → 0）；连带修「PNG 降级 SVG 不带 boundaryLinks」的既有不一致 | 现状不可触发（与 layout 同源同变）；hook 级判别测试 +1（同 layout 只换 boundaryLinks → exportSvg/exportPng 收到新值，修复前红） |
 
-**验收**：kernel 478 / react 978 / canvas 118 全绿；tsc ×3 / depcruise / lint / budget 全绿；既有性能门禁一条未放宽（多数优于基线）。
-计划：`docs/dispatch/2026-09-12-debt-and-perf-foundation-plan.md`（P6 可选 / P7 收口待做）。
+**验收（终稿）**：kernel 478 / react 981 / canvas 119 = **1578 全绿**；tsc ×3 / dist / depcruise（372 模块）/ lint / budget 全绿、债务未增长；既有性能门禁一条未放宽（多数优于基线）。
+计划：`docs/dispatch/2026-09-12-debt-and-perf-foundation-plan.md`（批次 B 全部完成；P5 经实测不做，理由与数字见 `perf-baseline.md` §7）。
 
 ## [1.8.1] — 2026-09-12 · 债务腾挪批次 A（工程 · no-API：bigFiles 4→3 + 原生对话框清零）
 

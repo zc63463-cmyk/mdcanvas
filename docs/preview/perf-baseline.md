@@ -182,4 +182,13 @@ P5 的收益面已不存在，而其视觉回归风险（计划 §B-P5 自述）
 `view.x/y/w/h` 依赖击穿 `FreeEdgeLayer` 的 routes memo）—— 属自由边避障批次；P4 复测显示 pan 帧间隔
 仍为 17 ms（本机 demo 规模下不可观测），故不在本批处理。
 
+### P6 / P8 / P9 追加（收口轮 · 2026-09-12）
+
+| 项 | 内容 | 机制指标 |
+|---|---|---|
+| **P6 SearchPanel 检索 memo** | `results` 改 `useMemo([query, search])`（原先渲染体内直算 `search(query)` 全树 walk —— 父组件每帧重渲、甚至 ↑/↓ 的 `setActive` 都重跑）；注入方 `SidePanels` 的 search 闭包 `useCallback([controller])` 稳定（调用时实时读 `controller.root`） | jsdom 判别（`tests/search-panel-memo.test.tsx` ×2）：同 props 重渲染 / setActive 各 **+1 → 0** 次 walk；改 query 恰 +1；换 search 引用重算（deps 契约）。**OutlinePanel 记录**：递归渲染整树（`OutlinePanel.tsx:84` 的 `children.map`）= 每次面板渲染一次全树 walk —— 按计划不虚拟化，另立批次 |
+| **P8 NodeG memo 守卫** | 新增 `tests/nodeg-memo-guard.test.ts`（无 vi.mock，直接断言生产导出 `$$typeof === Symbol.for('react.memo')`） | 阴性对照：临时摘掉 `NodeG.tsx` 的 `memo()` → 守卫**精确变红**（`expected 'function' to be 'object'`）→ 恢复复绿。补上复核发现的缺口：pan-memo 用例的 mock 自带 memo，守护不到生产侧 memo 存在性 |
+| **P9 导出 deps** | `useExportActions` 两个 `useCallback` deps 补 `boundaryLinks`（lint `useExhaustiveDependencies` ×2 → **0**）；连带修「PNG 失败降级 SVG 不带 boundaryLinks」的既有不一致（与直出 SVG 同口径） | hook 级判别测试（`useExportActions.test.tsx` +1）：同 layout 只换 boundaryLinks → `exportSvg`/`exportPng` 收到新值（修复前收到旧闭包值，红） |
+
+
 
