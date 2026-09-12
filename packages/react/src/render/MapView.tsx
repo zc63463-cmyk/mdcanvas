@@ -272,6 +272,11 @@ const CULL_MARGIN = 128;
  * 小图零回归：低于阈值走原线性路径，既有 jsdom 夹具与契约测试不受影响。
  */
 const INDEX_MIN_NODES = 1000;
+/**
+ * B-P3：`onStats` 上报节流间隔（ms）—— ≥ 此间隔且**材料字段**变化才回调，防父壳每帧重渲。
+ * 面板是诊断用，允许语义微调（选项见计划 §B-P3）。
+ */
+const STATS_THROTTLE_MS = 200;
 /** 空折叠集常量。
  * 原先写 `collapsedIds ?? new Set()` —— 每次渲染都造一个新 Set，
  * 会让 `FreeEdgeLayer` 的路由 useMemo 依赖失效，**每次重渲染都把全部边重算一遍路由**
@@ -496,6 +501,32 @@ export function MapView({
     (assetRef: { kind: string; id: string }) => resolveAssetUrlRef.current?.(assetRef),
     [],
   );
+
+  /** B-P3：缩放手势进行中（pinch 由 useMapGestures 上报；wheel 由本组件 handler 上报 + 空闲释放） */
+  const [zoomGestureActive, setZoomGestureActive] = useState(false);
+  const gestureReleaseTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const scheduleGestureRelease = useCallback((): void => {
+    if (gestureReleaseTimerRef.current) clearTimeout(gestureReleaseTimerRef.current);
+    gestureReleaseTimerRef.current = setTimeout(() => {
+      gestureReleaseTimerRef.current = null;
+      setZoomGestureActive(false);
+    }, 120); // wheel 是离散事件（无「结束」信号）：空闲 120ms 视为手势结束
+  }, []);
+  const markZoomGesture = useCallback(
+    (active: boolean): void => {
+      if (active) {
+        setZoomGestureActive(true);
+        return;
+      }
+      scheduleGestureRelease(); // pinch 抬手：统一走延迟释放（与 wheel 同路径，避免抖动）
+    },
+    [scheduleGestureRelease],
+  );
+  /** B-P3：滚轮缩放「开始 + 续期」—— 每个 wheel 事件续期，最后一个事件后 120ms 才解冻 LOD */
+  const markWheelZoom = useCallback((): void => {
+    setZoomGestureActive(true);
+    scheduleGestureRelease();
+  }, [scheduleGestureRelease]);
   const onQaChangeRef = useRef(onQaChange);
   onQaChangeRef.current = onQaChange;
   const onEditStartRef = useRef(onEditStart);
@@ -662,7 +693,12 @@ export function MapView({
 
   // 视口变换渲染（render body 内：每次 epoch 变化重算可见集合——单帧触发）
   // A2：大图（>LOD_AUTO_NODES）自动激进 LOD（T8 降级策略 L1 接线）
-  const lod = lodFor(viewport.transform.k, layout.nodes.length);
+  // B-P3：缩放手势期**冻结 LOD** —— 手势中跨越阈值会让整图文案/结构反复重排（可见抖动）；
+  //        手势结束再按实时 k 切换一次。平移不改 k，LOD 天然稳定 → 平移不进入冻结（计划 §1 第 7 条）。
+  const lodLive = lodFor(viewport.transform.k, layout.nodes.length);
+  const frozenLodRef = useRef<LodLevel>(lodLive);
+  if (!zoomGestureActive) frozenLodRef.current = lodLive;
+  const lod = zoomGestureActive ? frozenLodRef.current : lodLive;
 
   // E8：连线避障的障碍集（全量节点盒 + id）。
   // 低 LOD（缩小视图）传空数组关闭寻路——与树边命中区/chip 的 `lod === 'full'` 门控同一策略：
@@ -1056,9 +1092,48 @@ export function MapView({
     lod,
     viewMs,
   };
+  /**
+   * B-P3：对外上报**节流**（≥200ms 且材料字段变化才回调）——
+   * 原先每 epoch（每帧）回调新对象 → 父壳（PerfPanel 常显，2000+ 行）每帧重渲。
+   * 材料字段 = totalNodes / visibleNodes / visibleLinks / lod；
+   * `viewMs` 每帧都变（渲染计时噪声）故**不**作触发条件，仅作 payload 携带（面板诊断用）。
+   */
+  const lastStatsAtRef = useRef(0);
+  const lastStatsRef = useRef<MapStats | null>(null);
+  const statsTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   useEffect(() => {
-    onStatsRef.current?.(statsRef.current);
-  }, [epoch, layout]);
+    /** 材料字段是否实质变化（viewMs 每帧噪声，不计入触发条件） */
+    const differs = (a: MapStats | null, b: MapStats): boolean =>
+      a === null ||
+      a.totalNodes !== b.totalNodes ||
+      a.visibleNodes !== b.visibleNodes ||
+      a.visibleLinks !== b.visibleLinks ||
+      a.lod !== b.lod;
+    const emit = (payload: MapStats): void => {
+      lastStatsAtRef.current = performance.now();
+      lastStatsRef.current = payload;
+      onStatsRef.current?.(payload);
+    };
+    if (!differs(lastStatsRef.current, statsRef.current)) return;
+    const elapsed = performance.now() - lastStatsAtRef.current;
+    if (elapsed >= STATS_THROTTLE_MS) {
+      emit(statsRef.current);
+      return;
+    }
+    // 窗口内：合并到窗口末尾补报一次（否则「最后一次手势」的统计会永远不上报）；
+    // 补报前**重新比对当前值** —— 瞬态差异（首帧噪声）收敛回原值时不补报。
+    if (statsTimerRef.current) return;
+    statsTimerRef.current = setTimeout(() => {
+      statsTimerRef.current = null;
+      if (differs(lastStatsRef.current, statsRef.current)) emit(statsRef.current);
+    }, STATS_THROTTLE_MS - elapsed);
+    return () => {
+      if (statsTimerRef.current) {
+        clearTimeout(statsTimerRef.current);
+        statsTimerRef.current = null;
+      }
+    };
+  }, [epoch, layout, lod]);
 
   // 外部 API（fit / zoomBy / resetZoom / focusNode——M5-T3 全部平滑动画）
   useEffect(() => {
@@ -1156,6 +1231,7 @@ export function MapView({
       setBeamDrag,
       onBeamLensChange: onBeamLensChangeRef.current,
       onBeamHover: setBeamHoverDir,
+      onGestureActive: markZoomGesture, // B-P3：pinch 起止 → 冻结/解冻 LOD
       onNodeClick: (ln, info) => onNodeClickRef.current?.(ln, info),
       onBlankClick: () => onBlankClickRef.current?.(),
       onNodeHover: (id, at) => {
@@ -1174,13 +1250,14 @@ export function MapView({
     const onWheel = (e: WheelEvent) => {
       e.preventDefault();
       if (nodeDragRef.current) return; // 拖岛中：忽略缩放，避免预览/提交位移换算歧义
+      markWheelZoom(); // B-P3：滚轮缩放手势开始并续期（空闲 120ms 自动释放）
       const rect = el.getBoundingClientRect();
       // M5-T4：滚轮以光标为锚（zoomAt 锚点保持世界坐标不动）+ 越界软回弹
       viewport.zoomAt(e.clientX - rect.left, e.clientY - rect.top, Math.exp(-e.deltaY * 0.0016));
     };
     el.addEventListener('wheel', onWheel, { passive: false });
     return () => el.removeEventListener('wheel', onWheel);
-  }, [viewport]);
+  }, [viewport, markWheelZoom]);
 
   // A4：拖岛取消路径（design §7 / T11）——Esc / window blur 时恢复原图：
   // 仅清预览状态（nodeDrag），不回调 onCenterMove → 不写 note、不进 history、不置 dirty。

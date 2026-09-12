@@ -168,6 +168,11 @@ export interface UseMapGesturesParams {
   onBeamLensChange?: (fromId: string, dir: BeamDragState['handle']['dir'], len: number) => void;
   /** v1.7.0：梁悬停方向变化（null = 离开梁/命中节点）——供上层切换 ns/ew-resize 光标 */
   onBeamHover?: (dir: BeamDragState['handle']['dir'] | null) => void;
+  /**
+   * B-P3：**缩放手势**（多指 pinch）起止各上报一次 true/false ——
+   * 供 MapView 在手势期间冻结 LOD（跨阈值不反复重排）；**平移不触发**（平移不改 k，LOD 天然稳定）。
+   */
+  onGestureActive?: (active: boolean) => void;
 }
 
 export function useMapGestures({
@@ -189,6 +194,7 @@ export function useMapGestures({
   setBeamDrag,
   onBeamLensChange,
   onBeamHover,
+  onGestureActive,
 }: UseMapGesturesParams) {
   /** R2：多指 pinch 跟踪（≥2 指 → 缩放模式，抑制 pan / 节点拖拽） */
   const pinch = useRef(new PinchTracker());
@@ -200,6 +206,7 @@ export function useMapGestures({
     viewport.cancelAnim();
     // R2：多指登记——第二指落下进入 pinch（取消单指 pan / 节点拖拽 / 梁拖拽）
     if (pinch.current.down(e.pointerId, e.clientX, e.clientY)?.type === 'start') {
+      onGestureActive?.(true); // B-P3：pinch 开始（冻结 LOD）
       dragRef.current = null;
       setNodeDrag(null);
       setBeamDrag?.(null);
@@ -350,7 +357,9 @@ export function useMapGestures({
 
   const onPointerUp = (e: ReactPointerEvent<HTMLElement>): void => {
     // R2：指头抬起——退出登记（剩一指重新按下即可恢复 pan）
+    const wasPinching = pinch.current.active;
     pinch.current.up(e.pointerId);
+    if (wasPinching && !pinch.current.active) onGestureActive?.(false); // B-P3：pinch 结束
     // 节点拖拽结束（M5-T5）：合法落点 → move-node op；非法/无目标 → 拒绝；未移动 → 点击选中
     const nd = nodeDrag;
     if (nd && nd.pointerId === e.pointerId) {
@@ -398,7 +407,9 @@ export function useMapGestures({
   };
 
   const onPointerCancel = (e: ReactPointerEvent<HTMLElement>): void => {
+    const wasPinching = pinch.current.active;
     pinch.current.up(e.pointerId);
+    if (wasPinching && !pinch.current.active) onGestureActive?.(false); // B-P3：pinch 结束
     if (dragRef.current?.id === e.pointerId) dragRef.current = null;
     setNodeDrag((d) => (d?.pointerId === e.pointerId ? null : d));
     setBeamDrag?.((d) => (d?.pointerId === e.pointerId ? null : d));
