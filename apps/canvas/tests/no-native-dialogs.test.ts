@@ -8,7 +8,7 @@
  * `MindmapStage` 键盘删除路径残留 `confirm()`，右键菜单那批已按裁决 M2 改直删，唯独漏了它）。
  *
  * 规则：画布壳体（apps/canvas/src）不得再引入原生对话框；
- * 存量三处各有替代计划（见 ALLOW 注释），**修一处从白名单删一处**。
+ * 存量各处各有替代计划（见 ALLOW 注释），**修一处从白名单删一处**。
  */
 import { readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
@@ -19,7 +19,6 @@ const SRC_DIR = new URL('../src/', import.meta.url).pathname.replace(/^\/([A-Za-
 /** 存量例外：各有替代计划，勿再新增 */
 const ALLOW = new Set([
   'hooks/useDocumentActions.ts', // 未保存修改时切换文档确认 → 待自定义模态（涉及数据丢失语义，需产品决策）
-  'hooks/useExportActions.ts', // PNG 导出失败的降级提示 → 待统一 toast
   'FileManager.tsx', // 文件/文件夹删除与新建命名 → 待自定义模态
 ]);
 

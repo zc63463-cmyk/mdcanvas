@@ -1022,6 +1022,7 @@ function StageContent({
       token,
       docName: doc.name,
       boundaryLinks: islandView.boundaryLinks,
+      onNotice: setCommandNotice, // A-D2：PNG 降级提示走命令告警条（替代被 webview 静默吞掉的 alert）
     });
 
     // A6/T23 Canvas 门禁：含中心岛（跨岛父子连接）或自由边的文档仅 SVG 后端完整支持

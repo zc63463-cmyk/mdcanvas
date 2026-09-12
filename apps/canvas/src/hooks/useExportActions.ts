@@ -22,6 +22,8 @@ export interface ExportActionsOptions {
   docName: string;
   /** G6″（A6/T23）：跨岛父子连接补线（islandView.boundaryLinks；端点盒缺失自动跳过） */
   boundaryLinks?: ReadonlyArray<{ fromId: string; toId: string }>;
+  /** A-D2：导出降级提示（缺省 undefined → 静默）。替代被 IDE webview 静默吞掉的原生 alert */
+  onNotice?: (message: string) => void;
 }
 
 export interface ExportActions {
@@ -34,6 +36,7 @@ export function useExportActions({
   token,
   docName,
   boundaryLinks,
+  onNotice,
 }: ExportActionsOptions): ExportActions {
   const handleExport = useCallback((): void => {
     if (!layout) return;
@@ -65,9 +68,9 @@ export function useExportActions({
       return;
     }
     download(new Blob([svg], { type: 'image/svg+xml' }), '.svg');
-    if (r.reason === 'tainted') alert('画布含外部图片，无法导出 PNG，已改为导出 SVG。');
-    else alert('当前环境不支持导出 PNG，已改为导出 SVG。');
-  }, [layout, token, docName]);
+    if (r.reason === 'tainted') onNotice?.('画布含外部图片，无法导出 PNG，已改为导出 SVG。');
+    else onNotice?.('当前环境不支持导出 PNG，已改为导出 SVG。');
+  }, [layout, token, docName, onNotice]);
 
   return { handleExport, handleExportPng };
 }
