@@ -49,6 +49,7 @@ import type { EdgeRouteEntry } from './FreeEdgeLayer.js';
 import { type EdgeManual, FreeEdgeLayer } from './FreeEdgeLayer.js';
 import { collectFreeEdges, type FreeEdge } from './freeEdges.js';
 import { stableByKeys } from './stableArray.js';
+import { CULL_QUANT, quantizeRect } from './viewportQuant.js';
 import { collectDeclaredGrowDir } from './growDir.js';
 import {
   beamRailDuringDrag,
@@ -925,6 +926,9 @@ export function MapView({
   // 依赖取 view 的原始数值而非 view 对象 —— view 由 viewport.worldRect() 每次新建。
   // G-P1（自由边路由治理）：出口经 stableByKeys 按 edge.key 稳定化 —— 平移只改裁剪窗口、
   // 成员未变时返回上一引用，下游 FreeEdgeLayer 路由 memo 不再被击穿（详见本 memo 内注释）。
+  // G-P2：裁剪窗口再量化到 CULL_QUANT 网格（外扩超集）—— 窗口只在跨网格线时变化，
+  // 配合 G-P1 后重算频率从「每帧可能」降到「每 256px 至多一次」（计划 G-P2；可独立回退）。
+  const freeView = quantizeRect(view, CULL_QUANT);
   const freeEdgesStableRef = useRef<readonly FreeEdge[] | null>(null);
   const visibleFreeEdges = useMemo(() => {
     if (freeEdges.length === 0) return freeEdges;
@@ -933,17 +937,17 @@ export function MapView({
       const tb = e.targetId !== null ? derived.boxes.get(e.targetId) : undefined;
       if (!sb && !tb) return true; // ghost / 端点未解析：数量少，恒渲染
       const inView = (b: Box): boolean =>
-        b.x + b.w >= view.x - CULL_MARGIN &&
-        b.x <= view.x + view.w + CULL_MARGIN &&
-        b.y + b.h >= view.y - CULL_MARGIN &&
-        b.y <= view.y + view.h + CULL_MARGIN;
+        b.x + b.w >= freeView.x - CULL_MARGIN &&
+        b.x <= freeView.x + freeView.w + CULL_MARGIN &&
+        b.y + b.h >= freeView.y - CULL_MARGIN &&
+        b.y <= freeView.y + freeView.h + CULL_MARGIN;
       if (sb && tb) return inView(spanBoxOf(sb, tb));
       // 仅一端有盒（ghost 靶点）：按该端点判定
       return inView(sb ?? tb!);
     });
     freeEdgesStableRef.current = stableByKeys(freeEdgesStableRef.current, next, (e) => e.key);
     return freeEdgesStableRef.current;
-  }, [freeEdges, derived, view.x, view.y, view.w, view.h]);
+  }, [freeEdges, derived, freeView.x, freeView.y, freeView.w, freeView.h]);
 
   // C2：Canvas 模式（强制 或 >CANVAS_AUTO_NODES 自动降级）——场景树构建（世界坐标）
   // A6/T23 门禁在 resolveBackend：显式 forceBackend='svg' 压过自动降级（不静默丢岛/边）。

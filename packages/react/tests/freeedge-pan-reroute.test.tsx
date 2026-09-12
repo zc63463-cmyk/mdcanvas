@@ -35,6 +35,20 @@ vi.mock('../src/render/edgeRouting.js', async (importOriginal) => {
   };
 });
 
+/** 裁剪 memo 重算计数（stableByKeys 每次 memo 重跑调用一次 = 裁剪窗口变化频率的机制指标） */
+let stableCalls = 0;
+
+vi.mock('../src/render/stableArray.js', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../src/render/stableArray.js')>();
+  return {
+    ...actual,
+    stableByKeys: (...args: Parameters<typeof actual.stableByKeys>) => {
+      stableCalls++;
+      return actual.stableByKeys(...args);
+    },
+  };
+});
+
 const char = createCharMeasure({ family: 'sans-serif', size: 11 }, null);
 
 function mount() {
@@ -79,6 +93,65 @@ const flushFrames = (): Promise<void> =>
 
 beforeEach(() => {
   routeCalls = 0;
+  stableCalls = 0;
+});
+
+/** 投影 transform 解析（Δ 世界 px 的证据位：translate 差值 ÷ scale） */
+function parseTransform(t: string | null): { tx: number; ty: number; k: number } {
+  const m = /translate\(([-\d.e]+) ([-\d.e]+)\)(?: scale\(([-\d.e]+)\))?/.exec(t ?? '');
+  const num = (s: string | undefined, d: number): number => (s === undefined ? d : Number(s));
+  return { tx: num(m?.[1], NaN), ty: num(m?.[2], NaN), k: num(m?.[3], 1) };
+}
+
+/** 长距稳态平移：steps 步 × stepPx + 3 步 1px 刹车（速度窗最后 3 采样 < 0.8px/ms 阈值 → 无惯性） */
+async function panLongSteady(wheel: HTMLElement, steps: number, stepPx: number): Promise<void> {
+  const x = -4000;
+  const y = -4000;
+  fireEvent.pointerDown(wheel, { clientX: x, clientY: y, pointerId: 1, bubbles: true });
+  for (let i = 1; i <= steps; i++) {
+    fireEvent.pointerMove(wheel, { clientX: x + i * stepPx, clientY: y, pointerId: 1, bubbles: true });
+    await act(async () => {
+      await new Promise((r) => setTimeout(r, 30));
+    });
+  }
+  const end = x + steps * stepPx;
+  for (let b = 1; b <= 3; b++) {
+    fireEvent.pointerMove(wheel, { clientX: end + b, clientY: y, pointerId: 1, bubbles: true });
+    await act(async () => {
+      await new Promise((r) => setTimeout(r, 40));
+    });
+  }
+  fireEvent.pointerUp(wheel, { clientX: end + 3, clientY: y, pointerId: 1, bubbles: true });
+}
+
+it('长距平移（G-P2）：裁剪 memo 重算 ≤ ⌈Δ/256⌉+2 次 —— 窗口量化后每 256px 至多一次', async () => {
+  const { container, wheel } = mount();
+  await flushFrames();
+  expect(container.querySelectorAll('[data-free-edge]').length).toBe(2);
+  expect(routeCalls).toBeGreaterThan(0);
+
+  routeCalls = 0;
+  stableCalls = 0;
+  const t0 = parseTransform(projectionTransform(container));
+  await panLongSteady(wheel, 12, 40); // Δ ≈ 480 世界 px
+  await flushFrames();
+  const t1 = parseTransform(projectionTransform(container));
+
+  // 平移生效（非空转）
+  expect(t1.tx).not.toBe(t0.tx);
+  const deltaWorld = Math.abs(t1.tx - t0.tx) / (t1.k || 1);
+  const boundEvents = Math.ceil(deltaWorld / 256) + 2;
+
+  // 机制指标（G-P2）：裁剪窗口变化频率 —— 量化前逐帧（≈ 每步一次，15 次），量化后 ≤ 上界
+  expect(
+    stableCalls,
+    `长距平移（Δ=${deltaWorld} 世界px）裁剪 memo 重算 ${stableCalls} 次，上界 ${boundEvents}`,
+  ).toBeLessThanOrEqual(boundEvents);
+  // 路由重算上界（每次事件对每条可见边一次 routeAesthetic，夹具 E=2；G-P1 后通常为 0）
+  expect(
+    routeCalls,
+    `长距平移（Δ=${deltaWorld} 世界px）路由重算 ${routeCalls} 次调用，上界 ${boundEvents * 2}`,
+  ).toBeLessThanOrEqual(boundEvents * 2);
 });
 
 it('纯平移（可见集成员不变）不重算任何路由（routeAesthetic 调用次数 = 0）', async () => {

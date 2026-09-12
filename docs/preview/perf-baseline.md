@@ -201,13 +201,17 @@ P5 的收益面已不存在，而其视觉回归风险（计划 §B-P5 自述）
 
 | 指标 | 基线（G-P0 红） | G-P1 | G-P2 | G-P3 |
 |---|---|---|---|---|
-| `routeAesthetic` 调用次数（小步平移） | **4**（= 2 平移 × 2 边） | **0**（实测） | 0 | 0 |
-| `routeAesthetic` 调用次数（长距平移，上界 ⌈Δ/256⌉+2） | 逐帧：步数 × E | 步数 × E（成员变即触发） | 见 G-P2 行 | — |
+| `routeAesthetic` 调用次数（小步平移，成员不变） | **4**（= 2 平移 × 2 边） | **0**（实测） | 0 | 0 |
+| **裁剪 memo 重算**（长距平移 Δ=483，上界 ⌈Δ/256⌉+2 = 4） | 逐帧（≈ 每步一次） | 逐帧：**15**（= 12 步 + 3 刹车；红证据） | **2**（实测） | — |
+| `routeAesthetic` 调用次数（长距平移 Δ=483，上界 (⌈Δ/256⌉+2)×E） | 步数 × E（逐帧） | ≤ 上界（实测 0） | ≤ 上界（实测 0） | — |
 | 平移生效（投影 transform 变化） | ✅（红证据同时成立，非空转） | ✅ | ✅ | ✅ |
 
 基线红证据（工具原样）：`AssertionError: pan 期整表重算了 4 次 routeAesthetic——identity 未稳定: expected 4 to be +0`。
-G-P1 绿证据（工具原样）：`Test Files 1 passed (1) / Tests 1 passed (1)`（`tests/freeedge-pan-reroute.test.tsx`，routeCalls = 0）。
-G-P2 长距列在 G-P2 落地后补实测；本表 G-P1 → G-P3 列随任务推进填充。
+G-P1 绿证据（工具原样）：`Test Files 1 passed (1) / Tests 1 passed (1)`（routeCalls = 0）。
+G-P2 红证据（工具原样）：`AssertionError: 长距平移（Δ=483 世界px）裁剪 memo 重算 15 次，上界 4: expected 15 to be less than or equal to 4`。
+G-P2 绿证据：`Tests 18 passed (18)`；实测 2 次（上界 4）——**注**：G-P1 落地后 `routeAesthetic` 已不逐帧触发（成员不变即不重算），
+故 G-P2 的判别指标取**裁剪 memo 重算频率**（`stableByKeys` 调用数 = `visibleFreeEdges` memo 重跑数），
+即计划原意「窗口变化频率从每帧到每 256px」的直译；G-P0 的长距列（步数×E）在 G-P1 后已恒 ≤ 上界。
 
 ### 8.2 规模指标（`node scripts/bench-freeedge.mjs`：单次全量重算，median of 5）
 
@@ -248,6 +252,27 @@ obstacles,E,routeTotalMs,perEdgeMs,jumpsMs,routeIndexMs
   25 节点 demo 行取同构合成场景（对角穿越，偏保守）：**探针实测单边 median 3.33ms** ——§7 末「demo 不可观测（pan 帧间隔 17ms）」
   是该 repo 具体 demo（快路径为主）的结论，本表不宣称「demo 一律不可观测」；风险同时在**规模**与**边形状**两个维度。
 - `routeIndexMs` 为预留列（G-P3b 索引粗筛若做，在此记录对照；不做则记 `-` 并注结论）。
+- G-P2 不改变单次重算成本（只改触发频率与裁剪窗口），故本表不重复跑；量化窗口 = 原窗口**外扩至 ≤ CULL_QUANT（256px）网格**。
+
+### 8.3 G-P2 副作用与真浏览器视觉检查
+
+**超集副作用实测**（夹具：5 节点 / 2 条边；pan 至 Δ=563 世界 px 处）：
+- 未量化（`CULL_QUANT=1` 等价态）：可见边 **E = 0**（两条边均已出原窗口）；
+- 量化后（`CULL_QUANT=256`）：可见边 **E = 1**（超集保留「窗口外 ≤256px 内」的边）。
+- 语义 = 提前进入 / 延后退出（每边最多 1 个量化格）；`CULL_MARGIN` 未动。
+
+**真浏览器**（`node tools/verify-freeedge-pan.mjs`，dev server + playwright；产物 `verify-shots/freeedge-pan-{before,after,back}.png`）：
+内置示例 `gateway.mm.md`（自带 2 条自由边）——pan → 回程三段采样结果（工具原样）：
+
+```
+edgeCounts: before 2 / after 2 / back 2        （全程在位，未被误删）
+panApplied: true  transform before/after/back 均变化（k=0.7436）
+persistentEdges: 2   persistentDIdentical: 2   （持久边 path d **逐字节相同**——纯平移下路由几何不变，无抖动）
+invalidD: 0                                    （全部 d 非空、无 NaN/Infinity/undefined）
+```
+
+人工比对截图：三段中两条边（含「里程碑归属 / 待验证」标签与拐弯形态）均在场、位置正确、无穿越节点异常；
+回程后视图恢复原区域，边随裁剪集合重入无缺失。
 
 
 
