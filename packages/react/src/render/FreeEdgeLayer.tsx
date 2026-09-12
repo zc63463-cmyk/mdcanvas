@@ -104,7 +104,6 @@ export interface FreeEdgeLayerProps {
 }
 
 const GHOST_R = 4;
-const CURVATURE = 0.16;
 
 /**
  * 一条边的路由结果条目（Opp 精确翻转用）。
@@ -168,14 +167,17 @@ export function FreeEdgeLayer({
     // P0 · 平行入边错位：同一目标节点的第 N 条入边沿外侧轴反向错位（anchorStagger），
     // 避免多条边从同一个点扇形炸开（semanticAnchorPair 的 stagger 语义）。
     const staggerSeen = new Map<string, number>();
-    const cache = routeCacheConfig.enabled
-      ? (routeCacheRef.current && routeCacheRef.current.gen === obstacleTable
-          ? routeCacheRef.current
-          : (routeCacheRef.current = {
-              gen: obstacleTable,
-              lru: new LruCache<string, RouteResult>(512),
-            }))
-      : null;
+    // G-P6 缓存换代（显式 if，避免表达式内赋值）：同一障碍表代内复用 LRU；换代即重建
+    let cache: { gen: ObstacleTable; lru: LruCache<string, RouteResult> } | null = null;
+    if (routeCacheConfig.enabled) {
+      const prev = routeCacheRef.current;
+      if (prev && prev.gen === obstacleTable) {
+        cache = prev;
+      } else {
+        cache = { gen: obstacleTable, lru: new LruCache<string, RouteResult>(512) };
+        routeCacheRef.current = cache;
+      }
+    }
     for (const edge of edges) {
       const eps = freeEdgeEndpoints(edge, boxOf, root, collapsed, resolveEndpoint);
       // 源锚未解析/端点盒缺失 → 不绘制（此前退化成指向世界原点的误导性直线）
@@ -211,7 +213,7 @@ export function FreeEdgeLayer({
     // P2-1：动画/瞬态（fastRouting）跳过跨边交叉检测与 Line jumps——瞬态让步帧率。
     // 静态态行为与原实现逐位一致（applyLineJumps 抽出自下方的跳线块）。
     return fastRouting ? m : applyLineJumps(m);
-  }, [edges, boxOf, root, collapsed, obstacles, fastRouting, resolveEndpoint, obstacleTable]);
+  }, [edges, boxOf, root, collapsed, fastRouting, resolveEndpoint, obstacleTable]);
 
   // Opp 精确翻转：把实际渲染结果抛给上层（含跨边交叉协调与 Line jumps 的最终 d）。
   // 上层据此用 inferBowSide 判断当前鼓向，避免"复刻计算"与真实渲染不一致。
@@ -328,7 +330,7 @@ export function FreeEdgeLayer({
         const both = edge.dir === 'both' && !eps.ghost;
         const labelText = edge.label ?? edge.rel;
         const tip = [
-          invalidated ? `已失效 ${edge.invalidAt!.slice(0, 10)}` : '',
+          invalidated ? `已失效 ${edge.invalidAt?.slice(0, 10)}` : '',
           `${edge.rel}${edge.label ? ` · ${edge.label}` : ''}`,
           edge.source ? `来源: ${edge.source}` : '',
           edge.note ?? '',

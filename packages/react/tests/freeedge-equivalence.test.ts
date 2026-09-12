@@ -46,7 +46,7 @@ interface RandScene {
 /** 随机树 + 随机折叠 + 盒怪癖（缺盒 15% / 零盒 10% / 正常盒） */
 function makeScene(rnd: () => number, count: number): RandScene {
   const nodes: EditableNode[] = [];
-  for (let i = 0; i < count; i++) nodes.push(makeTextNode('n' + i));
+  for (let i = 0; i < count; i++) nodes.push(makeTextNode(`n${i}`));
   for (let i = 1; i < count; i++) {
     const parent = nodes[Math.floor(rnd() * i)];
     const node = nodes[i];
@@ -78,7 +78,7 @@ function makeScene(rnd: () => number, count: number): RandScene {
 function randomEnd(rnd: () => number, nodes: EditableNode[]): string | null {
   const r = rnd();
   if (r < 0.12) return null;
-  if (r < 0.24) return 'missing-' + Math.floor(rnd() * 100);
+  if (r < 0.24) return `missing-${Math.floor(rnd() * 100)}`;
   const n = nodes[Math.floor(rnd() * nodes.length)];
   return n ? n.id : null;
 }
@@ -129,14 +129,14 @@ describe('G-P3 等价性守护', () => {
       const obstacles: { id: string; box: Box }[] = [];
       for (let i = 0; i < count; i++) {
         obstacles.push({
-          id: 'o' + i,
+          id: `o${i}`,
           box: { x: rnd() * 800, y: rnd() * 400, w: 20 + rnd() * 100, h: 16 + rnd() * 30 },
         });
       }
       const table = buildObstacleTable(obstacles);
       const pairs: [string, string][] = [
         ['o0', 'o1'], // 两端都在场
-        ['o' + (count - 1), 'o' + count], // 一端缺场
+        [`o${count - 1}`, `o${count}`], // 一端缺场
         ['none-a', 'none-b'], // 全缺场（零拷贝路径）
         ['o2', 'o2'], // 同 id 两次（自关联）
       ];
@@ -145,7 +145,9 @@ describe('G-P3 等价性守护', () => {
         const got = table.without(f, t);
         expect(got).toEqual(old);
         expect(got.length).toBe(old.length);
-        old.forEach((b, i) => expect(got[i]).toBe(b)); // 顺序不变 + 同引用
+        old.forEach((b, i) => {
+          expect(got[i]).toBe(b); // 顺序不变 + 同引用
+        });
       }
     }
     // 空障碍：without 应返回空数组
@@ -231,7 +233,7 @@ describe('G-P3 等价性守护', () => {
     const obstacles: { id: string; box: Box }[] = [];
     for (let i = 0; i < 1200; i++) {
       obstacles.push({
-        id: 'g' + i,
+        id: `g${i}`,
         box: { x: (i % COLS) * 160, y: Math.floor(i / COLS) * 56, w: 100, h: 30 },
       });
     }
@@ -271,13 +273,19 @@ describe('G-P3 等价性守护', () => {
       }
       // 强制开索引（生产阈值 1000，本测 indexMinNodes: 0）——判别对象是 near() 本身
       const edges: { a: Box; b: Box; fromId: string; toId: string }[] = [];
+      /** 随机取一障碍：显式空集守卫替代非空断言（rnd 调用序与原实现一致） */
+      const pick = (): { id: string; box: Box } => {
+        const o = obstacles[Math.floor(rnd() * obstacles.length)];
+        if (!o) throw new Error('pick from empty obstacles');
+        return o;
+      };
       for (let j = 0; j < 5; j++) {
-        const o1 = obstacles[Math.floor(rnd() * obstacles.length)]!;
+        const o1 = pick();
         // 近端点（同场景随机找距离 <1600 的伴侣 → 短边，near() 命中为主）与远端点（长边 → 回退分支）混合
-        let o2 = obstacles[Math.floor(rnd() * obstacles.length)]!;
+        let o2 = pick();
         if (j < 3) {
           for (let t = 0; t < 40; t++) {
-            const cand = obstacles[Math.floor(rnd() * obstacles.length)]!;
+            const cand = pick();
             const d = Math.hypot(
               cand.box.x - o1.box.x,
               cand.box.y - o1.box.y,
@@ -294,7 +302,8 @@ describe('G-P3 等价性守护', () => {
       // 每场景一条贴弦 threading 边：障碍压在两盒中心连线中点上（必须经 corridor/threading 判定分支）。
       // 先入障碍全集、后建表 —— 保证剪枝/全量两条路径都能看到它。
       if (edges.length > 0) {
-        const e0 = edges[0]!;
+        const e0 = edges[0];
+        if (!e0) throw new Error('no edge to thread');
         const midC = {
           x: (e0.a.x + e0.a.w / 2 + e0.b.x + e0.b.w / 2) / 2 - 40,
           y: (e0.a.y + e0.a.h / 2 + e0.b.y + e0.b.h / 2) / 2 - 20,
