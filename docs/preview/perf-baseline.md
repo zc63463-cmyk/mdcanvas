@@ -190,5 +190,48 @@ P5 的收益面已不存在，而其视觉回归风险（计划 §B-P5 自述）
 | **P8 NodeG memo 守卫** | 新增 `tests/nodeg-memo-guard.test.ts`（无 vi.mock，直接断言生产导出 `$$typeof === Symbol.for('react.memo')`） | 阴性对照：临时摘掉 `NodeG.tsx` 的 `memo()` → 守卫**精确变红**（`expected 'function' to be 'object'`）→ 恢复复绿。补上复核发现的缺口：pan-memo 用例的 mock 自带 memo，守护不到生产侧 memo 存在性 |
 | **P9 导出 deps** | `useExportActions` 两个 `useCallback` deps 补 `boundaryLinks`（lint `useExhaustiveDependencies` ×2 → **0**）；连带修「PNG 失败降级 SVG 不带 boundaryLinks」的既有不一致（与直出 SVG 同口径） | hook 级判别测试（`useExportActions.test.tsx` +1）：同 layout 只换 boundaryLinks → `exportSvg`/`exportPng` 收到新值（修复前收到旧闭包值，红） |
 
+## 八、自由边路由治理（2026-09-12 · 基线 → G-P1 → G-P2 → G-P3 四列对照）
+
+> 计划：`docs/dispatch/2026-09-12-freeedge-routing-recompute-plan.md`（G-P0…G-P6）。
+> 背景（§7 末「本批记录但未修」）：`visibleFreeEdges` 每帧重算（O(E×N)）→ `FreeEdgeLayer` 路由 memo 击穿 → pan 期逐帧整表重算。
+> 命令：判别用例 `cd packages/react && node ../../node_modules/.pnpm/vitest@4.1.11_jsdom@30.0.1_vite@8.2.2/node_modules/vitest/vitest.mjs run tests/freeedge-pan-reroute.test.tsx`；
+> 规模 `node scripts/bench-freeedge.mjs`（node 纯计算，median of 5，1 次预热）。
+
+### 8.1 机制指标（jsdom：2 次小步纯平移 × 2 条可见自由边，成员不变）
+
+| 指标 | 基线（G-P0 红） | G-P1 | G-P2 | G-P3 |
+|---|---|---|---|---|
+| `routeAesthetic` 调用次数（小步平移） | **4**（= 2 平移 × 2 边） | 0（G-P1 后） | 0 | 0 |
+| `routeAesthetic` 调用次数（长距平移，上界 ⌈Δ/256⌉+2） | 逐帧：步数 × E | 步数 × E（成员变即触发） | 见 G-P2 行 | — |
+| 平移生效（投影 transform 变化） | ✅（红证据同时成立，非空转） | ✅ | ✅ | ✅ |
+
+基线红证据（工具原样）：`AssertionError: pan 期整表重算了 4 次 routeAesthetic——identity 未稳定: expected 4 to be +0`。
+G-P2 长距列在 G-P2 落地后补实测；本表 G-P1 → G-P3 列随任务推进填充。
+
+### 8.2 规模指标（`node scripts/bench-freeedge.mjs`：单次全量重算，median of 5）
+
+基线（G-P0，2026-09-12，工具 CSV 原样）：
+
+```
+obstacles,E,routeTotalMs,perEdgeMs,jumpsMs,routeIndexMs
+25,2,4.25,2.109,0.03,-
+1000,1,16.06,16.054,0.01,-
+1000,10,64.30,6.415,0.15,-
+1000,50,267.70,5.324,1.52,-
+1000,100,791.05,7.865,4.58,-
+10000,1,118.82,118.820,0.00,-
+10000,10,237.68,23.759,0.10,-
+10000,50,1209.74,24.153,2.09,-
+10000,100,2217.01,22.093,7.69,-
+```
+
+**口径（防误读）**：
+- 场景 = 网格障碍（列距 160 / 行距 56 世界单位，盒 96–136×28–36）+ 4 叉 N 节点树；边对确定性取（源靶相距约 1/3 网格）。
+- 含端点解析（`collapsedAncestors` O(N) DFS）+ obstacles filter/map + `routeAesthetic` + `applyLineJumps`；**不含**真机 DOM/React 渲染。
+- **边形状敏感**：空旷直连/语义 S 形快路径的边 ≈ 0.0x ms；被阻长边触发全枚举（≤13 曲率档 × ≤13 锚点对 × 采样 × 净空扫描）→ ms 级。
+  25 节点 demo 行取同构合成场景（对角穿越，偏保守）：**探针实测单边 median 3.33ms** ——§7 末「demo 不可观测（pan 帧间隔 17ms）」
+  是该 repo 具体 demo（快路径为主）的结论，本表不宣称「demo 一律不可观测」；风险同时在**规模**与**边形状**两个维度。
+- `routeIndexMs` 为预留列（G-P3b 索引粗筛若做，在此记录对照；不做则记 `-` 并注结论）。
+
 
 
