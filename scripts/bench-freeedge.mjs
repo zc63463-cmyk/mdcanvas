@@ -19,8 +19,12 @@
  *   -p packages/react/tsconfig.build.json` 重建 dist）：
  *   node scripts/bench-freeedge.mjs
  */
+import { edgeResolverOf, freeEdgeEndpoints } from '../packages/react/dist/render/freeEdges.js'
+import { buildObstacleTable } from '../packages/react/dist/render/obstacleTable.js'
 import { routeAesthetic, applyLineJumps } from '../packages/react/dist/render/edgeRouting.js'
-import { freeEdgeEndpoints } from '../packages/react/dist/render/freeEdges.js'
+
+/** --legacy：旧管线（每端点 collapsedAncestors DFS + 每边 filter+map）；缺省 = 现行管线（G-P3 后） */
+const LEGACY = process.argv.includes('--legacy')
 
 const REPEAT = 5
 const EDGE_COUNTS = [1, 10, 50, 100]
@@ -71,18 +75,23 @@ function median(arr) {
   return s[Math.floor(s.length / 2)]
 }
 
-/** 一个组合的一次整表重算计时 */
+/** 一个组合的一次整表重算计时。
+ *  G-P3 注：现行管线中解析器/预构建表为独立 useMemo（随 root/boxOf/obstacles 变化摊销，
+ *  不进「edges 变化」触发的路由重算），故其构建计在计时外——计时 = 每边循环
+ *  （与生产 FreeEdgeLayer 的 routes useMemo 内层同构）。 */
 function runOnce(scene) {
   const { root, edges, obstacles, boxOf, collapsed } = scene
+  const resolver = LEGACY ? undefined : edgeResolverOf(root, collapsed, boxOf)
+  const table = LEGACY ? null : buildObstacleTable(obstacles)
   const routedPolylines = []
   const m = new Map()
   const t0 = performance.now()
   for (const e of edges) {
-    const eps = freeEdgeEndpoints(e, boxOf, root, collapsed)
+    const eps = freeEdgeEndpoints(e, boxOf, root, collapsed, resolver)
     if (!eps.renderable) continue
-    const obs = obstacles
-      .filter((o) => o.id !== eps.fromId && o.id !== eps.toId)
-      .map((o) => o.box)
+    const obs = table
+      ? table.without(eps.fromId, eps.toId)
+      : obstacles.filter((o) => o.id !== eps.fromId && o.id !== eps.toId).map((o) => o.box)
     const route = routeAesthetic(eps.from, eps.to, obs, routedPolylines, {})
     m.set(e.key, { eps, route })
     if (route.points.length >= 2) routedPolylines.push([...route.points])
@@ -126,7 +135,13 @@ function buildScene(nObstacles, nEdges) {
   }
 }
 
-console.log('# bench-freeedge —— 自由边路由「单次全量重算」规模基线（median of ' + REPEAT + '；node 纯计算）')
+console.log(
+  '# bench-freeedge —— 自由边路由「单次全量重算」规模基线（median of ' +
+    REPEAT +
+    '；node 纯计算；pipeline=' +
+    (LEGACY ? 'legacy' : 'current') +
+    '）',
+)
 console.log('obstacles,E,routeTotalMs,perEdgeMs,jumpsMs,routeIndexMs')
 const combos = [[DEMO.obstacles, DEMO.edges]]
 for (const n of OBSTACLE_COUNTS) {

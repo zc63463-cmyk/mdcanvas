@@ -314,17 +314,55 @@ export interface EdgeEndpoints {
   renderable: boolean;
 }
 
+/**
+ * G-P3a：折叠上溯解析器（一次 O(N) 树遍历，随后每条边 O(1) 查询）。
+ *
+ * 旧路径对每个端点各调一次 `collapsedAncestors`（每次都是 root 出发的 O(N) DFS）——
+ * 整表重算时成本 ≈ E×2×N。本解析器把树遍历摊薄到「每次整表重算一次」。
+ *
+ * 语义：目标被折叠子树隐藏时上溯到**最外层折叠祖先**（该祖先自身仍渲染）；
+ * id 不在树中 / 盒缺失 / 零尺寸盒 → null。与 `freeEdgeEndpoints` 旧路径逐字段等价
+ * （`freeedge-equivalence.test.ts` 随机场景钉死）。
+ */
+export function edgeResolverOf(
+  root: EditableNode,
+  collapsed: ReadonlySet<string>,
+  boxOf: (id: string) => Box | undefined,
+): (id: string) => { id: string; box: Box } | null {
+  // id → 有效 id（最外层折叠祖先或自身）
+  const effOf = new Map<string, string>();
+  const walk = (n: EditableNode, eff: string): void => {
+    effOf.set(n.id, eff);
+    for (const c of n.children) {
+      // 祖上已有折叠 → 沿用；否则本节点折叠 → 收缩到本节点；再否则子节点自身
+      walk(c, eff !== n.id ? eff : collapsed.has(n.id) ? n.id : c.id);
+    }
+  };
+  walk(root, root.id);
+  return (id) => {
+    const effective = effOf.get(id) ?? id;
+    const box = boxOf(effective);
+    if (!box) return null;
+    // 零尺寸盒防护：节点存在但盒未就绪（动画首帧 / LOD 降级）→ 不可路由
+    if (box.w <= 0 || box.h <= 0) return null;
+    return { id: effective, box };
+  };
+}
+
 /** 端点解析：dir 箭头语义 + 折叠路由（先路由后判空——折叠子树内目标收缩到可视祖先）+ 幽灵锚点
  *  E8 增强修复：
  *  - 源锚未解析 → renderable=false（不再绘制飞向世界原点的误导性直线）
  *  - 零尺寸盒防护：盒未就绪（动画首帧 / LOD 降级）视为不可路由，杜绝 NaN 坐标
  *  - 幽灵锚点：源盒中心向「右下 45°」外推（避开自身卡片，视觉上明确表示「未锚定」）
+ *  G-P3a：可选注入 `resolve`（`edgeResolverOf` 产物）——整表重算时全部边复用同一解析器；
+ *  缺省（undefined）走原 collapsedAncestors 路径（旧调用方零破坏）。
  */
 export function freeEdgeEndpoints(
   edge: FreeEdge,
   boxOf: (id: string) => Box | undefined,
   root: EditableNode,
   collapsed: ReadonlySet<string>,
+  resolve?: (id: string) => { id: string; box: Box } | null,
 ): EdgeEndpoints {
   const GHOST_DIST = 120;
   /** 幽灵锚点合成盒：从源盒中心沿右下 45° 外推，落点不与源卡片重叠 */
@@ -337,6 +375,8 @@ export function freeEdgeEndpoints(
   // 折叠路由：id 不可见（自身或祖先被折叠）→ 上溯到最近可视祖先（= 顶个被折叠祖先自身渲染）。
   // 必须先于 ghost 判定——否则折叠后目标不在布局节点集，边会错误指向幽灵锚点而不收缩。
   const route = (id: string): { id: string; box: Box } | null => {
+    // G-P3a：注入解析器优先（整表重算构造一次、全部边复用）；等价性由等价性测试钉死。
+    if (resolve) return resolve(id);
     let effective = id;
     const hiddenBy = collapsedAncestors(root, collapsed, id);
     if (hiddenBy.length > 0) effective = hiddenBy[0]!;

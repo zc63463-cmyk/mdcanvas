@@ -8,7 +8,8 @@ import { useEffect, useMemo, useRef, useState, type ReactElement } from 'react';
 import type { EditableNode } from '@mindcanvas/kernel';
 import type { Box } from '@mindcanvas/kernel';
 import type { TokenSet } from '../theme/types.js';
-import { edgeVisualOf, freeEdgeEndpoints, type EdgeManual, type FreeEdge } from './freeEdges.js';
+import { edgeResolverOf, edgeVisualOf, freeEdgeEndpoints, type EdgeManual, type FreeEdge } from './freeEdges.js';
+import { buildObstacleTable } from './obstacleTable.js';
 import {
   applyLineJumps,
   manualAnchors,
@@ -136,6 +137,16 @@ export function FreeEdgeLayer({
   // 路由缓存（E8 性能 P4）：仅在「边集 / 端点盒 / 树结构 / 障碍集」变化时重算。
   // pan/zoom 不触发——路由在世界坐标系，且 boxOf 与 obstacles 已在 MapView 侧稳定化。
   // 仅节点过渡动画期间（animBoxes 逐帧变化）才会逐帧重算，动画结束即回到缓存态。
+  //
+  // G-P3（每边成本）：整表重算的内层两处 O(N) 降为「每次重算一次 + 每边 O(1)/O(N) 轻量」：
+  //  ① 端点解析器：一次 O(N) 树遍历摊薄到全部边（旧：每端点一次 collapsedAncestors DFS）；
+  //  ② 障碍预构建表：盒数组与 id→下标建一次，端点排除只做整数比较（旧：每边 filter+map 两次遍历 + 两个数组）。
+  //  两条路径逐字段等价由 tests/freeedge-equivalence.test.ts 钉死（接线前后均绿）。
+  const resolveEndpoint = useMemo(
+    () => edgeResolverOf(root, collapsed, boxOf),
+    [root, collapsed, boxOf],
+  );
+  const obstacleTable = useMemo(() => buildObstacleTable(obstacles), [obstacles]);
   const routes = useMemo(() => {
     const m = new Map<string, { eps: ReturnType<typeof freeEdgeEndpoints>; route: RouteResult }>();
     // 跨边协调：按边顺序累积已路由路径，供后续边做「交叉罚分」。
@@ -146,15 +157,14 @@ export function FreeEdgeLayer({
     // 避免多条边从同一个点扇形炸开（semanticAnchorPair 的 stagger 语义）。
     const staggerSeen = new Map<string, number>();
     for (const edge of edges) {
-      const eps = freeEdgeEndpoints(edge, boxOf, root, collapsed);
+      const eps = freeEdgeEndpoints(edge, boxOf, root, collapsed, resolveEndpoint);
       // 源锚未解析/端点盒缺失 → 不绘制（此前退化成指向世界原点的误导性直线）
       if (!eps.renderable) continue;
       const seq = eps.toId === '' ? 0 : (staggerSeen.get(eps.toId) ?? 0);
       if (eps.toId !== '') staggerSeen.set(eps.toId, seq + 1);
-      // 按 id 排除两端自身卡片（动画期间坐标不可靠，见 obstacles 注释）
-      const obs = obstacles
-        .filter((o) => o.id !== eps.fromId && o.id !== eps.toId)
-        .map((o) => o.box);
+      // 按 id 排除两端自身卡片（动画期间坐标不可靠，见 obstacles 注释）；
+      // G-P3：经预构建表排除（等价性：与 filter+map 逐项同序，测试钉死）。
+      const obs = obstacleTable.without(eps.fromId, eps.toId);
       // 新主路由：曲率自适应贝塞尔（外围绕行优先，见 edgeRouting.ts 顶部说明）。
       // 人工锁定的边跳过自动路由 —— 见 Issue #3 的 manual 字段约定。
       const route = edge.manual
@@ -172,7 +182,7 @@ export function FreeEdgeLayer({
     // P2-1：动画/瞬态（fastRouting）跳过跨边交叉检测与 Line jumps——瞬态让步帧率。
     // 静态态行为与原实现逐位一致（applyLineJumps 抽出自下方的跳线块）。
     return fastRouting ? m : applyLineJumps(m);
-  }, [edges, boxOf, root, collapsed, obstacles, fastRouting]);
+  }, [edges, boxOf, root, collapsed, obstacles, fastRouting, resolveEndpoint, obstacleTable]);
 
   // Opp 精确翻转：把实际渲染结果抛给上层（含跨边交叉协调与 Line jumps 的最终 d）。
   // 上层据此用 inferBowSide 判断当前鼓向，避免"复刻计算"与真实渲染不一致。
