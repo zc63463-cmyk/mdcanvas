@@ -49,6 +49,8 @@ import {
   DemoPlugin,
   DocLibrary,
   EditorController,
+  EdgeHealthBar,
+  edgeHealthOf,
   EntityGraphPanel,
   EntityPicker,
   exportPng,
@@ -785,6 +787,9 @@ function StageContent({
     () => [...data.diagnostics, ...assetDiagnostics(refs, assetList)],
     [data, refs, assetList],
   );
+
+  // R0-2：边健康度（观测先行）——随树重算；坏边计数/明细供诊断条呈现（全健康不渲染）
+  const edgeHealth = useMemo(() => edgeHealthOf(controller.root), [controller.root]);
 
   useEffect(() => {
     let alive = true;
@@ -1715,6 +1720,14 @@ function StageContent({
           )}
         </div>
       )}
+
+      {/* R0-2：边健康度诊断条（数据健康语义，独立于上方中心诊断条——R0-A1）。
+          中心诊断条 bottom:178 向上生长且高度自适应：同时可见时抬到其最大展开
+          （标题 + 3 明细 + 其余略 ≈ 112px）之上，避免堆叠遮挡。 */}
+      <EdgeHealthBar
+        health={edgeHealth}
+        bottom={islandView.diagnostics.length > 0 ? 292 : 178}
+      />
 
       {/* B1 文档栏：名称 + 未保存标记 + 新建/打开/最近/保存/另存为（左上角玻璃条） */}
       <div
