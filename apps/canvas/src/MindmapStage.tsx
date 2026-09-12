@@ -193,11 +193,18 @@ function StageInner() {
     buildEntities(refs, GATEWAY_TITLES),
   );
 
+  // A5：命令拒绝/事务失败的告警（4s 自动消退；与中心诊断条同样「宁可不写也不错写」）
+  // R1-4：声明在 controller 构造之前——锚迁移冲突回调（R1-1）直接复用本通道
+  const [commandNotice, setCommandNotice] = useState<string | null>(null);
+
   // 编辑器：controller 随初始树创建一次；所有编辑经 controller（TreeOp）
   // 折叠持久化：localStorage（key 按 demo 文件定名；打开新文件时 controller.reset 清空写回）
   const controllerRef = useRef<EditorController | null>(null);
   if (controllerRef.current === null && editable) {
     controllerRef.current = new EditorController(editable, {
+      // R1-4：管线内锚迁移冲突（apply 路径）→ 命令告警条；applyTransaction 路径
+      // 的冲突由各调用方经 result.error 上报（切断/接回等已有通道）
+      onAnchorConflict: setCommandNotice,
       storage: {
         load: () => {
           try {
@@ -298,6 +305,8 @@ function StageInner() {
       setEntities={setEntities}
       controllerRef={controllerRef}
       controller={controller}
+      commandNotice={commandNotice}
+      setCommandNotice={setCommandNotice}
     />
   );
 }
@@ -325,6 +334,9 @@ interface StageContentProps {
   controllerRef: RefObject<EditorController | null>;
   /** 非 null —— 由 StageInner 早退保证 */
   controller: EditorController;
+  /** A5 命令告警（R1-4 状态提升至 StageInner：锚迁移冲突回调在 controller 构造处闭包） */
+  commandNotice: string | null;
+  setCommandNotice: Dispatch<SetStateAction<string | null>>;
 }
 
 /**
@@ -353,6 +365,8 @@ function StageContent({
   setEntities,
   controllerRef,
   controller,
+  commandNotice,
+  setCommandNotice,
 }: StageContentProps) {
   // B1 文档切换：新 source → controller.reset（清 history/折叠/选中）+ 实体表重建 + 展开收起 + 适配视图
   // 首挂跳过（controller 首次创建 + MapView 初始 fit 已处理；避免重复动画）
@@ -935,11 +949,11 @@ function StageContent({
       const result = controller.applyTransaction(plan.ops);
       if (!result.ok) setCommandNotice(`切断未提交：${result.error.message}`);
     },
-    [controller, layout],
+    // R1-4：setCommandNotice 现为 props 透传（状态提升至 StageInner）→ 进依赖数组
+    [controller, layout, setCommandNotice],
   );
 
-  // A5：命令拒绝/事务失败的告警（4s 自动消退；与中心诊断条同样「宁可不写也不错写」）
-  const [commandNotice, setCommandNotice] = useState<string | null>(null);
+  // A5：命令拒绝/事务失败的告警状态声明已上移至 controller 构造之前（R1-4 锚迁移冲突复用）
   // ② 二级环（T5）：动作袋构建一次，右键菜单与环席位消费**同一份**（单一动作源，防两处漂移）
   const nodeBagHost = {
     setDescEditingId,

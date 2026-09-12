@@ -7,6 +7,26 @@
 > （09-05~09-06）与「图引擎适配 / 文件工作台」（09-10）等批次未单独标号，
 > 按完成时间归入对应段落末尾的「同批」小节。
 
+## [1.8.4] — 2026-09-13 · 关系线 R0+R1（边健康度观测 + 锚迁移接线；react 加法导出 + canvas 接线）
+
+**触发**：自由边「坏了但静默」——畸形项被 `collectFreeEdges` 静默丢弃、改名/缩进/反缩进/重排四类结构编辑默默断开关系线（`planReferenceMigration` 此前只挂在切断/接回两条命令上）。计划：`docs/dispatch/2026-09-13-edge-health-and-anchor-migration-plan.md`。
+
+**R0 观测先行（全部加法）**
+- **R0-1** `edgeHealthOf` 纯函数（`packages/react/src/render/edgeHealth.ts`）：独立扫原始边数组 + 复用 collectFreeEdges 三态产物，产出 total/renderable/byState/invalid/malformed/selfAnchor/noBox/unknownRel/duplicates 计数与 problems 明细；不修改 `collectFreeEdges`（静默丢弃行为留给 R6 契约对齐批）。renderable/noBox 为数据层口径（无 layout，文件头已声明与画布差异）。
+- **R0-2** `EdgeHealthBar` 诊断条：problems 非空才渲染（阴性对照钉死），文案「悬空 X / 陈旧 Y / 失效 Z」+ 最多 3 明细 + 其余略；`pointerEvents:none`；中心诊断条可见时抬至其上方避让。
+- **R0-3** 关系面板按状态分区（正常/悬空/陈旧/已失效，区标题带计数）；`sourceId===''`（源锚未解析）行不再 `onFocusNode('')` 静默 no-op → 禁用态 + 「源锚未解析」。
+- **R0-4** 迁移诊断不再被吞：`CutAttachPlan` ok 分支带 `diagnostics`，切断（MindmapStage）与接回（nodeMenuBags）两路径经既有告警通道上报一行汇总（`summarizeReferenceDiagnostics`，语义=「本来就是坏，非本次操作造成」）；不阻断提交。
+
+**R1 身份根治（写路径收敛，与 ADR-0008 同哲学）**
+- **R1-1** 锚引用迁移收敛到编辑管线：`EditorController.apply/applyTransaction` 一处统一 `before → 预演 → planReferenceMigration → 迁移 op 与结构 op 同一 history 条目`（一次 Ctrl+Z 同撤文本与锚）；冲突整批拒绝（apply 走新增 `onAnchorConflict` 回调，applyTransaction 返回 `code=reference-conflict`），文案含冲突码/字段/锚文本。**op 白名单（R1-A4）执行偏差**：① `update-node` 仅 text patch（计划口径）；R1-1 commit 曾扩展 type/ref，R1-2 实测 kernel anchor-migrate 不支持「路径锚→实体锚」重建+回验（migration-verify-failed 会整批拒绝转实体）后撤销——`setEntityRef` 转实体为已知缺口（旧锚悬空，R0 可见，留后续批次）。② `remove-node` 不参与迁移：迁移对「目标被删」只能产出 target-lost 冲突 → 会阻断「删除被边引用的节点」这一合法主流程；删除维持既有语义（边悬空 → R0 可见 → R2 重挂修复）。
+- **R1-2** 结构编辑入口全枚举：全部树变更入口均经 controller（拖拽重排 MindmapStage `onNodeMove → controller.apply`、切断/接回 → `applyTransaction`、其余走 controller 命令），无绕过管线的直接树改写；`it.each` 表驱动 10 行钉「操作后边锚存活」。
+- **R1-3** 「改名即 dangling」断言核查：63 处 dangling 命中逐类核对，**零处**钉「管线改名/移动 → dangling 为预期」；数据层旧锚 dangling（外部手改/旧文件）仍是正确语义，新增分层对照钉防语义互污。
+- **R1-4** 宿主接线：`onAnchorConflict → setCommandNotice`（commandNotice 状态提升至 StageInner 以供 controller 构造处闭包）；全 gate 实测见验收。
+
+**明确不做**（沿用计划 §4）：边 cid 化（须另立 ADR）、重挂锚点 UI（R2）、自动行为可预期化（R3）、能力补齐（R4）。
+
+**验收**：kernel 478 / react **1048** / canvas **125** = **1651 全绿**（基线 1610 + 本批 +41）；tsc ×3 / react dist 重建 / depcruise（389 模块）/ lint **1481 warnings + 46 infos 持平**（新代码零告警）/ budget 全持平（bang 89/90、asCast 31/31、any·tsIgnore 0/0）；阈值/契约测试零放宽（R1-3 为语义反转核查，无断言改写）。
+
 ## [1.8.3] — 2026-09-12 · 自由边路由治理批次 G 收口（react 内部性能与守卫；no-API）
 
 **触发**：pan 期自由边路由整表重算（成员进出时 E×全量枚举，E=100×10K 实测 1331ms 卡顿级）。本批 G-P1 内容键 identity 稳定化 + G-P2 裁剪窗口量化 256 + G-P3 每边成本下降（折叠解析器预计算 / 障碍预构建表 / 索引粗筛 R=2·chordMax+210）+ G-P6 路由结果 LRU（`FREEEDGE_ROUTE_CACHE`，**默认关**，收口决策：成员进出场景真浏览器 A/B 后再定默认值）落地，G-P9/P9b 复核守卫补判别缺口（跨量化边界零重算、绕过 stableByKeys 接线必红；保守界充分性 200+ 对拍 + 界内缘对抗几何，R 一缩即红）。数字与两轮阴性对照红证据见 `docs/preview/perf-baseline.md` §8.4–8.5；计划 `docs/dispatch/2026-09-12-freeedge-routing-recompute-plan.md`。
