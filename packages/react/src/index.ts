@@ -180,11 +180,15 @@ export {
   layoutDemo,
 } from './demo/pipeline.js';
 export type {
+  CenterMenuActions,
   DescMenuActions,
   EdgeMenuActions,
   EntityMenuActions,
+  NoteMenuActions,
   SectionMenuActions,
 } from './edit/contextMenuItems.js';
+// T5：二级环宿主注入剪贴板席反馈（可选）——与菜单动作袋同层公开
+export type { CopyTextMenuActions } from './edit/subRingItems.js';
 export {
   contextMenuItemsFor,
   getNodeLabel,
@@ -228,8 +232,13 @@ export type {
   RadialReduceCtx,
   RadialSlotKey,
   RadialState,
+  RadialSubConfig,
+  RadialSubItem,
+  SubRingGeometry,
 } from './edit/radialActions.js';
 export {
+  hitInnerRing,
+  hitSubSeat,
   hitTest,
   itemAt,
   RADIAL_GEOMETRY_DEFAULTS,
@@ -237,10 +246,15 @@ export {
   RADIAL_IDLE,
   RADIAL_ITEMS_V1,
   RADIAL_SLOTS,
+  RADIAL_SUB_DEFAULTS,
+  RADIAL_SUB_POOL_V1,
   radialGeometryFor,
   radialGeometryOf,
   radialReduce,
+  radialSubItemsFor,
   slotForArrowKey,
+  subRingOf,
+  subSeatCenterDeg,
   visibleArcs,
 } from './edit/radialActions.js';
 export {
@@ -253,8 +267,11 @@ export {
   RadialStyles,
   ringArcPath,
   slotCenterDeg,
+  SubRing,
 } from './chrome/radialSurface.js';
-export type { RadialRingProps } from './chrome/radialSurface.js';
+export type { RadialRingProps, SubRingProps } from './chrome/radialSurface.js';
+export type { SubRingFacts, SubRingModel } from './edit/contextMenuItems.js';
+export { submenuItemsFor, subRingPagesFor } from './edit/contextMenuItems.js';
 export type { OverlayEditorProps } from './edit/OverlayEditor.js';
 export { OverlayEditor } from './edit/OverlayEditor.js';
 export { collapsedAncestors } from './edit/reveal.js';

@@ -107,7 +107,7 @@ describe('菜单「连线到…」（E5）', () => {
     const items = contextMenuItemsFor(c, id, undefined, { onStartLink });
     const item = items.find((i) => i.label === '连线到…')!;
     expect(item).toBeDefined();
-    item.onSelect();
+    item.onSelect?.();
     expect(onStartLink).toHaveBeenCalledWith(id);
   });
 });

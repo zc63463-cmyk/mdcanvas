@@ -18,18 +18,23 @@
  *     缺省注入则隐藏「自定义…」项（向后兼容）
  *   - **副标题消歧**：编辑描述（盒内）/ 编辑笔记（盒下）/ 升为中心（钉住坐标）/
  *     生长方向（子树往哪边长）
+ *
+ * v1.8.2 T6（菜单瘦身 + 深度优化，用户拍板）：
+ *   - **阶段 1 移除 4 项**：编辑描述 / 编辑笔记 / 升级·取消出线枢纽 / 复制中心编号
+ *     —— 环（已进正片，T5）有等价席位；描述另有 Shift+Enter 双代偿
+ *   - **方向型 / 参数型收成「一行 + 子页」**（`page`）：生长方向（4 向 + 继承）/ 出线长度（预设 + 缺省 + 自定义）
+ *     / 升为中心（4 向）——首屏行数 28 → 12，行内显示**当前值**，行尾 hint 指出更快的通道
  */
 import {
-  findNode,
   getNode,
   readLinkLen,
   type EditableNode,
-  type GrowDir,
   type Note,
 } from '@mindcanvas/kernel';
 import type { ContextMenuItem } from '../chrome/ContextMenu.js';
 import { inferChildDir } from '../render/growDir.js';
 import type { EditorController } from './controller.js';
+import { addSiblingOf, copyNodeTextToClipboard } from './sharedCommands.js';
 
 /** 菜单分区（v1.8.1；顺序即渲染顺序，渲染端在变化处画标题与分隔线） */
 const SEC = {
@@ -40,113 +45,35 @@ const SEC = {
   island: '岛与区域',
 } as const;
 
-/** 实体菜单的画布侧动作（picker / 关系面板由调用方持有） */
-export interface EntityMenuActions {
-  /** 打开实体 picker 改引用 */
-  onEditRef: (id: string) => void;
-  /** 打开关系图谱面板并定位该实体 */
-  onShowInGraph: (id: string) => void;
-}
-
-/** 边菜单的画布侧动作（E3：连线到…） */
-export interface EdgeMenuActions {
-  /** 以该节点为源新建连线 */
-  onStartLink: (id: string) => void;
-}
-
-/** v1.3.0 幕布描述菜单动作 */
-export interface DescMenuActions {
-  /** 进入该节点描述的行内编辑（缺省 = 隐藏该入口） */
-  onStart: (id: string) => void;
-}
-
 /**
- * note 笔记菜单动作。
- * 与「编辑描述」是两种不同内容：描述常驻节点盒内，note 笔记在节点下方布局区。
+ * 动作袋类型在**中立模块** `menuActionTypes.ts`：环席位模型（`subRingItems.ts`）也要用，
+ * 放本文件会与「本文件 re-export 环派生入口（`submenuItemsFor`）」形成依赖环
+ * （depcruise no-circular）。此处 import + re-export 保持公开 API 与既有 import 路径不变。
  */
-export interface NoteMenuActions {
-  /** 打开该节点的固定 note 笔记并进入编辑（缺省 = 隐藏该入口） */
-  onStart: (id: string) => void;
-}
-
-/**
- * G6′ 中心菜单动作（升格 / 降格 / 父级连接显示切换）。
- * 升格 = 该子树从根下提出来成为可拖拽摆放的中心；降格 = 回到自动树布局。
- */
-export interface CenterMenuActions {
-  /** 升格为中心并指定生长方向 */
-  onPromote: (id: string, dir: GrowDir) => void;
-  /** 降格为普通节点（坐标进历史区，再升格可吸附回原位） */
-  onDemote: (id: string) => void;
-  /** 该节点当前是否已是中心 */
-  isCenter: (id: string) => boolean;
-  /** G3：该中心当前的跨岛父级连接显示状态（缺省 hide） */
-  parentLinkOf: (id: string) => 'show' | 'hide';
-  /** G3：切换跨岛父级连接显示（只影响显示，不改变语义归属） */
-  onToggleParentLink: (id: string, next: 'show' | 'hide') => void;
-  /** G2（A5）：该中心是否为切断独立（detached）——detached 禁普通降格，走显式接回 */
-  isDetached: (id: string) => boolean;
-  /** G2（A5）：接回 detached 分支到目标父节点（成环/深度超限由命令层拒绝并提示） */
-  onAttach: (id: string, targetParentId: string) => void;
-  /** C3：该中心的 cid（无 cid 的旧数据返回 undefined——菜单据此隐藏复制入口） */
-  cidOf?: (id: string) => string | undefined;
-  /** C3：复制中心编号到剪贴板（格式「文档名#cid」，由上层写剪贴板与反馈） */
-  onCopyCid?: (id: string) => void;
-}
-
-/**
- * D3′ 生长方向菜单动作（思想分叉）。
- * dir 写在节点 note（语义意图，先例 via/edge/desc/qa；随子树迁移零成本）。
- */
-export interface GrowDirMenuActions {
-  /** 节点当前显式 dir（null = 继承父级/岛方向） */
-  explicitDirOf: (id: string) => GrowDir | null;
-  /** 设置/清除生长方向（null = 恢复继承；经 OpHistory 可撤销） */
-  onSetGrowDir: (id: string, dir: GrowDir | null) => void;
-  /**
-   * v1.6.0：节点当前出线长度 note.len（null = 未设置，跟随布局缺省）。
-   * 可选——缺省不出现「出线长度」项（向后兼容：既有调用方/测试不受影响）。
-   */
-  lenOf?: (id: string) => number | null;
-  /** v1.6.0：设置/清除出线长度（null = 恢复缺省；与 onSetLen 同经 updateNote 可撤销） */
-  onSetLen?: (id: string, len: number | null) => void;
-  /**
-   * v1.8.1：「出线长度 › 自定义…」的值输入交宿主（数值气泡）。
-   * 缺省不注入 → 不出现「自定义…」项（原实现弹原生 prompt，已退役——裁决 M3）。
-   */
-  onRequestLenCustom?: (id: string) => void;
-  /**
-   * v1.7.1：节点 `lens.left/right` 的残留值（拖过梁又取消枢纽后会留着——
-   * lens 读取与 hub 无关，非枢纽也生效，表现为「不是枢纽却线很长」）。
-   * 返回非空 → 菜单出现「清除左右」复位项。可选（缺省不出现该项）。
-   */
-  lenSidesOf?: (id: string) => { left?: number; right?: number } | null;
-  /** v1.7.1：清除 lens.left/right（保留 up/down 节奏；经 updateNote 可撤销） */
-  onClearLenSides?: (id: string) => void;
-}
-
-/**
- * v1.5.0 Section 菜单动作（Phase 1：Section = 带装饰的 Center Island，D1 裁决）。
- * 三态入口：已是 center → 标记；非 center → 升格并标记（合并单条 undo）；已是 Section → 取消。
- */
-export interface SectionMenuActions {
-  /** 该节点是否是某 Section 的 root（返回 sectionId；否 undefined） */
-  sectionOf: (id: string) => string | undefined;
-  /** 已是 center → 标记为 Section（写 cid 锚元数据，单条 undo） */
-  onMark: (id: string) => void;
-  /** 非 center → 升格为中心并标记为 Section（合并单条 undo） */
-  onPromoteAndMark: (id: string) => void;
-  /** 取消 Section（仅删元数据，不动树、不动 center） */
-  onUnmark: (id: string) => void;
-}
+import type {
+  CenterMenuActions,
+  DescMenuActions,
+  EdgeMenuActions,
+  EntityMenuActions,
+  GrowDirMenuActions,
+  NoteMenuActions,
+  SectionMenuActions,
+} from './menuActionTypes.js';
+export type {
+  CenterMenuActions,
+  DescMenuActions,
+  EdgeMenuActions,
+  EntityMenuActions,
+  GrowDirMenuActions,
+  NoteMenuActions,
+  SectionMenuActions,
+} from './menuActionTypes.js';
 
 export function contextMenuItemsFor(
   controller: EditorController,
   id: string,
   entityActions?: EntityMenuActions,
   edgeActions?: EdgeMenuActions,
-  descActions?: DescMenuActions,
-  noteActions?: NoteMenuActions,
   centerActions?: CenterMenuActions,
   growDirActions?: GrowDirMenuActions,
   sectionActions?: SectionMenuActions,
@@ -158,11 +85,7 @@ export function contextMenuItemsFor(
     const d = n ? inferChildDir(n) : null;
     return d ? { dir: d } : undefined;
   };
-  const inferSiblingDirNoteOf = (nid: string): Note | undefined => {
-    const loc = findNode(controller.root, nid);
-    const d = loc ? inferChildDir(loc.parent) : null;
-    return d ? { dir: d } : undefined;
-  };
+  // （v1.8.2：同级生长方向推断搬去 `sharedCommands.addSiblingOf`——环第 1 席与菜单同一实现）
 
   // ── 常用（v1.8.1：与环一级对齐置顶——新建/同级/编辑/删除）──
   const items: ContextMenuItem[] = [
@@ -182,13 +105,7 @@ export function contextMenuItemsFor(
       label: '新建同级节点',
       hint: 'Enter',
       section: SEC.common,
-      onSelect: () => {
-        const sid = controller.addSibling(id, undefined, inferSiblingDirNoteOf(id));
-        if (sid !== null) {
-          controller.select(sid);
-          controller.startEdit(sid);
-        }
-      },
+      onSelect: () => addSiblingOf(controller, id),
     });
   }
   items.push({
@@ -212,23 +129,14 @@ export function contextMenuItemsFor(
   }
 
   // ── 内容 ──
-  // v1.3.0：幕布描述入口（根节点也提供；副标题「盒内」与笔记区分）
-  if (descActions) {
-    items.push({
-      label: '编辑描述（盒内）',
-      hint: 'Shift+Enter',
-      section: SEC.content,
-      onSelect: () => descActions.onStart(id),
-    });
-  }
-  // note 笔记与「编辑描述」并列 —— 两者是不同内容，不是同一功能的两处入口（「盒下」消歧）
-  if (noteActions) {
-    items.push({
-      label: '编辑笔记（盒下）',
-      section: SEC.content,
-      onSelect: () => noteActions.onStart(id),
-    });
-  }
+  // v1.8.2（T6 阶段 1 瘦身）：描述 / 笔记入口**移出菜单**——环内二级有等价席位（第 2/3 席），
+  // 且描述另有 Shift+Enter 双代偿（`descActions` / `noteActions` 现在只喂环席位模型）。
+  // v1.8.2：复制节点文本——与环剪贴板席**同源同一实现**（`sharedCommands`）；通用动作，常驻内容区
+  items.push({
+    label: '复制节点文本',
+    section: SEC.content,
+    onSelect: () => copyNodeTextToClipboard(controller.root, id),
+  });
   // N2：实体节点专属项（改引用 / 关系图定位 / 转纯文本）
   if (entityActions) {
     const node = getNode(controller.root, id);
@@ -278,55 +186,50 @@ export function contextMenuItemsFor(
   }
 
   // ── 生长与连线（D3′ 生长方向 / 出线长度 / 出线枢纽）──
+  // v1.8.2（T6）：**方向型 / 参数型收成「一行 + 子页」**——首屏只留 2 行，行内显示当前值，
+  // 行尾 hint 指出更快的通道（Alt+方向 / 拖梁）。子页结构与环「同一外圈换页」同语义。
   if (growDirActions && !isRoot) {
     const cur = growDirActions.explicitDirOf(id);
-    for (const [dir, label] of [
-      ['right', '向右'],
-      ['left', '向左'],
-      ['down', '向下'],
-      ['up', '向上'],
-    ] as const) {
-      items.push({
-        label: `生长方向（子树往哪边长） › ${label}${cur === dir ? ' ✓' : ''}`,
-        section: SEC.growth,
-        onSelect: () => growDirActions.onSetGrowDir(id, dir),
-      });
-    }
-    if (cur !== null) {
-      items.push({
-        label: '生长方向（子树往哪边长） › 继承（跟随父级）',
-        section: SEC.growth,
-        onSelect: () => growDirActions.onSetGrowDir(id, null),
-      });
-    }
+    const DIR_LABEL = { right: '向右', left: '向左', down: '向下', up: '向上' } as const;
+    items.push({
+      label: `生长方向：${cur !== null ? DIR_LABEL[cur] : '继承'}`,
+      hint: 'Alt+方向',
+      section: SEC.growth,
+      page: [
+        ...(['right', 'left', 'down', 'up'] as const).map((dir) => ({
+          label: `${DIR_LABEL[dir]}${cur === dir ? ' ✓' : ''}`,
+          onSelect: () => growDirActions.onSetGrowDir(id, dir),
+        })),
+        // 显式方向才提供「继承」出口（已在继承 → 无需该项）
+        ...(cur !== null
+          ? [{ label: '继承（跟随父级）', onSelect: () => growDirActions.onSetGrowDir(id, null) }]
+          : []),
+      ],
+    });
     // v1.6.0：出线长度（note.len）——与生长方向同族的软约束：只调本节点连线的
     // 直线段长度（up/down 垂直 / left/right 水平），不改居中与避让。
-    // 扁平预设 + 自定义，✓ 标当前值；预设外的值（手改文件的）在「自定义」上打 ✓。
+    // v1.8.2（T6）：预设 + 缺省 + 自定义全部收进子页；行内只显示当前值（预设外的值直接显示数字）。
     if (growDirActions.lenOf && growDirActions.onSetLen) {
       const curLen = growDirActions.lenOf(id);
       const presets = [14, 32, 60, 100];
-      for (const v of presets) {
-        items.push({
-          label: `出线长度 › ${v}${curLen === v ? ' ✓' : ''}`,
-          section: SEC.growth,
-          onSelect: () => growDirActions.onSetLen?.(id, v),
-        });
-      }
+      const isCustom = curLen !== null && !presets.includes(curLen);
+      const requestCustom = growDirActions.onRequestLenCustom;
       items.push({
-        label: `出线长度 › 缺省${curLen === null ? ' ✓' : ''}`,
+        label: `出线长度：${curLen === null ? '缺省' : curLen}`,
+        hint: '拖梁',
         section: SEC.growth,
-        onSelect: () => growDirActions.onSetLen?.(id, null),
+        page: [
+          ...presets.map((v) => ({
+            label: `${v}${curLen === v ? ' ✓' : ''}`,
+            onSelect: () => growDirActions.onSetLen?.(id, v),
+          })),
+          { label: `缺省${curLen === null ? ' ✓' : ''}`, onSelect: () => growDirActions.onSetLen?.(id, null) },
+          // v1.8.1：自定义值走宿主注入的数值气泡（原 window.prompt 退役——裁决 M3）
+          ...(requestCustom
+            ? [{ label: `自定义…${isCustom ? ' ✓' : ''}`, onSelect: () => requestCustom(id) }]
+            : []),
+        ],
       });
-      // v1.8.1：自定义值走宿主注入的数值气泡（原 window.prompt 退役——裁决 M3）
-      if (growDirActions.onRequestLenCustom) {
-        items.push({
-          label: `出线长度 › 自定义…${
-            curLen !== null && !presets.includes(curLen) ? ' ✓' : ''
-          }`,
-          section: SEC.growth,
-          onSelect: () => growDirActions.onRequestLenCustom?.(id),
-        });
-      }
     }
     // v1.7.1：左右出线残留复位（lens.left/right 与 hub 无关——取消枢纽后拖出的长间距会留着；
     // 出现条件 = 确实有残留值，避免菜单噪音）
@@ -347,17 +250,8 @@ export function contextMenuItemsFor(
       }
     }
   }
-  // v1.7.0：出线枢纽（note.hub）——左右组从贝塞尔切换为共享竖梁 bus 线型
-  //（与 up/down 共享梁对称；渲染层据此显示箭头与可拖拽的梁）。
-  // 选择性启用：未标记节点一根线不变（逐像素回归闸门依赖于此）。
-  if (!isRoot) {
-    const isHub = getNode(controller.root, id)?.note?.hub === true;
-    items.push({
-      label: isHub ? '取消出线枢纽' : '升级为出线枢纽',
-      section: SEC.growth,
-      onSelect: () => controller.updateNote(id, { hub: isHub ? undefined : true }),
-    });
-  }
+  // v1.8.2（T6 阶段 1）：出线枢纽入口**移出菜单**——环第 5 席「升级 / 取消出线枢纽」为等价入口。
+  // 「hub: 'true' 字符串容错（readHubFlag）」的语义由环席位继承（见 `subRingItems.ts` 同源判定）。
 
   // ── 岛与区域（G6′ 中心 / G2 接回 / G3 父级连接 / C3 编号 / v1.5 Section）──
   if (centerActions && !isRoot) {
@@ -396,32 +290,24 @@ export function contextMenuItemsFor(
           onSelect: () => centerActions.onToggleParentLink(id, pl === 'show' ? 'hide' : 'show'),
         });
       }
-      // C3：复制中心编号（cid 存在才提供；旧数据无 cid 时隐藏——
-      // 升格/切线事务会自动补发，见 ensureNodeCid 埋点）
-      const cid = centerActions.cidOf?.(id);
-      if (cid !== undefined && centerActions.onCopyCid) {
-        items.push({
-          label: `复制中心编号（${cid}）`,
-          section: SEC.island,
-          onSelect: () => centerActions.onCopyCid?.(id),
-        });
-      }
+      // v1.8.2（T6 阶段 1）：复制中心编号**移出菜单**——环剪贴板席为等价入口
+      // （中心且有 cid 时该席显示「复制中心编号」，否则退化为「复制节点文本」）。
     } else {
       // G6″（A3）：任意深度节点可升格（用户批准的产品核心）。
       // v1 的「仅根直接子节点」守卫源于布局层重复投影缺陷——A3 起由 kernel
       // projectIslands 递归投影根治（深层升格从父岛剔除、独立成岛），菜单不再设限。
-      for (const [dir, label] of [
-        ['right', '向右'],
-        ['left', '向左'],
-        ['down', '向下'],
-        ['up', '向上'],
-      ] as const) {
-        items.push({
-          label: `升为中心（钉住坐标） › ${label}`,
-          section: SEC.island,
+      // v1.8.2（T6）：四向收进**子页**（与环「升为中心 ⌄ → 方向页」同语义）；行尾 hint 指出更快的通道。
+      const CENTER_DIR_LABEL = { right: '靠右生长', left: '靠左生长', down: '靠下生长', up: '靠上生长' } as const;
+      items.push({
+        label: '升为中心（钉住坐标）',
+        hint: '环：更多',
+        section: SEC.island,
+        page: (['right', 'left', 'down', 'up'] as const).map((dir) => ({
+          // 文案与环方向页统一（靠右生长 / 靠左生长 / 靠下生长 / 靠上生长）
+          label: CENTER_DIR_LABEL[dir],
           onSelect: () => centerActions.onPromote(id, dir),
-        });
-      }
+        })),
+      });
     }
   }
   // v1.5.0：Section 三态入口（D1：Section ⇒ center，不存在非 center 的 Section）
@@ -457,3 +343,7 @@ export function getNodeLabel(root: EditableNode, id: string): string {
   if (root.id === id) return n.text ?? '根';
   return n.text ?? '（无文本）';
 }
+
+// ② 二级环席位模型在同目录 `subRingItems.ts`（守 600 行预算）；此处再导出，保持对外 API 不变
+export { submenuItemsFor, subRingPagesFor } from './subRingItems.js';
+export type { SubRingFacts, SubRingModel } from './subRingItems.js';

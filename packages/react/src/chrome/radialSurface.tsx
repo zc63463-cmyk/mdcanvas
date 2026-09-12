@@ -11,6 +11,8 @@ import {
   type RadialGeometry,
   type RadialItem,
   type RadialSlotKey,
+  type RadialSubItem,
+  type SubRingGeometry,
 } from '../edit/radialActions.js';
 
 export const RADIAL_ACCENT = '#3dd3a0';
@@ -31,6 +33,12 @@ function pointOf(cx: number, cy: number, r: number, deg: number): string {
 export function ringArcPath(geo: RadialGeometry, startDeg: number, spanDeg: number, r: number): string {
   const large = spanDeg > 180 ? 1 : 0;
   return `M ${pointOf(geo.cx, geo.cy, r, startDeg)} A ${r} ${r} 0 ${large} 1 ${pointOf(geo.cx, geo.cy, r, startDeg + spanDeg)}`;
+}
+
+/** 同上的裸坐标版（② 子环没有 RadialGeometry，只有 SubRingGeometry） */
+function arcPathOf(cx: number, cy: number, r: number, startDeg: number, spanDeg: number): string {
+  const large = spanDeg > 180 ? 1 : 0;
+  return `M ${pointOf(cx, cy, r, startDeg)} A ${r} ${r} 0 ${large} 1 ${pointOf(cx, cy, r, startDeg + spanDeg)}`;
 }
 
 /** 浮动说明的位置：锚点 + 扇形中心方向 ×（外环 + 28px） */
@@ -112,6 +120,52 @@ export function RadialRing({ geo, highlight, items }: RadialRingProps) {
   );
 }
 
+export interface SubRingProps {
+  /** 子环几何（`subRingOf` 派生：N 席沿可用弧均分） */
+  sub: SubRingGeometry;
+  /** 席位表（数据序 = 角度序） */
+  items: readonly RadialSubItem[];
+  /** 高亮席位下标（null = 无） */
+  highlight: number | null;
+}
+
+/**
+ * 外圈子环（② 二级环）：N 席沿**可用弧**均分（缺口朝节点角语义继承），数据序 = 角度序。
+ * 与主环同视觉规范（段式弧 + 圆帽 + 呼吸缝 + 高亮辉光）。
+ */
+export function SubRing({ sub, items, highlight }: SubRingProps) {
+  const midR = (sub.innerR + sub.outerR) / 2;
+  const band = sub.band;
+  const gapStart = sub.gapCenterDeg - sub.gapWidthDeg / 2;
+  return (
+    <svg className="ring sub-ring" width="100%" height="100%">
+      <g className="ring-in" style={{ transformOrigin: `${sub.cx}px ${sub.cy}px` }}>
+        {items.map((it, i) => {
+          const active = highlight === i;
+          const start = sub.startDeg + sub.spanDeg * i + ARC_PAD_DEG;
+          const span = Math.max(8, sub.spanDeg - ARC_PAD_DEG * 2);
+          return (
+            <path
+              key={it.id}
+              d={arcPathOf(sub.cx, sub.cy, midR, start, span)}
+              fill="none"
+              stroke={
+                // 灰显席：可读的暗 + 虚线 = 「锁着的席」，而不是「洞」（0.07 实心几乎不可见 → 观感像空缺）
+                active ? RADIAL_ACCENT : it.disabled === true ? 'rgba(228,242,239,0.13)' : 'rgba(228,242,239,0.22)'
+              }
+              strokeDasharray={it.disabled === true ? '5 7' : undefined}
+              strokeWidth={active ? band + 3 : band}
+              strokeLinecap="round"
+              style={active ? { filter: `drop-shadow(0 0 9px ${RADIAL_ACCENT})` } : undefined}
+            />
+          );
+        })}
+        <path className="gap-hint" d={arcPathOf(sub.cx, sub.cy, midR, gapStart, sub.gapWidthDeg)} />
+      </g>
+    </svg>
+  );
+}
+
 /** 蓄力进度弧：按住后 0→阈值 逐帧推进，环浮现前把它「充满」 */
 export function ChargeArc({ geo, progress }: { geo: RadialGeometry; progress: number }) {
   if (progress <= 0.02) return null;
@@ -137,6 +191,9 @@ export function RadialStyles() {
 
 export const RADIAL_SURFACE_CSS = `
 .ring { position: fixed; inset: 0; width: 100vw; height: 100vh; pointer-events: none; z-index: 60; }
+/* ② 二级环：子环在外圈（z 58 = 主环之下），一级降透明（非当前级） */
+.sub-ring { z-index: 58; }
+.ring-dim { opacity: .3; }
 .ring-in { transform-box: view-box; animation: ring-in .16s cubic-bezier(.2,.9,.3,1.2) both; }
 @keyframes ring-in { from { opacity: 0; transform: scale(.84); } to { opacity: 1; transform: scale(1); } }
 .ring path { transition: stroke .12s ease, stroke-width .12s ease, filter .12s ease, opacity .12s ease; }

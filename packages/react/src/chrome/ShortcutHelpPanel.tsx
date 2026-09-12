@@ -1,11 +1,39 @@
 /**
  * ShortcutHelpPanel —— 快捷键帮助面板（`?` 打开）。
  * 玻璃卡片居中遮罩；列出 EDITOR_KEY_BINDINGS（key + label）。
+ * v1.8.2（T7）：追加**② 二级环席位清单**（标签从派生模型 `subRingPagesFor` 取——
+ * 与环/菜单同一份定义，改席位就不会漏改帮助面板）。
  * Esc / × / 点击遮罩 → onClose。视觉值全部来自 CHROME（组件内零颜色字面量）。
  */
 import { useEffect } from 'react';
 import { CHROME } from '../theme/tokens.js';
 import { EDITOR_KEY_BINDINGS } from '../edit/keys.js';
+import { subRingPagesFor } from '../edit/contextMenuItems.js';
+
+/** 典型节点（非根 / 非中心 / 无 cid）的二级页席位——帮助面板只做「清单展示」 */
+const SUB_PAGES = subRingPagesFor({
+  isRoot: false,
+  isCenter: false,
+  hasCid: false,
+  isHub: false,
+  hasDesc: true,
+  hasNote: true,
+});
+const SUB_SEAT_LABELS: readonly string[] = (SUB_PAGES[0] ?? []).map((it) => it.label);
+const SUB_DIR_PAGE: string = (SUB_PAGES[1] ?? []).map((it) => it.label).join(' / ');
+
+/** kbd 视觉（快捷键列与席位序号共用） */
+const KBD_STYLE = {
+  background: 'rgba(255,255,255,.06)',
+  border: `1px solid ${CHROME.panelBorderStrong}`,
+  borderRadius: 4,
+  padding: '1px 7px',
+  fontSize: CHROME.fontSizeSmall,
+  fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace',
+  minWidth: 64,
+  textAlign: 'center',
+  color: CHROME.text,
+} as const;
 
 export interface ShortcutHelpPanelProps {
   onClose: () => void;
@@ -101,24 +129,27 @@ export function ShortcutHelpPanel({ onClose }: ShortcutHelpPanelProps) {
               borderBottom: `1px solid ${CHROME.panelBorder}`,
             }}
           >
-            <kbd
-              style={{
-                background: 'rgba(255,255,255,.06)',
-                border: `1px solid ${CHROME.panelBorderStrong}`,
-                borderRadius: 4,
-                padding: '1px 7px',
-                fontSize: CHROME.fontSizeSmall,
-                fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace',
-                minWidth: 64,
-                textAlign: 'center',
-                color: CHROME.text,
-              }}
-            >
-              {b.key}
-            </kbd>
+            <kbd style={KBD_STYLE}>{b.key}</kbd>
             <span style={{ color: CHROME.text, flex: 1 }}>{b.label}</span>
           </div>
         ))}
+
+        {/* ② 二级环席位清单（T7）：标签来自派生模型 —— 与环/菜单同一份定义 */}
+        <div style={{ marginTop: 14, marginBottom: 4, color: CHROME.neon, fontWeight: 600 }}>② 二级环席位</div>
+        <div style={{ color: CHROME.textMuted, marginBottom: 6, lineHeight: 1.5 }}>
+          一级环高亮「更多」→ 停顿 450ms（或 Enter / 点击）展开；条件不满足的席位灰显（锁着，不抽席）
+        </div>
+        {SUB_SEAT_LABELS.map((label, i) => (
+          <div key={label} data-sub-seat style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '3px 2px' }}>
+            <kbd style={{ ...KBD_STYLE, minWidth: 22 }}>{i + 1}</kbd>
+            <span data-sub-seat-label style={{ color: CHROME.text, flex: 1 }}>
+              {label}
+            </span>
+          </div>
+        ))}
+        <div style={{ color: CHROME.textMuted, marginTop: 6, lineHeight: 1.5 }}>
+          方向页（升为中心 › Enter）：{SUB_DIR_PAGE}
+        </div>
       </div>
     </div>
   );

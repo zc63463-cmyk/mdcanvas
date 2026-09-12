@@ -67,3 +67,103 @@ describe('ContextMenu：右键菜单', () => {
     expect(container.textContent).toContain('F2');
   });
 });
+
+/**
+ * v1.8.2（T6）：菜单内**翻页** `page` —— 方向型 / 参数型动作收进子页。
+ * 与环「同一外圈换页」同语义：翻页 ≠ 提交（不关菜单）；子页首行恒为「‹ 返回」。
+ */
+describe('ContextMenu：菜单内翻页（T6）', () => {
+  const pageItem = (onPick: () => void) => ({
+    label: '生长方向：向右',
+    hint: 'Alt+方向',
+    page: [
+      { label: '向右 ✓', onSelect: vi.fn() },
+      { label: '向左', onSelect: onPick },
+      { label: '继承（跟随父级）', onSelect: vi.fn() },
+    ],
+  });
+
+  it('翻页项：行尾 chevron；点击 → 不关闭菜单 + 渲染子页与「‹ 返回」', () => {
+    const onClose = vi.fn();
+    const { container } = render(
+      <ContextMenu x={0} y={0} items={[{ label: '删除节点', onSelect: vi.fn() }, pageItem(vi.fn())]} onClose={onClose} />,
+    );
+    const row = [...container.querySelectorAll('[data-menu-item]')].find((el) =>
+      el.textContent?.includes('生长方向'),
+    ) as HTMLElement;
+    expect(row.textContent).toContain('›'); // 翻页 affordance（行尾）
+    fireEvent.click(row);
+    expect(onClose).not.toHaveBeenCalled(); // 翻页 ≠ 提交
+    expect(container.querySelector('[data-menu-back]')).not.toBeNull();
+    expect(container.textContent).toContain('‹ 返回');
+    expect(container.textContent).toContain('向右 ✓'); // 子页内容
+    expect(container.textContent).toContain('生长方向：向右'); // 返回行右侧 = 来源页标题
+    expect(container.textContent).not.toContain('删除节点'); // 子页替换首屏
+  });
+
+  it('子页点项 → 执行 + 关闭（沿用既有提交语义）', () => {
+    const onClose = vi.fn();
+    const onPick = vi.fn();
+    const { container } = render(<ContextMenu x={0} y={0} items={[pageItem(onPick)]} onClose={onClose} />);
+    fireEvent.click(container.querySelector('[data-menu-item]') as HTMLElement); // 进子页
+    const child = [...container.querySelectorAll('[data-menu-item]')].find((el) =>
+      el.textContent?.includes('向左'),
+    ) as HTMLElement;
+    fireEvent.click(child);
+    expect(onPick).toHaveBeenCalledTimes(1);
+    expect(onClose).toHaveBeenCalledTimes(1);
+  });
+
+  it('「‹ 返回」/ ← 键 → 回上一页（不关闭菜单）', () => {
+    const onClose = vi.fn();
+    const { container } = render(<ContextMenu x={0} y={0} items={[pageItem(vi.fn())]} onClose={onClose} />);
+    fireEvent.click(container.querySelector('[data-menu-item]') as HTMLElement);
+    fireEvent.click(container.querySelector('[data-menu-back]') as HTMLElement);
+    expect(container.textContent).not.toContain('向右 ✓');
+    expect(onClose).not.toHaveBeenCalled();
+
+    fireEvent.click(container.querySelector('[data-menu-item]') as HTMLElement); // 再进子页
+    fireEvent.keyDown(window, { key: 'ArrowLeft' });
+    expect(container.querySelector('[data-menu-back]')).toBeNull();
+    expect(onClose).not.toHaveBeenCalled();
+  });
+
+  it('子页里 Esc → 一键关闭（右键菜单肌肉记忆）', () => {
+    const onClose = vi.fn();
+    const { container } = render(<ContextMenu x={0} y={0} items={[pageItem(vi.fn())]} onClose={onClose} />);
+    fireEvent.click(container.querySelector('[data-menu-item]') as HTMLElement);
+    fireEvent.keyDown(window, { key: 'Escape' });
+    expect(onClose).toHaveBeenCalledTimes(1);
+  });
+});
+
+/**
+ * 视口钳制（T6 真浏览器实测修复）：节点贴近底边右键 → 菜单顶出屏幕、下面的行点不到。
+ */
+describe('ContextMenu：视口钳制（T6）', () => {
+  it('贴底右键 → 菜单上移收进视口（jsdom 视口 1024×768）', () => {
+    // jsdom 的 getBoundingClientRect 恒 0 → 用 spy 给出「12 行菜单」的真实尺寸
+    const rect = {
+      x: 0,
+      y: 0,
+      width: 200,
+      height: 600,
+      top: 0,
+      left: 0,
+      right: 200,
+      bottom: 600,
+      toJSON: () => ({}),
+    } as DOMRect;
+    const spy = vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockReturnValue(rect);
+    try {
+      const { container } = render(
+        <ContextMenu x={100} y={700} items={[{ label: '编辑', onSelect: vi.fn() }]} onClose={() => {}} />,
+      );
+      const menu = container.querySelector('[data-context-menu]') as HTMLElement;
+      expect(menu.style.top).toBe(`${768 - 600 - 8}px`); // 160px：底部留 8px 边距
+      expect(menu.style.left).toBe('100px'); // 宽度未溢出 → x 不动
+    } finally {
+      spy.mockRestore();
+    }
+  });
+});
