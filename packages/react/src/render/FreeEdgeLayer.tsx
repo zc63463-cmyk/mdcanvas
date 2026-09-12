@@ -9,7 +9,8 @@ import type { EditableNode } from '@mindcanvas/kernel';
 import type { Box } from '@mindcanvas/kernel';
 import type { TokenSet } from '../theme/types.js';
 import { edgeResolverOf, edgeVisualOf, freeEdgeEndpoints, type EdgeManual, type FreeEdge } from './freeEdges.js';
-import { buildObstacleTable } from './obstacleTable.js';
+import { buildObstacleTable, type ObstacleTable } from './obstacleTable.js';
+import { LruCache, routeCacheConfig, routeCacheKey } from './routeCache.js';
 import {
   applyLineJumps,
   manualAnchors,
@@ -151,6 +152,13 @@ export function FreeEdgeLayer({
     [root, collapsed, boxOf],
   );
   const obstacleTable = useMemo(() => buildObstacleTable(obstacles), [obstacles]);
+  // G-P6（方案 A，开关默认关）：路由结果 LRU。key 见 routeCache.ts「key 口径」——
+  // 命中场景 = 「成员进出但端点解析输出未变」的 pan（障碍集、端点盒、折叠解析全部未变）。
+  // 换代兜底：obstacleTable 身份换代（布局/障碍重算）即弃缓存重建，杜绝过期避障。
+  // 命中项同样 push points 进 routedPolylines——跨边协调的输入集语义不漂移。
+  const routeCacheRef = useRef<{ gen: ObstacleTable; lru: LruCache<string, RouteResult> } | null>(
+    null,
+  );
   const routes = useMemo(() => {
     const m = new Map<string, { eps: ReturnType<typeof freeEdgeEndpoints>; route: RouteResult }>();
     // 跨边协调：按边顺序累积已路由路径，供后续边做「交叉罚分」。
@@ -160,6 +168,14 @@ export function FreeEdgeLayer({
     // P0 · 平行入边错位：同一目标节点的第 N 条入边沿外侧轴反向错位（anchorStagger），
     // 避免多条边从同一个点扇形炸开（semanticAnchorPair 的 stagger 语义）。
     const staggerSeen = new Map<string, number>();
+    const cache = routeCacheConfig.enabled
+      ? (routeCacheRef.current && routeCacheRef.current.gen === obstacleTable
+          ? routeCacheRef.current
+          : (routeCacheRef.current = {
+              gen: obstacleTable,
+              lru: new LruCache<string, RouteResult>(512),
+            }))
+      : null;
     for (const edge of edges) {
       const eps = freeEdgeEndpoints(edge, boxOf, root, collapsed, resolveEndpoint);
       // 源锚未解析/端点盒缺失 → 不绘制（此前退化成指向世界原点的误导性直线）
@@ -173,16 +189,21 @@ export function FreeEdgeLayer({
       const obs =
         obstacleTable.near(eps.from, eps.to, eps.fromId, eps.toId) ??
         obstacleTable.without(eps.fromId, eps.toId);
+      const key = cache ? routeCacheKey(edge, eps, seq) : '';
+      const hit = cache ? cache.lru.get(key) : undefined;
       // 新主路由：曲率自适应贝塞尔（外围绕行优先，见 edgeRouting.ts 顶部说明）。
       // 人工锁定的边跳过自动路由 —— 见 Issue #3 的 manual 字段约定。
-      const route = edge.manual
-        ? manualPathOf(edge, eps.from, eps.to)
-        : routeAesthetic(eps.from, eps.to, obs, routedPolylines, {
-            // 用户指定的绕行侧优先于评分自动选择（对标 markvault forceSide）
-            ...(edge.routingSide ? { forceSide: edge.routingSide } : {}),
-            // P0 · 平行入边错位（步长 = 盒边长 × 0.0625，最多 4 档防出盒内缩）
-            anchorStagger: Math.min(seq, 4),
-          });
+      const route =
+        hit ??
+        (edge.manual
+          ? manualPathOf(edge, eps.from, eps.to)
+          : routeAesthetic(eps.from, eps.to, obs, routedPolylines, {
+              // 用户指定的绕行侧优先于评分自动选择（对标 markvault forceSide）
+              ...(edge.routingSide ? { forceSide: edge.routingSide } : {}),
+              // P0 · 平行入边错位（步长 = 盒边长 × 0.0625，最多 4 档防出盒内缩）
+              anchorStagger: Math.min(seq, 4),
+            }));
+      if (!hit) cache?.lru.set(key, route);
       m.set(edge.key, { eps, route });
       if (route.points.length >= 2) routedPolylines.push([...route.points]);
     }
