@@ -317,3 +317,138 @@ describe('上下生长对称性与层距（浏览器实测修复：up 曾误用 
     expect(b.x - (a.x + a.w)).toBe(28); // SUB_GAP
   });
 });
+
+/**
+ * hub 标记的容错读取（v1.8.x 修复 · 存档重开即静默失效）。
+ *
+ * `.mm.md` 的标量经 parseMm 一律是**字符串**（`hub: true` 读回 `'true'`，与 len/lens 同源），
+ * 而 hub 的两处判定曾用严格 `=== true`：存盘再打开后内核侧 hub 全线失效——左右组回贝塞尔
+ * （渲染层仍按 readHubFlag 画共享竖梁 → 两端几何不一致）、纵向闸门钳制不执行。
+ * 判据统一走 readHubFlag：布尔 `true` 与字符串 `'true'` 必须等价。
+ */
+describe('hub 标记容错读取（字符串 "true" 与布尔 true 等价）', () => {
+  /** 枢纽夹具：根 → 枢纽（note.hub = flag）→ 右子（继承枢纽的 right） */
+  function hubFixture(flag: unknown) {
+    const right = makeTextNode('右子');
+    const hub = makeTextNode('枢纽', [right]);
+    // Note.hub 声明是 boolean，但解析侧不收敛类型（`hub: true` 读回字符串）——按宽形状直写
+    const note: Record<string, unknown> = { dir: 'right' };
+    if (flag !== undefined) note.hub = flag;
+    hub.note = note;
+    const root = makeTextNode('根', [makeTextNode('前置'), hub]);
+    return { root, hub, right };
+  }
+  const pathTo = (res: LayoutResult, to: EditableNode): string =>
+    String(res.links.find((l) => l.toId === to.id)?.path);
+
+  it('★ hub: "true"（存档形态）与 hub: true（会话形态）产出同一条共享竖梁线', () => {
+    const archived = hubFixture('true');
+    const live = hubFixture(true);
+    const pArchived = pathTo(
+      layoutMindmapBranched(archived.root, measure, new Set()),
+      archived.right,
+    );
+    const pLive = pathTo(layoutMindmapBranched(live.root, measure, new Set()), live.right);
+    expect(pArchived).not.toBe('');
+    expect(pArchived).toBe(pLive); // 容错等价：两种形态同一条线
+    expect(pArchived).not.toContain('C'); // hub 左右组 = 共享竖梁（正交），不是贝塞尔
+  });
+
+  it('回归闸门：未标记 hub 的左右组仍是贝塞尔（老文档一根线不变）', () => {
+    const plain = hubFixture(undefined);
+    expect(pathTo(layoutMindmapBranched(plain.root, measure, new Set()), plain.right)).toContain(
+      'C',
+    );
+  });
+
+  it('★ 纵向闸门钳制同样认字符串 "true"（左右组避开上下组）', () => {
+    // 夹具：枢纽（3 个右子拉开纵向跨度）+ 一个「宽下子」（横跨竖梁 x 且上缘顶到梁高程带）
+    // → clampBeamGroupVertical 应当把右组沿 y 平移；无 hub 则不钳制。
+    const build = (flag: unknown) => {
+      const leaves = (prefix: string, n: number) =>
+        Array.from({ length: n }, (_, i) => makeTextNode(`${prefix}${i}`));
+      const hub = makeTextNode('枢纽', [
+        ...leaves('右', 3),
+        { ...makeTextNode('下子', leaves('孙', 3)), note: { dir: 'down' as GrowDir } },
+      ]);
+      const note: Record<string, unknown> = { dir: 'right' };
+      if (flag !== undefined) note.hub = flag;
+      hub.note = note;
+      return makeTextNode('根', [hub]);
+    };
+    const rightYs = (flag: unknown): number[] => {
+      const res = layoutMindmapBranched(build(flag), measure, new Set());
+      const hubId = res.nodes.find((n) => n.node.text === '枢纽')!.node.id;
+      return res.nodes.filter((n) => n.parentId === hubId && n.node.text?.startsWith('右'))
+        .map((n) => n.box.y);
+    };
+    const noHub = rightYs(undefined);
+    const live = rightYs(true);
+    const archived = rightYs('true');
+    expect(archived).toEqual(live); // 容错等价：串/布产生同一布局
+    expect(archived).not.toEqual(noHub); // 且钳制确实生效（否则本用例空转）
+  });
+});
+
+/**
+ * 单成员方向组：中心连线笔直（用户裁决）。
+ *
+ * 旧口径一律「按**子树包围盒**在父中线居中」：单子节点只要自己的子树不对称
+ * （例如它挂了 up 分支），子盒就被推离父中线，连线被迫斜成 S 弯。
+ * 新口径：**该方向组只有单个成员时按子节点盒居中** —— 二者连线笔直；子树的不对称
+ * 部分交给消解 / 钳制 / 出边外推去避让与延长。多成员组保持子树包围盒居中
+ * （兄弟不重叠 + 整侧平衡）。
+ *
+ * 真实场景（用户文档）：section 根只有一个右子（枢纽），枢纽自己挂着 up 分支 ⇒
+ * 旧口径下根→枢纽这条线竖直错位 83px 斜弯；新口径下二者盒心同高、线是笔直的。
+ */
+describe('单成员方向组：中心连线笔直（子树不对称交给避让）', () => {
+  const fixed = (n: EditableNode) => ({ w: (n.text?.length ?? 1) * 10 + 20, h: 30 });
+  const asDir = (text: string, dir: GrowDir, children: EditableNode[] = []): EditableNode => ({
+    ...makeTextNode(text, children),
+    note: { dir },
+  });
+  /** 子树包围盒（纵向；多成员回归断言用） */
+  const subBBoxY = (ln: LayoutNode): { minY: number; maxY: number } => {
+    let r = { minY: ln.box.y, maxY: ln.box.y + ln.box.h };
+    for (const c of ln.children) {
+      const b = subBBoxY(c);
+      r = { minY: Math.min(r.minY, b.minY), maxY: Math.max(r.maxY, b.maxY) };
+    }
+    return r;
+  };
+
+  it('★ right 组单子（枢纽挂着 up 分支）→ 父盒心与子盒心同高', () => {
+    // 子 = 枢纽（存档形态的字符串标记也算），它自己挂一个 up 分支 ⇒ 子树竖直不对称
+    const hubNote: Record<string, unknown> = { dir: 'right', hub: 'true' };
+    const hub: EditableNode = { ...makeTextNode('枢纽', [asDir('上分支', 'up')]), note: hubNote };
+    const res = layoutMindmapBranched(makeTextNode('根', [hub]), fixed, new Set());
+    const p = boxOf(res, res.nodes[0]!.node.id);
+    const c = boxOf(res, res.nodes[1]!.node.id);
+    expect(c.y + c.h / 2).toBeCloseTo(p.y + p.h / 2, 6);
+  });
+
+  it('★ up 组单子（子挂着 right 分支）→ 父盒心与子盒心同列', () => {
+    const child = asDir('子', 'up', [asDir('右分支', 'right')]);
+    const res = layoutMindmapBranched(makeTextNode('根', [child]), fixed, new Set());
+    const p = boxOf(res, res.nodes[0]!.node.id);
+    const c = boxOf(res, res.nodes[1]!.node.id);
+    expect(c.x + c.w / 2).toBeCloseTo(p.x + p.w / 2, 6);
+  });
+
+  it('回归：多成员组仍按子树包围盒居中（兄弟子树上下不重叠）', () => {
+    const mk = (id: string, withUp: boolean): EditableNode =>
+      asDir(id, 'right', withUp ? [asDir(`${id}上`, 'up')] : []);
+    const res = layoutMindmapBranched(
+      makeTextNode('根', [mk('甲', true), mk('乙', false)]),
+      fixed,
+      new Set(),
+    );
+    const parentId = res.nodes[0]!.node.id;
+    const kids = res.nodes.filter((n) => n.parentId === parentId);
+    expect(kids).toHaveLength(2);
+    const a = subBBoxY(kids[0]!);
+    const b = subBBoxY(kids[1]!);
+    expect(a.maxY).toBeLessThanOrEqual(b.minY); // 上下堆叠不重叠
+  });
+});

@@ -201,3 +201,55 @@ describe('layout/forest：连线随节点平移（最易错点）', () => {
     expect(Number(m?.[2])).toBeCloseTo(root.y + root.h, 6);
   });
 });
+
+/**
+ * 岛内连线选型（v1.8.x 修复）。
+ *
+ * 森林重建岛内连线时曾一律套用「岛方向」的构建器（右岛 → 全岛贝塞尔），岛内子节点的
+ * **有效生长方向**与 hub 标记全被丢掉：up/down 共享梁、hub 共享竖梁在内核几何里都不存在。
+ * 渲染端自己按 dir/hub 重建，于是「内核挑的线」与「屏幕上的线」不是同一条（岛文档全量失配）。
+ * 修复后：岛内连线与岛外同一族（linkGeometry：子节点有效方向 + hub）。
+ */
+describe('layout/forest：岛内连线按子节点有效方向 / hub 选线型（v1.8.x 修复）', () => {
+  const withNote = (
+    id: string,
+    note: Record<string, unknown>,
+    children: EditableNode[] = [],
+  ): EditableNode => ({ id, type: 'text', text: id, children, note });
+
+  it('★ 岛内 up 子节点走共享梁（正交折线），而不是「岛方向」的贝塞尔', () => {
+    const root = withNote('A', { dir: 'right' }, [withNote('上子', { dir: 'up' })]);
+    const r = layoutForest(
+      [{ node: root, dir: 'right', pos: { x: 0, y: 0 } }],
+      measure,
+      new Set(),
+    );
+    const link = r.links.find((l) => l.toId === '上子');
+    expect(link).toBeDefined();
+    expect(link!.path).not.toContain('C');
+  });
+
+  it('★ 岛内 hub 节点的左右组走共享竖梁（字符串 "true" 同样生效）', () => {
+    const hub = withNote('枢纽', { dir: 'right', hub: 'true' }, [
+      withNote('右子', { dir: 'right' }),
+    ]);
+    const root = withNote('A', { dir: 'right' }, [hub]);
+    const r = layoutForest(
+      [{ node: root, dir: 'right', pos: { x: 0, y: 0 } }],
+      measure,
+      new Set(),
+    );
+    const link = r.links.find((l) => l.toId === '右子');
+    expect(link).toBeDefined();
+    expect(link!.path).not.toContain('C');
+  });
+
+  it('回归：经典岛（无 dir 声明）仍按岛方向出线（right 岛 → 贝塞尔）', () => {
+    const r = layoutForest(
+      [{ node: t('A', [t('a1')]), dir: 'right', pos: { x: 0, y: 0 } }],
+      measure,
+      new Set(),
+    );
+    expect(r.links[0]!.path).toContain('C');
+  });
+});

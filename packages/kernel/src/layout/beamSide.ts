@@ -1,8 +1,9 @@
 /**
- * 出线长度与横向共享梁（hub 的 left/right 组，v1.7.0）。
+ * 出线长度、共享梁与方向组钳制（hub 的 left/right 组，v1.7.0；钳制对 v1.8.x 收拢）。
  *
- * 从 branching.ts 拆出：hub 横向梁线家族（len/lens 语义 + 竖梁几何 + 候选族 +
- * 纵向钳制）独立成章——branching 的分组调度只消费，不再兼任四种梁的实现者，
+ * 从 branching.ts 拆出：hub 横向梁线家族（len/lens 语义 + 竖梁几何 + 候选族）与
+ * **四向钳制对**（clampGroupToSideWindow / clampBeamGroupVertical，互为换轴镜像）
+ * 独立成章——branching 的分组调度只消费，不再兼任四种梁与钳制的实现者，
  * 同时保住 600 行预算线。依赖方向单向：本模块 ← branching；本模块 → mindmap /
  * layouts / linkClear，无回流。
  */
@@ -257,4 +258,77 @@ export function clampBeamGroupVertical(
   if (shift !== 0) {
     for (const c of group) translateSubtree(c, 0, shift);
   }
+}
+
+/**
+ * down/up 组的水平钳制：把上下组收进「左右组的内侧窗口」（clampBeamGroupVertical 的换轴镜像）。
+ *
+ * 仅与「梁高程带」相交的侧组参与收口：左右组已在前落位，取其内侧边界；越界整组平移，
+ * 窗口放不下则居中尽力。「梁高程带」= 组盒朝父侧外扩半程最小层距（覆盖共享梁 y）——
+ * 与该带纵向不相交的侧组不参与（保住「上下子树居中正下」的形态）。
+ *
+ * 从 branching 移入（v1.8.x）：与 clampBeamGroupVertical 是同一对镜像钳制，同址便于对照；
+ * 同时让 branching 回到 600 行预算线内（与 v1.7.0 拆出本模块同一动机）。
+ */
+export function clampGroupToSideWindow(
+  dir: 'down' | 'up',
+  nb: Box,
+  groupGap: number,
+  group: LayoutNode[],
+  leftGroup: LayoutNode[],
+  rightGroup: LayoutNode[],
+): void {
+  if (group.length === 0) return;
+  // 梁线段（gate 的唯一判定对象）：横梁 y = 父边 ∓ 最小层距/2；
+  // x 跨度 = 子中线 ∪ 父中线。侧组**压住这段线**（y 带含 railY 且 x 与线段相交）
+  // 才需要让位——组盒更深处与侧组的盒相交由消解负责，不归钳制管
+  // （此前用整组高度做带，宽出几十倍：右组在父旁、down 组挂在其下 14px 时
+  // 也会判「相交」，把居中正下的 down 组整体挤偏 -287px 的实测根因）。
+  let gMinX = Infinity;
+  let gMaxX = -Infinity;
+  let minGap = Infinity;
+  const centers: number[] = [];
+  for (const c of group) {
+    const b = subtreeBBox(c);
+    gMinX = Math.min(gMinX, b.minX);
+    gMaxX = Math.max(gMaxX, b.maxX);
+    minGap = Math.min(minGap, linkLen(c.node, groupGap));
+    centers.push((b.minX + b.maxX) / 2);
   }
+  centers.push(nb.x + nb.w / 2);
+  const spanLo = Math.min(...centers);
+  const spanHi = Math.max(...centers);
+  const railY = dir === 'down' ? nb.y + nb.h + minGap / 2 : nb.y - minGap / 2;
+  const pad = 6;
+  const blocksRail = (b: BBox): boolean =>
+    b.minY - pad <= railY &&
+    railY <= b.maxY + pad &&
+    b.minX - pad <= spanHi &&
+    spanLo <= b.maxX + pad;
+
+  let leftEdge = -Infinity; // 左组的右缘
+  let rightEdge = Infinity; // 右组的左缘
+  for (const c of leftGroup) {
+    const b = subtreeBBox(c);
+    if (!blocksRail(b)) continue; // 不压梁线 → 不收口
+    leftEdge = Math.max(leftEdge, b.maxX);
+  }
+  for (const c of rightGroup) {
+    const b = subtreeBBox(c);
+    if (!blocksRail(b)) continue;
+    rightEdge = Math.min(rightEdge, b.minX);
+  }
+  if (leftEdge === -Infinity && rightEdge === Infinity) return; // 无左右组在场 → 无需钳制
+
+  const width = gMaxX - gMinX;
+  const window = rightEdge - leftEdge;
+  let shift = 0;
+  if (gMaxX > rightEdge) shift = rightEdge - gMaxX;
+  if (gMinX + shift < leftEdge) shift = leftEdge - gMinX;
+  if (width > window && window > 0) {
+    shift = leftEdge + window / 2 - (gMinX + gMaxX) / 2; // 窗口比组窄 → 居中尽力
+  }
+  if (shift !== 0) {
+    for (const c of group) translateSubtree(c, shift, 0);
+  }
+}

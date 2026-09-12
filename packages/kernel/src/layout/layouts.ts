@@ -274,6 +274,15 @@ export interface BranchLayoutOptions {
    * （验证「只消解盒重叠时连线仍会穿盒」）。与 `separate` 交替执行。
    */
   linkClear?: LinkClearOptions | false;
+  /**
+   * 有效方向回填（可选出参）：nodeId → 该节点相对**父级**的有效生长方向
+   * （显式声明 → 跟随显式父 → 基线落位反推，即布局落位期真正用的那份结论）。
+   *
+   * 供森林布局平移岛屿后**重建连线**用：按有效方向 + hub 选线型，与岛外同一族；
+   * 没有它只能按岛方向一刀切（右岛里 up/down 共享梁与 hub 共享竖梁全退化为贝塞尔，
+   * 与渲染端不一致）。回退路径（全树无显式 dir）不产出 → 调用方回落岛方向。
+   */
+  dirSink?: Map<string, GrowDir>;
 }
 
 export type BBox = { minX: number; minY: number; maxX: number; maxY: number };

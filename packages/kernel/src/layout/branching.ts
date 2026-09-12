@@ -29,8 +29,10 @@ import {
   beamXRight,
   beamXVariants,
   clampBeamGroupVertical,
+  clampGroupToSideWindow,
   groupGapOf,
   linkLen,
+  readHubFlag,
 } from './beamSide.js';
 import {
   collectNodes,
@@ -218,6 +220,12 @@ export function layoutMindmapBranched(
     (['right', 'left', 'down', 'up'] as const).forEach((dir) => {
       const group = groups[dir];
       if (group.length === 0) return;
+      // 单成员组：连线必须是**中心连线（笔直）**（用户裁决）——按子节点**盒**居中于父中线，
+      // 而不是按子树包围盒：否则子节点自己的分支（如 up 子）会把子树重心抬离盒心，
+      // 子盒被迫偏离父中线、连线斜成 S 弯。子树的不对称部分交给消解 / 钳制 / 出边外推
+      // 去避让与延长（其他对象向该布局妥协）。多成员组维持子树包围盒居中——
+      // 兄弟不重叠与整侧平衡优先。
+      const sole = group.length === 1;
 
       if (dir === 'right' || dir === 'left') {
         // 垂直堆叠：总高 = Σ子树垂直跨度 + V_GAP*(n-1)
@@ -230,8 +238,8 @@ export function layoutMindmapBranched(
         const groupGap = groupGapOf(ln.node, dir, H_GAP);
         for (const e of extents) {
           const slotCenterY = cursor + e.span / 2;
-          const subCenterY = (e.minY + e.maxY) / 2;
-          const dy = slotCenterY - subCenterY;
+          const alignCenterY = sole ? e.c.box.y + e.c.box.h / 2 : (e.minY + e.maxY) / 2;
+          const dy = slotCenterY - alignCenterY;
           // 出线长度：left/right 组的水平距离按 note.len 逐子节点可调，
           // 组缺省回落父 lenses[dir]（缺省 H_GAP）
           const gap = linkLen(e.c.node, groupGap);
@@ -263,8 +271,8 @@ export function layoutMindmapBranched(
         const groupGap = groupGapOf(ln.node, dir, V_GAP);
         for (const e of extents) {
           const slotCenterX = cursor + e.span / 2;
-          const subCenterX = (e.minX + e.maxX) / 2;
-          const dx = slotCenterX - subCenterX;
+          const alignCenterX = sole ? e.c.box.x + e.c.box.w / 2 : (e.minX + e.maxX) / 2;
+          const dx = slotCenterX - alignCenterX;
           const gap = linkLen(e.c.node, groupGap);
           const targetY =
             dir === 'down'
@@ -287,7 +295,10 @@ export function layoutMindmapBranched(
       if (group.length === 0) continue;
       clampGroupToSideWindow(dir, nb, groupGapOf(ln.node, dir, V_GAP), group, groups.left, groups.right);
     }
-    if (ln.node.note?.hub === true) {
+    // hub 判定走容错读取器（readHubFlag）：手写/存档重开后 note.hub 是字符串 'true'
+    // （.mm.md 标量不收敛类型），严格 `=== true` 会让整段钳制在文件层静默失效
+    // ——与 len/lens 同源的深度审查教训（beamSide 顶部注释）。
+    if (readHubFlag(ln.node.note)) {
       for (const dir of ['right', 'left'] as const) {
         const group = groups[dir];
         if (group.length === 0) continue;
@@ -296,75 +307,14 @@ export function layoutMindmapBranched(
     }
   };
 
-  /**
-   * 把 down/up 组水平钳制在左右组的内侧窗口里（仅与梁高程带相交的侧组参与）：左右组
-   * 已在前落位，取其内侧边界；越界整组平移，窗口放不下则居中。「梁高程带」= 组盒朝父侧
-   * 外扩半程最小层距（覆盖共享梁 y）；与该带纵向不相交的侧组不参与（保住「居中正下」）。
-   */
-  function clampGroupToSideWindow(
-    dir: 'down' | 'up',
-    nb: Box,
-    groupGap: number,
-    group: LayoutNode[],
-    leftGroup: LayoutNode[],
-    rightGroup: LayoutNode[],
-  ): void {
-    if (group.length === 0) return;
-    // 梁线段（gate 的唯一判定对象）：横梁 y = 父边 ∓ 最小层距/2；
-    // x 跨度 = 子中线 ∪ 父中线。侧组**压住这段线**（y 带含 railY 且 x 与线段相交）
-    // 才需要让位——组盒更深处与侧组的盒相交由消解负责，不归钳制管
-    // （此前用整组高度做带，宽出几十倍：右组在父旁、down 组挂在其下 14px 时
-    // 也会判「相交」，把居中正下的 down 组整体挤偏 -287px 的实测根因）。
-    let gMinX = Infinity;
-    let gMaxX = -Infinity;
-    let minGap = Infinity;
-    const centers: number[] = [];
-    for (const c of group) {
-      const b = subtreeBBox(c);
-      gMinX = Math.min(gMinX, b.minX);
-      gMaxX = Math.max(gMaxX, b.maxX);
-      minGap = Math.min(minGap, linkLen(c.node, groupGap));
-      centers.push((b.minX + b.maxX) / 2);
-    }
-    centers.push(nb.x + nb.w / 2);
-    const spanLo = Math.min(...centers);
-    const spanHi = Math.max(...centers);
-    const railY = dir === 'down' ? nb.y + nb.h + minGap / 2 : nb.y - minGap / 2;
-    const pad = 6;
-    const blocksRail = (b: BBox): boolean =>
-      b.minY - pad <= railY &&
-      railY <= b.maxY + pad &&
-      b.minX - pad <= spanHi &&
-      spanLo <= b.maxX + pad;
-
-    let leftEdge = -Infinity; // 左组的右缘
-    let rightEdge = Infinity; // 右组的左缘
-    for (const c of leftGroup) {
-      const b = subtreeBBox(c);
-      if (!blocksRail(b)) continue; // 不压梁线 → 不收口
-      leftEdge = Math.max(leftEdge, b.maxX);
-    }
-    for (const c of rightGroup) {
-      const b = subtreeBBox(c);
-      if (!blocksRail(b)) continue;
-      rightEdge = Math.min(rightEdge, b.minX);
-    }
-    if (leftEdge === -Infinity && rightEdge === Infinity) return; // 无左右组在场 → 无需钳制
-
-    const width = gMaxX - gMinX;
-    const window = rightEdge - leftEdge;
-    let shift = 0;
-    if (gMaxX > rightEdge) shift = rightEdge - gMaxX;
-    if (gMinX + shift < leftEdge) shift = leftEdge - gMinX;
-    if (width > window && window > 0) {
-      shift = leftEdge + window / 2 - (gMinX + gMaxX) / 2; // 窗口比组窄 → 居中尽力
-    }
-    if (shift !== 0) {
-      for (const c of group) translateSubtree(c, shift, 0);
-    }
-  }
-
   place(rootLN, islandDir, []); // 根：无祖先可避
+
+  // 有效方向回填（可选出参）：森林布局平移岛屿后要按**同一份**方向结论重建连线，
+  // 否则只能按岛方向一刀切（右岛里 up/down 共享梁与 hub 共享竖梁全退化为贝塞尔，
+  // 与渲染端按 dir/hub 重建的线不一致）。回退路径（全树无显式 dir）不产出 → 调用方回落岛方向。
+  if (opts.dirSink) {
+    for (const [id, d] of dirOf) opts.dirSink.set(id, d);
+  }
 
   // ④ 碰撞消解（自底向上刚体分离）：
   //    D2′ 原本的「邻侧防叠」只在同层相邻组之间做一次 bbox 推开、不迭代，三向以上
@@ -558,9 +508,10 @@ export function linkGeometry(
   const dirOfChild = (c: LayoutNode): GrowDir => dirOf.get(c.node.id) ?? 'right';
   let variants: LinkGeometry[];
   if (dir === 'right' || dir === 'left') {
-    // hub：左右组走共享竖梁 bus（与 up/down 共享梁对称）；未标记保持贝塞尔（老文档零变更）
+    // hub：左右组走共享竖梁 bus（与 up/down 共享梁对称）；未标记保持贝塞尔（老文档零变更）。
+    // 标记判定走 readHubFlag（布尔 true / 字符串 'true' 等价）——存档重开后仍是枢纽。
     variants =
-      parent.node.note?.hub === true
+      readHubFlag(parent.node.note)
         ? beamXVariants(
             parent,
             child,

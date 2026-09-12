@@ -9,24 +9,19 @@
  *   （对齐左边界而非根中心——四向生长的岛左翼会伸到根中心左侧，只按宽度顺排会压岛）
  *
  * ⚠️ 平移后必须**重新生成** links：path 字符串内含绝对坐标，
- * 只平移节点盒会让连线留在原地。
+ * 只平移节点盒会让连线留在原地。重建按子节点有效方向 + hub 选线型（见 islandLinks）。
  */
 import type { EditableNode } from '../tree/treeOps.js';
 import {
-  bezierLink,
-  collectLayout,
   layoutBounds,
-  orgBeamLink,
-  orgBeamLinkUp,
   type GrowDir,
   type LayoutResult,
   type LayoutNode,
-  type LinkBuilder,
   type LinkGeometry,
   type MeasureFn,
 } from './mindmap.js';
 import { layoutLogic, layoutOrg, type LayoutKind } from './layouts.js';
-import { layoutMindmapBranched } from './branching.js';
+import { layoutMindmapBranched, linkGeometry } from './branching.js';
 
 /** 中心生长方向（四向）。
  *  定义在 mindmap.ts（布局基座）——forest 与 layouts 都依赖它；
@@ -47,7 +42,7 @@ export interface CenterSpec {
   pos?: { x: number; y: number };
 }
 
-/** 方向 → 局部布局函数（仅取 nodes/bounds，links 稍后统一重建） */
+/** 方向 → 局部布局函数（仅取 nodes/bounds；links 平移后由 islandLinks 重建） */
 const LAYOUT_BY_DIR: Record<GrowDir, (r: EditableNode, m: MeasureFn, c: Set<string>) => LayoutResult> =
   {
     right: (r, m, c) => layoutLogic(r, m, c, 1),
@@ -55,16 +50,6 @@ const LAYOUT_BY_DIR: Record<GrowDir, (r: EditableNode, m: MeasureFn, c: Set<stri
     down: (r, m, c) => layoutOrg(r, m, c, 1),
     up: (r, m, c) => layoutOrg(r, m, c, -1),
   };
-
-/** 方向 → 连线构建器（与对应布局函数保持一致） */
-const LINK_BY_DIR: Record<GrowDir, LinkBuilder> = {
-  right: bezierLink,
-  left: bezierLink,
-  down: (p, c) =>
-    orgBeamLink(p, c, (p.box.y + p.box.h + Math.min(...p.children.map((k) => k.box.y))) / 2),
-  up: (p, c) =>
-    orgBeamLinkUp(p, c, (p.box.y + Math.max(...p.children.map((k) => k.box.y + k.box.h))) / 2),
-};
 
 /** 方向 → 文档级布局类型（供 UI 复用同一套映射） */
 export const LAYOUT_KIND_BY_DIR: Record<GrowDir, LayoutKind> = {
@@ -100,14 +85,18 @@ export function layoutForest(
   //    D2′ 接线：岛内也要支持「思想分叉」——走分支布局（注入 islandDir=岛方向）；
   //    无 note.dir 声明时 layoutMindmapBranched 内部逐像素回退经典布局，零行为变更。
   const local = centers.map((spec) => {
+    // 方向结论回填：平移后重建连线要用同一份（显式声明 → 跟随显式父 → 基线反推）
+    const dirSink = new Map<string, GrowDir>();
     const res = layoutMindmapBranched(spec.node, measure, collapsedIds, {
       islandDir: spec.dir,
       // 回退沿用岛内原四向布局（整棵朝该方向），保证无 note.dir 时零行为变更
       fallback: LAYOUT_BY_DIR[spec.dir],
+      dirSink,
     });
     return {
       spec,
       res,
+      dirSink,
       root: res.nodes.find((n) => n.parentId === null) ?? null,
     };
   });
@@ -151,10 +140,50 @@ export function layoutForest(
       n.box.y += dy;
     }
     nodes.push(...item.res.nodes);
-    if (root) links.push(...collectLayout(root, LINK_BY_DIR[item.spec.dir]).links);
+    if (root) links.push(...islandLinks(root, item.spec.dir, item.dirSink));
   });
 
   return { nodes, links, bounds: layoutBounds(nodes) };
+}
+
+/**
+ * 岛内连线重建（平移后 path 必须重算 —— 字符串内含绝对坐标）。
+ *
+ * **线型与岛外同族**：按子节点**有效生长方向**（布局落位期回填的 dirSink）与 hub 标记
+ * 选几何（linkGeometry：左右组 hub 走共享竖梁 / up·down 走共享梁 / 其余贝塞尔）。
+ * 此前一律套用「岛方向」构建器：右岛里 up/down 共享梁与 hub 共享竖梁全被画成贝塞尔，
+ * 而渲染端自己按 dir/hub 重建 —— 「内核挑的线」≠「屏幕上的线」（岛文档全量失配）。
+ *
+ * dirSink 缺省或未命中的节点回落岛方向 —— 经典岛（全树无显式 dir）语义逐像素不变。
+ * 不传节点索引（不做避障挑选）：与既有森林行为一致，只保证线型家族正确。
+ */
+function islandLinks(
+  root: LayoutNode,
+  islandDir: GrowDir,
+  dirSink: ReadonlyMap<string, GrowDir>,
+): LinkGeometry[] {
+  // linkGeometry 的 dirOf 是「整棵岛」的查询表：未回填者（含根）一律按岛方向——
+  // 不能让它落到内部的 `?? 'right'`（up/down 组的梁高会按错方向过滤兄弟）。
+  const dirOf = new Map<string, GrowDir>();
+  const collect = (ln: LayoutNode): void => {
+    dirOf.set(ln.node.id, dirSink.get(ln.node.id) ?? islandDir);
+    ln.children.forEach(collect);
+  };
+  collect(root);
+  const out: LinkGeometry[] = [];
+  const walk = (ln: LayoutNode): void => {
+    for (const c of ln.children) {
+      out.push({
+        path: linkGeometry(ln, c, dirOf.get(c.node.id) ?? islandDir, dirOf).path,
+        depth: ln.depth,
+        fromId: ln.node.id,
+        toId: c.node.id,
+      });
+      walk(c);
+    }
+  };
+  walk(root);
+  return out;
 }
 
 /** 方向 → 中文标签（UI 用） */
