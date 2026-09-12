@@ -319,5 +319,52 @@ invalidD: 0                                    （全部 d 非空、无 NaN/Infi
 人工比对截图：三段中两条边（含「里程碑归属 / 待验证」标签与拐弯形态）均在场、位置正确、无穿越节点异常；
 回程后视图恢复原区域，边随裁剪集合重入无缺失。
 
+### 8.4 G-P9/P9b 复核守卫（2026-09-12 · 收口轮）
+
+**守卫缺口（独立复核发现，必补）**：G-P1 的 identity 稳定化在出厂配置（`CULL_QUANT=256`）下无判别力——
+复核把 `MapView` 的 `stableByKeys` 接线临时绕过（`return next;`）后，原判别用例 **6/6 仍全绿**
+（≤40px 小步不跨量化边界，量化先兜住；长距用例上界太松）；仅 `CULL_QUANT=1` 时绕过才红
+（`expected 4 to be +0` / `11 > 8`）。即 G-P1 是 load-bearing 但测试看不见 → 补判别守卫。
+
+- **G-P9 第三例**（`freeedge-pan-reroute.test.tsx`）：平距 Δ≈280 世界 px（7 步 × ≤40px 小步，取**左移**——
+  jsdom 无 ResizeObserver → `viewW=1`，右移 Δ≥129 即掉 e1、成员失真）必跨 ≥1 个 256 量化边界。
+  断言链：① transform 变化 → ② `stableCalls ≥ 1`（非空转证据位：确实跨界）→ ③ 可见自由边数不变
+  （夹具 E=2）→ ④ `routeCalls === 0`。
+- **G-P9 阴性对照（两跑一恢复）**：绕过接线 → 本例红（工具原样）：
+  `AssertionError: 跨量化边界后整表重算 2 次 routeAesthetic——G-P1 接线失效: expected 2 to be +0`
+  （= stableCalls 1 × E 2；同跑旧两例仍绿——缺口复现）；恢复接线 → **3/3 绿**、`git diff` 空。
+- **G-P9b 充分性 property test**（`freeedge-equivalence.test.ts` ⑤⑥，R 界此前实测「砍到 1/8 仍全绿」未被判别钉住）：
+  - ⑤ 对拍：大场域随机 50 场景 × 5~6 边（断言下界 ≥200），强制开索引（`indexMinNodes: 0`），
+    「`near()` 剪枝 vs 全量」`RouteResult` **逐位相等**（含贴弦 threading 边与跨边累积协调；
+    断言剪枝命中 >100——回退分支不计数，防空转）；
+  - ⑥ 对抗几何：障碍置于推导界内缘 `1.65·chordMax + 180 + ε`（ε=1）必须被 `near()` 纳入。
+  - 配套：`buildObstacleTable` opts 增 `cellSize` 直通（**默认 512 不变**）——`queryBoxIndex` 的
+    1 格膨胀（512px）会掩盖 R 收缩 ≤512px 的突变，测试用 32px 小格径把判别锐化到界内缘。
+  - **G-P9b 突变对照（两跑一恢复）**：R 公式临时 `2×→1×` → ⑥ 红（工具原样）：
+    `AssertionError: 界内缘障碍（距 span 1207.9px）未被纳入——R 保守界被收缩: expected false to be true`；
+    恢复 → **6/6 绿**、`git diff` 空。
+
+### 8.5 G-P6 路由结果缓存（方案 A · 开关默认关）与 G-P7 收口
+
+- **机制**（`render/routeCache.ts` + `FreeEdgeLayer` 接线）：LRU(512)；
+  key = `edge.key + 端点解析输出（fromId/toId + 两端盒——collapsed 对路由影响的全部出口）+ manual + routingSide + stagger`；
+  `obstacleTable` 身份换代即弃缓存重建（动画期 obstacles→空单例 ⇒ 强制换代，无跨态污染）；
+  命中项同样 push points 进跨边累积 `routedPolylines` → **跨边协调输入集语义不漂移**。
+- **机制判别**（jsdom，成员退出平移 Δ=240：e1 出窗 2→1、存活边端点盒未变）：
+  开关开 → `routeCalls = 0`（TDD 红证据：未实现时 `AssertionError: 成员退出后仍重算 1 次——缓存未命中: expected 1 to be +0`）；
+  开关关（默认）→ ≥1（对照位，证明开关在起作用）；两态渲染 d 逐位相同。
+  工具用例 LRU ×4（命中同引用+recency / 逐出最久未用 / set 更新 / 默认关）。
+- **收口决策：默认保持关。** G-P1/P2 后「成员不变」已 0 重算，缓存只覆盖「成员进出」场景；
+  且命中复用意味着跨边协调不随成员重算（等价性在此场景下由测试钉死，但真浏览器大图 A/B 未做）——
+  是否默认开启待「成员进出高频」场景实测后再定，开关与回滚面已就位。
+- **G-P7 全 gate 实测**（2026-09-12，工具原样输出）：
+  - typecheck ×3：kernel / react / canvas 全 `Done`；
+  - 三包套件：`packages/kernel` **478 passed**、`packages/react` **1012 passed**、`apps/canvas` **120 passed**
+    （= 1610 全绿；起点 478/1003/120，react +9 = G-P9 1 + G-P9b 2 + G-P6 工具 4 + 机制 2）；
+  - depcruise：`✔ no dependency violations found (383 modules, 1089 dependencies cruised)`；
+  - lint：`Found 1490 warnings`（既有基线水位；exit 0）；
+  - budget：any 0/0 · tsIgnore 0/0 · bang 90/90 · asCast 31/31 · console 4/4 · todo 1/1 ·
+    defaultExport 2/2 · **bigFiles 3/4（↓1 优于）** —— 债务未增长，零余量项无新增。
+
 
 
