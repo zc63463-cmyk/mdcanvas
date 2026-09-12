@@ -13,6 +13,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   ChargeArc,
   floatLabelStyle,
+  hitSubSeat,
   hitTest,
   itemAt,
   RADIAL_ACCENT,
@@ -23,19 +24,28 @@ import {
   RADIAL_ITEMS_V1,
   RadialRing,
   RadialStyles,
+  radialGeometryFor,
   radialGeometryOf,
   radialReduce,
   slotCenterDeg,
+  SubRing,
+  subRingOf,
+  subSeatCenterDeg,
   type RadialEffect,
   type RadialEvent,
   type RadialItem,
   type RadialOrigin,
   type RadialSlotKey,
   type RadialState,
+  type RadialSubItem,
+  type SubRingModel,
 } from '@mindcanvas/react';
 
 /** 视口安全边距：外环 + 浮标/确认气泡的余量（环贴边时把锚点收进来） */
 const VIEWPORT_PAD = RADIAL_GEOMETRY_DEFAULTS.outerR + 40;
+
+/** ② 二级环：悬停「更多」的停顿确认时长（与沙盒/设计文档一致——停顿=确认意图，防误入） */
+const SUB_DWELL_MS = 450;
 
 /** 环锚点视口钳制：贴右/上等边缘时向内收（视口小于两边距时取尽力值） */
 function clampToViewport(p: { x: number; y: number }): { x: number; y: number } {
@@ -43,6 +53,28 @@ function clampToViewport(p: { x: number; y: number }): { x: number; y: number } 
   const hiX = Math.max(lo, window.innerWidth - VIEWPORT_PAD);
   const hiY = Math.max(lo, window.innerHeight - VIEWPORT_PAD);
   return { x: Math.min(Math.max(p.x, lo), hiX), y: Math.min(Math.max(p.y, lo), hiY) };
+}
+
+/** 未注入二级模型时的空席位表（稳定引用，避免每次渲染新数组） */
+const NO_SUB_ITEMS: readonly RadialSubItem[] = [];
+
+/**
+ * 二级「可用席位」命中（含灰显过滤）——**只用于「悬停是否即时生效」判定**（提交/轮转由状态机管）。
+ * 一级有呼吸缝防抖（60ms）；外圈席位是离散大目标，命中即可立即高亮。
+ */
+function subSeatUsableHit(
+  state: RadialState,
+  pages: readonly (readonly RadialSubItem[])[] | undefined,
+  x: number,
+  y: number,
+): number | null {
+  if (!pages) return null;
+  const items = pages[Math.max(0, state.subPage ?? 0)] ?? [];
+  if (items.length === 0) return null;
+  const geo = radialGeometryOf(state);
+  if (!geo) return null;
+  const i = hitSubSeat(subRingOf(geo, items.length), x, y);
+  return i !== null && !items[i]?.disabled ? i : null;
 }
 
 export interface RadialStageActions {
@@ -60,6 +92,12 @@ export interface RadialStageOptions {
   getAnchor: (id: string) => { x: number; y: number } | null;
   /** 快击通道：写既有预方向（与 MindmapStage 的 preDirsRef 同语义） */
   setPreDir: (id: string, dir: RadialSlotKey) => void;
+  /**
+   * ② 二级环席位模型（T5 画布接线）：宿主注入 `submenuItemsFor(controller, id, bags)` 的结果——
+   * 环席位与右键菜单**同一闭包**（描述 / 笔记 / 中心 / 剪贴板 / 同级）。
+   * 缺省不注入 → 环只有一级（「更多」= 打开菜单，与接入前逐字节同路径）。
+   */
+  getSubModel?: (id: string) => SubRingModel | null;
   actions: RadialStageActions;
 }
 
@@ -67,22 +105,36 @@ export interface RadialStage {
   state: RadialState;
   charge: number;
   inDead: boolean;
-  /** 二次确认气泡；nodeId 在**升起时捕获**——确认删除的永远是「发起删除的节点」，不受期间选中变化影响 */
-  confirm: { itemId: string; label: string; nodeId: string } | null;
+  /**
+   * 二次确认气泡；nodeId / 锚点均在**升起时捕获**：
+   *  - nodeId：确认删除的永远是「发起删除的节点」，不受期间选中变化影响；
+   *  - cx/cy：提交后 `state` 归位 `RADIAL_IDLE`（`origin: null`）——渲染层若读 `state.origin`
+   *    会因锚点丢失而**永不显示气泡**（2026-09-11 真浏览器实测 bug）。
+   */
+  confirm: { itemId: string; label: string; nodeId: string; cx: number; cy: number } | null;
   settleConfirm: (ok: boolean) => void;
   /** 键盘入口：宿主 onKey 首位调用；true = 已消费 */
   handleKey: (e: KeyboardEvent) => boolean;
+  /** ② 二级环：当前页席位（level 2 渲染外圈用；未注入模型 / 非环会话 → 空数组） */
+  subItems: readonly RadialSubItem[];
+  /** ② 二级环：页数（>1 = 存在方向页，如「升为中心」的四向页） */
+  subPageCount: number;
 }
 
 export function useRadialStage(opts: RadialStageOptions): RadialStage {
   const [state, setState] = useState<RadialState>(RADIAL_IDLE);
   const [charge, setCharge] = useState(0);
   const [inDead, setInDead] = useState(false);
-  const [confirm, setConfirm] = useState<{ itemId: string; label: string; nodeId: string } | null>(null);
+  const [confirm, setConfirm] = useState<{ itemId: string; label: string; nodeId: string; cx: number; cy: number } | null>(null);
 
   const stateRef = useRef(state);
   const optsRef = useRef(opts);
   const selRef = useRef<string | null>(null);
+  /**
+   * ② 二级环席位模型：**会话开始时捕获**（下钻前就要进 `ctx.sub`——状态机据它决定「更多」是提交还是下钻）。
+   * 环开期间画布是模态（节点/选中不会变），事实冻结到会话结束即可。
+   */
+  const subRef = useRef<SubRingModel | null>(null);
   const anchorRef = useRef<{ x: number; y: number } | null>(null);
   const confirmRef = useRef(confirm);
   const holdTimerRef = useRef(0);
@@ -123,7 +175,10 @@ export function useRadialStage(opts: RadialStageOptions): RadialStage {
   }, []);
 
   const armConfirm = useCallback((itemId: string, label: string, nodeId: string) => {
-    setConfirm({ itemId, label, nodeId });
+    // 锚点与 nodeId 一起捕获：提交（松键/Enter/点击）后 state 已归位 RADIAL_IDLE，
+    // 渲染层不能再去读 state.origin，否则气泡因锚点丢失而永不显示
+    const a = anchorRef.current;
+    setConfirm({ itemId, label, nodeId, cx: a?.x ?? 0, cy: a?.y ?? 0 });
     if (confirmTimerRef.current !== 0) window.clearTimeout(confirmTimerRef.current);
     confirmTimerRef.current = window.setTimeout(() => {
       confirmTimerRef.current = 0;
@@ -151,6 +206,19 @@ export function useRadialStage(opts: RadialStageOptions): RadialStage {
           break;
         }
         case 'commit': {
+          // ② 二级环席位：动作来自注入模型（与右键菜单**同一闭包**）；
+          // 末席「打开完整菜单」不在模型里（宿主兜底）→ 走既有 openMenu（锚点 = 会话锚点）
+          if (effect.itemId.startsWith('sub:')) {
+            const act = subRef.current?.actions[effect.itemId];
+            if (act) {
+              act();
+            } else if (effect.itemId === 'sub:more-menu') {
+              const sid = selRef.current;
+              const anchor = anchorRef.current;
+              if (sid && anchor) optsRef.current.actions.openMenu(sid, anchor.x, anchor.y);
+            }
+            break;
+          }
           const item = RADIAL_ITEMS_V1.find((it) => it.id === effect.itemId);
           const id = selRef.current;
           if (item?.danger) {
@@ -167,7 +235,11 @@ export function useRadialStage(opts: RadialStageOptions): RadialStage {
 
   const dispatch = useCallback(
     (ev: RadialEvent) => {
-      const step = radialReduce(stateRef.current, ev, RADIAL_ITEMS_V1, {});
+      // ② 二级环：把席位页喂给状态机（缺省 undefined → 逐字节走一级原路径）
+      const pages = subRef.current?.pages;
+      const first = pages?.[0];
+      const sub = first && first.length > 0 ? { seats: first.length, pages } : undefined;
+      const step = radialReduce(stateRef.current, ev, RADIAL_ITEMS_V1, { sub });
       stateRef.current = step.state;
       setState(step.state);
       if (step.effect.kind !== 'none') handleEffect(step.effect);
@@ -200,7 +272,9 @@ export function useRadialStage(opts: RadialStageOptions): RadialStage {
           settleConfirm(true);
           return true;
         }
-        if (e.key === 'Escape') {
+        if (e.key === 'Escape' || e.key === 'Backspace') {
+          // Backspace 别名：Windows 下 Alt+Esc 是系统快捷键（切窗口），环内根本收不到 Esc
+          if (e.key === 'Backspace') e.preventDefault();
           settleConfirm(false);
           return true;
         }
@@ -217,6 +291,8 @@ export function useRadialStage(opts: RadialStageOptions): RadialStage {
         const clamped = clampToViewport(anchor); // 贴视口边缘 → 锚点收进来（环不出屏）
         selRef.current = sel;
         anchorRef.current = clamped;
+        // ② 二级环：会话开始即捕获席位模型（「更多」提交时状态机据 ctx.sub 判断是否下钻）
+        subRef.current = optsRef.current.getSubModel?.(sel) ?? null;
         pressDown({ nodeId: sel, cx: clamped.x, cy: clamped.y });
         return true;
       }
@@ -232,7 +308,11 @@ export function useRadialStage(opts: RadialStageOptions): RadialStage {
           dispatch({ t: 'confirm' });
           return true;
         }
-        if (e.key === 'Escape') {
+        if (e.key === 'Escape' || e.key === 'Backspace') {
+          // Backspace 别名：Alt+Esc 被 Windows 系统占用（浏览器收不到 Esc），Alt+Backspace 稳定到手。
+          // 顺带修掉一处旧行为：蓄力期按 Backspace 原会「撤会话 + 按键落画布（keys.ts: Backspace=删除节点）」，
+          // 现在只撤会话且按键被消费——防 Alt 蓄力窗口内的误删。
+          if (e.key === 'Backspace') e.preventDefault();
           clearHold();
           dispatch({ t: 'cancel' });
           return true;
@@ -278,6 +358,11 @@ export function useRadialStage(opts: RadialStageOptions): RadialStage {
       if (geo) {
         const r = Math.hypot(e.clientX - geo.cx, e.clientY - geo.cy);
         setInDead(r < geo.cfg.deadR);
+      }
+      // 二级：外圈命中可用席位 → 即时高亮（不走一级的呼吸缝防抖）
+      if ((stateRef.current.level ?? 1) === 2 && subSeatUsableHit(stateRef.current, subRef.current?.pages, e.clientX, e.clientY) !== null) {
+        dispatch({ t: 'hover', x: e.clientX, y: e.clientY });
+        return;
       }
       const slot = geo ? hitTest(geo, e.clientX, e.clientY) : null;
       const usable = slot !== null && itemAt(RADIAL_ITEMS_V1, slot) !== null;
@@ -363,6 +448,14 @@ export function useRadialStage(opts: RadialStageOptions): RadialStage {
     if (state.phase !== 'ring') setInDead(false);
   }, [state.phase]);
 
+  // ② 二级环：悬停「更多」**停顿** SUB_DWELL_MS → 下钻（停顿=确认意图，防误入；点击/Enter 立即下钻）
+  useEffect(() => {
+    if (!subRef.current) return;
+    if (state.phase !== 'ring' || (state.level ?? 1) !== 1 || state.highlight !== 'left') return;
+    const t = window.setTimeout(() => dispatch({ t: 'confirm' }), SUB_DWELL_MS);
+    return () => window.clearTimeout(t);
+  }, [state.phase, state.level, state.highlight, dispatch]);
+
   // 卸载清理
   useEffect(
     () => () => {
@@ -373,7 +466,21 @@ export function useRadialStage(opts: RadialStageOptions): RadialStage {
     [],
   );
 
-  return { state, charge, inDead, confirm, settleConfirm, handleKey };
+  // ② 二级环：当前页席位（仅环会话内有效——会话外不暴露，避免覆盖层误渲染）
+  const livePages = state.phase === 'ring' ? subRef.current?.pages : undefined;
+  const subPageIdx = Math.min(Math.max(0, state.subPage ?? 0), Math.max(0, (livePages?.length ?? 0) - 1));
+  const subItems = livePages?.[subPageIdx] ?? NO_SUB_ITEMS;
+
+  return {
+    state,
+    charge,
+    inDead,
+    confirm,
+    settleConfirm,
+    handleKey,
+    subItems,
+    subPageCount: livePages?.length ?? 0,
+  };
 }
 
 /**
@@ -396,6 +503,11 @@ export function RadialStageOverlay({
   const chargeGeo = state.phase === 'arming' ? radialGeometryOf(state) : null;
   const highlightItem: RadialItem | null = state.highlight ? itemAt(RADIAL_ITEMS_V1, state.highlight) : null;
   const anchor: RadialOrigin | null = state.origin;
+  // ② 二级环（T5）：level 2 → 外圈展开、主环降透明（两环同场景；缺口语义继承）
+  const level = state.level ?? 1;
+  const subGeo = geo && level === 2 && radial.subItems.length > 0 ? subRingOf(geo, radial.subItems.length) : null;
+  const subIdx = state.subIndex ?? null;
+  const subItem = subGeo && subIdx !== null ? (radial.subItems[subIdx] ?? null) : null;
   return (
     <>
       <RadialStyles />
@@ -408,11 +520,28 @@ export function RadialStageOverlay({
         </div>
       )}
       {chargeGeo && <ChargeArc geo={chargeGeo} progress={charge} />}
-      {geo && <RadialRing geo={geo} highlight={state.highlight} items={RADIAL_ITEMS_V1} />}
-      {geo && highlightItem && state.highlight && (
+      {/* 主环：二级展开时降透明（非当前级） */}
+      {geo && (
+        <div className={level === 2 ? 'ring-dim' : undefined}>
+          <RadialRing geo={geo} highlight={state.highlight} items={RADIAL_ITEMS_V1} />
+        </div>
+      )}
+      {/* ② 二级环：外圈席位（灰显席渲染为「锁着的席」） */}
+      {subGeo && <SubRing sub={subGeo} items={radial.subItems} highlight={subIdx} />}
+      {geo && level === 1 && highlightItem && state.highlight && (
         <div className="float-label" style={floatLabelStyle(geo, slotCenterDeg(state.highlight))}>
           <b style={{ color: highlightItem.danger ? RADIAL_DANGER : RADIAL_ACCENT }}>{highlightItem.label}</b>
           {highlightItem.hint ? <kbd>{highlightItem.hint}</kbd> : null}
+        </div>
+      )}
+      {/* 二级浮标：贴外圈之外（几何只借外圈半径，圆心同源） */}
+      {subGeo && subItem && subIdx !== null && (
+        <div
+          className="float-label"
+          style={floatLabelStyle(radialGeometryFor(subGeo.cx, subGeo.cy, { outerR: subGeo.outerR }), subSeatCenterDeg(subGeo, subIdx))}
+        >
+          <b style={{ color: RADIAL_ACCENT }}>{subItem.label}</b>
+          {subItem.hint ? <kbd>{subItem.hint}</kbd> : null}
         </div>
       )}
       {state.phase === 'ring' && inDead && anchor && (
@@ -420,11 +549,12 @@ export function RadialStageOverlay({
           松开取消
         </div>
       )}
-      {confirm && anchor && (
+      {/* 气泡位置用 confirm 自带锚点（不能用 state.origin：提交后已归位 null） */}
+      {confirm && (
         <div
           className="confirm-chip"
           data-radial-ignore
-          style={{ left: anchor.cx, top: anchor.cy + 24, pointerEvents: 'auto' }}
+          style={{ left: confirm.cx, top: confirm.cy + 24, pointerEvents: 'auto' }}
         >
           <span>「{confirm.label}」需二次确认</span>
           <button type="button" onClick={() => settleConfirm(true)}>

@@ -11,7 +11,7 @@
  */
 import { act, cleanup, render, renderHook } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { RADIAL_IDLE } from '@mindcanvas/react';
+import { RADIAL_IDLE, radialGeometryFor, subRingOf, subSeatCenterDeg, type RadialSubItem } from '@mindcanvas/react';
 import { RadialStageOverlay, useRadialStage } from '../src/hooks/useRadialStage';
 import type { RadialStage } from '../src/hooks/useRadialStage';
 
@@ -170,6 +170,33 @@ describe('useRadialStage · 键盘意图分流（深审修复）', () => {
     expect(esc).toBe(true);
     expect(result.current.state.phase).toBe('idle');
   });
+
+  it('环内 Backspace → 取消（Windows 下 Alt+Esc 收不到 Esc；Backspace 为别且拦默认）', () => {
+    const { result } = setup();
+    openRing(result);
+    const ev = kd('Backspace');
+    let bs = false;
+    act(() => {
+      bs = result.current.handleKey(ev);
+    });
+    expect(bs).toBe(true);
+    expect(ev.defaultPrevented).toBe(true); // 拦住浏览器默认（历史回退）
+    expect(result.current.state.phase).toBe('idle');
+  });
+
+  it('蓄力中 Backspace → 撤会话且被消费（不再落画布，防误触 keys.ts 的「删除节点」）', () => {
+    const { result, removeNode } = setup();
+    act(() => {
+      result.current.handleKey(kd('Alt'));
+    });
+    let bs = false;
+    act(() => {
+      bs = result.current.handleKey(kd('Backspace'));
+    });
+    expect(bs).toBe(true); // 宿主收到 true → 不再转给画布 → Backspace=删除 不会触发
+    expect(result.current.state.phase).toBe('idle');
+    expect(removeNode).not.toHaveBeenCalled();
+  });
 });
 
 describe('useRadialStage · 指针/滚轮守卫（深审修复）', () => {
@@ -268,6 +295,18 @@ describe('useRadialStage · 删除二次确认（深审高危修复）', () => {
     expect(removeNode).not.toHaveBeenCalled();
   });
 
+  it('Backspace 取消气泡（Windows 下 Alt+Esc 收不到）→ 不删 + 拦默认', () => {
+    const { result, removeNode } = setup();
+    armDelete(result);
+    const ev = kd('Backspace');
+    act(() => {
+      result.current.handleKey(ev);
+    });
+    expect(result.current.confirm).toBeNull();
+    expect(ev.defaultPrevented).toBe(true);
+    expect(removeNode).not.toHaveBeenCalled();
+  });
+
   it('确认超时（1.6s）自动收起 → 不删', () => {
     const { result, removeNode } = setup();
     armDelete(result);
@@ -276,6 +315,45 @@ describe('useRadialStage · 删除二次确认（深审高危修复）', () => {
     });
     expect(result.current.confirm).toBeNull();
     expect(removeNode).not.toHaveBeenCalled();
+  });
+});
+
+describe('RadialStageOverlay · 环内删除气泡渲染（2026-09-11 真浏览器实测修复）', () => {
+  it('环内 ↓ 松键提交 → 气泡必须出现（旧实现读 state.origin，提交已归位 null → 永不显示）', () => {
+    const removeNode = vi.fn();
+    let radial: RadialStage | null = null;
+    function Host() {
+      const r = useRadialStage({
+        getSelectedId: () => 'A',
+        getAnchor: () => ({ x: 100, y: 100 }),
+        setPreDir: () => {},
+        actions: { addChild: () => {}, editText: () => {}, removeNode, openMenu: () => {} },
+      });
+      radial = r;
+      return <RadialStageOverlay radial={r} />;
+    }
+    const { container } = render(<Host />);
+    act(() => {
+      radial!.handleKey(kd('Alt'));
+    });
+    act(() => {
+      vi.advanceTimersByTime(300); // arming → ring
+    });
+    act(() => {
+      radial!.handleKey(kd('ArrowDown')); // 直映射 ↓ = 删除节点
+    });
+    act(() => {
+      window.dispatchEvent(new KeyboardEvent('keyup', { key: 'Alt' })); // 松键 = 提交（危险 → 转确认）
+    });
+    expect(radial!.confirm?.itemId).toBe('delete');
+    const chip = container.querySelector('.confirm-chip');
+    expect(chip, '气泡未渲染：锚点丢失（origin 归位）').not.toBeNull();
+    expect(chip?.textContent ?? '').toContain('删除节点');
+    // 气泡上的确认按钮 → 真删
+    act(() => {
+      radial!.handleKey(kd('Enter'));
+    });
+    expect(removeNode).toHaveBeenCalledWith('A');
   });
 });
 
@@ -329,6 +407,8 @@ describe('RadialStageOverlay · ① 幽灵/删除预告渲染', () => {
     confirm: null,
     settleConfirm: () => {},
     handleKey: () => false,
+    subItems: [],
+    subPageCount: 0,
   });
 
   it('缺省零渲染；传入 ghost/dangerBoxes 即显', () => {
@@ -344,5 +424,261 @@ describe('RadialStageOverlay · ① 幽灵/删除预告渲染', () => {
     );
     expect(container.querySelector('.ghost-node')?.textContent).toContain('新节点');
     expect(container.querySelectorAll('.danger-box')).toHaveLength(1);
+  });
+});
+
+/**
+ * ② 二级环 · 画布接线（T5）
+ * ══════════════════════════════════════════════════════════════════════
+ * 锁三件事：
+ * 1. **零影响**：未注入 `getSubModel` → 「更多」仍是「打开菜单」的普通提交（与接入前逐字节同路径）；
+ * 2. **下钻/翻页/提交**：席位来自注入模型，提交调的是**模型给的命令闭包**（宿主与菜单同一闭包）；
+ * 3. **页与灰显的接线**：方向页换页仍在二级深度、灰显席轮转跳过且点击无效、Esc/Backspace 收起整环。
+ */
+describe('② 二级环（T5 画布接线）', () => {
+  const P0 = [
+    'sub:add-sibling',
+    'sub:edit-desc',
+    'sub:edit-note',
+    'sub:center',
+    'sub:hub',
+    'sub:copy-text',
+    'sub:more-menu',
+  ];
+  const P1 = ['sub:center-right', 'sub:center-left', 'sub:center-down', 'sub:center-up', 'sub:back'];
+
+  /** 与派生模型同形状的假模型：席位 id / 页 / 每席 spy；`sub:more-menu` 故意无 action（宿主兜底） */
+  function makeModel(patch: { disabled?: string[] } = {}) {
+    const spies = new Map<string, ReturnType<typeof vi.fn>>();
+    const mk = (id: string, extra: Partial<RadialSubItem> = {}): RadialSubItem => {
+      const spy = vi.fn();
+      spies.set(id, spy);
+      return { id, label: id, icon: [], disabled: patch.disabled?.includes(id) || undefined, ...extra };
+    };
+    const pages: RadialSubItem[][] = [
+      [
+        mk('sub:add-sibling'),
+        mk('sub:edit-desc'),
+        mk('sub:edit-note'),
+        mk('sub:center', { opensPage: 1 }),
+        mk('sub:hub'),
+        mk('sub:copy-text'),
+        { id: 'sub:more-menu', label: '打开完整菜单', icon: [] }, // 宿主兜底：不给 action
+      ],
+      [mk('sub:center-right'), mk('sub:center-left'), mk('sub:center-down'), mk('sub:center-up'), mk('sub:back', { opensPage: 0 })],
+    ];
+    const actions: Record<string, () => void> = {};
+    for (const [id, spy] of spies) actions[id] = spy as unknown as () => void;
+    return { pages, actions, spies };
+  }
+
+  function setupSub(model = makeModel()) {
+    const openMenu = vi.fn();
+    const { result } = renderHook(() =>
+      useRadialStage({
+        getSelectedId: () => 'A',
+        getAnchor: () => ({ x: 400, y: 400 }),
+        setPreDir: vi.fn(),
+        getSubModel: () => model,
+        actions: { addChild: vi.fn(), editText: vi.fn(), removeNode: vi.fn(), openMenu },
+      }),
+    );
+    return { result, model, openMenu };
+  }
+
+  /** 出环 → 高亮「更多」→ Enter = 下钻二级 */
+  function drill(r: { current: RadialStage }): void {
+    openRing(r);
+    act(() => {
+      r.current.handleKey(kd('ArrowLeft'));
+    });
+    act(() => {
+      r.current.handleKey(kd('Enter'));
+    });
+  }
+
+  /** 外圈第 i 席中心（客户端坐标；环心 = (400,400)，与 getAnchor 同源） */
+  function seatPoint(i: number, count = 7): { x: number; y: number } {
+    const geo = radialGeometryFor(400, 400);
+    const sub = subRingOf(geo, count);
+    const rad = (subSeatCenterDeg(sub, i) * Math.PI) / 180;
+    const r = (sub.innerR + sub.outerR) / 2;
+    return { x: geo.cx + r * Math.cos(rad), y: geo.cy + r * Math.sin(rad) };
+  }
+
+  function clickAt(p: { x: number; y: number }): void {
+    document.body.dispatchEvent(
+      new MouseEvent('pointerdown', { bubbles: true, cancelable: true, button: 0, clientX: p.x, clientY: p.y }),
+    );
+  }
+
+  it('下钻：一级「更多」提交 → level 2，席位与页数来自注入模型', () => {
+    const { result } = setupSub();
+    drill(result);
+    expect(result.current.state.level).toBe(2);
+    expect(result.current.state.subPage).toBe(0);
+    expect(result.current.subItems.map((i) => i.id)).toEqual(P0);
+    expect(result.current.subPageCount).toBe(2);
+  });
+
+  it('零影响：未注入 getSubModel → 「更多」仍提交给宿主（openMenu），不进二级', () => {
+    const { result, openMenu } = setup();
+    openRing(result);
+    act(() => {
+      result.current.handleKey(kd('ArrowLeft'));
+    });
+    act(() => {
+      result.current.handleKey(kd('Enter'));
+    });
+    expect(result.current.state.level ?? 1).toBe(1);
+    expect(result.current.state.phase).toBe('idle');
+    expect(openMenu).toHaveBeenCalledWith('A', 100, 100);
+    expect(result.current.subItems).toEqual([]);
+  });
+
+  it('悬停「更多」停顿 450ms → 自动下钻（鼠标通道，无需点击/Enter）', () => {
+    const { result } = setupSub();
+    openRing(result);
+    act(() => {
+      result.current.handleKey(kd('ArrowLeft')); // 高亮「更多」
+    });
+    expect(result.current.state.level ?? 1).toBe(1);
+    act(() => {
+      vi.advanceTimersByTime(500);
+    });
+    expect(result.current.state.level).toBe(2);
+  });
+
+  it('未注入模型时停顿不生效（零影响：环停在一级）', () => {
+    const { result } = setup();
+    openRing(result);
+    act(() => {
+      result.current.handleKey(kd('ArrowLeft'));
+    });
+    act(() => {
+      vi.advanceTimersByTime(800);
+    });
+    expect(result.current.state.level ?? 1).toBe(1);
+    expect(result.current.state.phase).toBe('ring');
+  });
+
+  it('席位轮转 + Enter 提交 → 调模型给的命令闭包（第 1 席「新建同级」），提交即收起', () => {
+    const { result, model } = setupSub();
+    drill(result);
+    act(() => {
+      result.current.handleKey(kd('ArrowRight'));
+    });
+    expect(result.current.state.subIndex).toBe(0);
+    act(() => {
+      result.current.handleKey(kd('Enter'));
+    });
+    expect(model.spies.get('sub:add-sibling')).toHaveBeenCalledTimes(1);
+    expect(result.current.state.phase).toBe('idle');
+  });
+
+  it('翻页：选「升为中心」→ Enter 进方向页（仍二级）→ 选方向提交', () => {
+    const { result, model } = setupSub();
+    drill(result);
+    act(() => {
+      for (let i = 0; i < 4; i++) result.current.handleKey(kd('ArrowRight'));
+    });
+    expect(result.current.state.subIndex).toBe(3); // sub:center
+    act(() => {
+      result.current.handleKey(kd('Enter'));
+    });
+    expect(result.current.state.subPage).toBe(1);
+    expect(result.current.state.subIndex).toBeNull();
+    expect(result.current.state.level).toBe(2); // 同深度，不是三级
+    expect(result.current.subItems.map((i) => i.id)).toEqual(P1);
+    act(() => {
+      result.current.handleKey(kd('ArrowRight'));
+    });
+    expect(result.current.state.subIndex).toBe(0);
+    act(() => {
+      result.current.handleKey(kd('Enter'));
+    });
+    expect(model.spies.get('sub:center-right')).toHaveBeenCalledTimes(1);
+  });
+
+  it('灰显席：轮转跳过 + 点击无效（保持二级）', () => {
+    const { result, model } = setupSub(makeModel({ disabled: ['sub:edit-desc'] }));
+    drill(result);
+    act(() => {
+      result.current.handleKey(kd('ArrowRight'));
+    });
+    act(() => {
+      result.current.handleKey(kd('ArrowRight')); // 跳过灰显的席 1 → 席 2
+    });
+    expect(result.current.state.subIndex).toBe(2);
+    act(() => {
+      clickAt(seatPoint(1)); // 点灰显席
+    });
+    expect(result.current.state.level).toBe(2);
+    expect(result.current.state.phase).toBe('ring');
+    expect(model.spies.get('sub:edit-desc')).not.toHaveBeenCalled();
+  });
+
+  it('外圈悬停：命中可用席位即时高亮（二级不走一级的 60ms 防抖）', () => {
+    const { result } = setupSub();
+    drill(result);
+    act(() => {
+      window.dispatchEvent(new MouseEvent('pointermove', { bubbles: true, clientX: seatPoint(0).x, clientY: seatPoint(0).y }));
+    });
+    expect(result.current.state.subIndex).toBe(0);
+  });
+
+  it('末席「打开完整菜单」→ 宿主兜底 openMenu（模型无该 action）', () => {
+    const { result, openMenu } = setupSub();
+    drill(result);
+    act(() => {
+      for (let i = 0; i < 7; i++) result.current.handleKey(kd('ArrowRight')); // 空高亮起 → 第 1 次到席 0
+    });
+    expect(result.current.state.subIndex).toBe(6);
+    act(() => {
+      result.current.handleKey(kd('Enter'));
+    });
+    expect(openMenu).toHaveBeenCalledWith('A', 400, 400);
+  });
+
+  it('二级 Esc / Backspace → 收起整环（不提交任何席位）', () => {
+    const a = setupSub();
+    drill(a.result);
+    act(() => {
+      a.result.current.handleKey(kd('Escape'));
+    });
+    expect(a.result.current.state.phase).toBe('idle');
+    expect([...a.model.spies.values()].every((s) => s.mock.calls.length === 0)).toBe(true);
+
+    const b = setupSub();
+    drill(b.result);
+    const ev = kd('Backspace');
+    act(() => {
+      b.result.current.handleKey(ev);
+    });
+    expect(ev.defaultPrevented).toBe(true);
+    expect(b.result.current.state.phase).toBe('idle');
+  });
+
+  it('点内圈（主环带）= 降级回一级（环保持、不提交）', () => {
+    const { result, model } = setupSub();
+    drill(result);
+    act(() => {
+      clickAt({ x: 440, y: 400 }); // 环心(400,400) + 40px → 主环带内
+    });
+    expect(result.current.state.level).toBe(1);
+    expect(result.current.state.phase).toBe('ring');
+    expect([...model.spies.values()].every((s) => s.mock.calls.length === 0)).toBe(true);
+  });
+
+  it('覆盖层：level 2 → 主环降透明 + 外圈渲染 + 席位浮标', () => {
+    const { result } = setupSub();
+    drill(result);
+    act(() => {
+      result.current.handleKey(kd('ArrowRight'));
+    });
+    const { container } = render(<RadialStageOverlay radial={result.current} />);
+    expect(container.querySelector('.ring-dim')).not.toBeNull();
+    expect(container.querySelector('.sub-ring')).not.toBeNull();
+    expect(container.querySelector('.float-label')?.textContent ?? '').toContain('sub:add-sibling');
   });
 });

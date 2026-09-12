@@ -24,7 +24,7 @@ export default defineConfig({
   },
   build: {
     rollupOptions: {
-      // 多页入口：主应用 + 环形快捷操作静态预览页（v1.8.0；dev 下 /radial.html 直接可开）
+      // 多页入口：主应用 + 环形快捷操作（含 ② 二级环沙盒）预览页（dev 下 /radial.html 直接可开）
       input: {
         main: 'index.html',
         radial: 'radial.html',

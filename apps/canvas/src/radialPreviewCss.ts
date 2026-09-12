@@ -65,4 +65,9 @@ export const RADIAL_PREVIEW_CSS = `
 
 .check { display: flex; align-items: center; gap: 8px; color: #a8bec2; cursor: pointer; }
 .check input { accent-color: #3dd3a0; width: 14px; height: 14px; }
+
+/* ② 二级环沙盒（并入本页）：顶栏说明 + 席位清单提示。
+   子环视觉（.sub-ring / .ring-dim）在包内 RADIAL_SURFACE_CSS —— 与主环同源，画布可直接复用 */
+.hud-note { display: block; margin-top: 3px; color: #7fd7b4; font-weight: 500; }
+.sub-hint { color: #7e969b; font-size: 11.5px; line-height: 1.55; }
 `;

@@ -36,16 +36,25 @@ import {
   RADIAL_ITEMS_V1,
   RadialRing,
   RadialStyles,
+  radialGeometryFor,
   radialGeometryOf,
   radialReduce,
   slotCenterDeg,
+  SubRing,
+  subRingOf,
+  subRingPagesFor,
+  subSeatCenterDeg,
   type RadialEffect,
   type RadialEvent,
   type RadialItem,
   type RadialOrigin,
+  type RadialReduceCtx,
   type RadialState,
+  type RadialSubItem,
+  type SubRingFacts,
 } from '@mindcanvas/react';
 import { RADIAL_PREVIEW_CSS } from './radialPreviewCss.js';
+import { SubRingLayer, SubRingPanel } from './radialPreviewSubRing.js';
 
 // ─────────────────────────── 演示组件 ───────────────────────────
 
@@ -66,13 +75,19 @@ function RadialPreview() {
   const [inDead, setInDead] = useState(false); // 指针在死区（显示「松开取消」）
   const [confirm, setConfirm] = useState<{ itemId: string; label: string } | null>(null); // 危险动作二次确认
   const [rootSim, setRootSim] = useState(false); // 模拟根节点：禁用「删除」（演示禁用态）
+  // ② 二级环沙盒（v1.8.2）：启用后一级「更多」提交 = 下钻外圈
+  const [subOn, setSubOn] = useState(true);
+  const [dwellMs, setDwellMs] = useState(450); // 悬停「更多」→ 展开的停顿确认时长
+  // 沙盒：模拟节点状态（看条件灰显 / 动态文案 / 翻页；真实值在画布接线时从 controller 读）
+  const [sim, setSim] = useState({ root: false, center: false, hub: false });
 
   const cardRef = useRef<HTMLDivElement | null>(null);
   const stateRef = useRef(state);
   const anchorRef = useRef<RadialOrigin | null>(null);
   const itemsRef = useRef<readonly RadialItem[]>(RADIAL_ITEMS_V1);
   const confirmRef = useRef(confirm);
-  const ctxRef = useRef({ cfg: { gapWidthDeg: gapWidth, outerR }, holdMs });
+  const ctxRef = useRef<RadialReduceCtx>({ cfg: { gapWidthDeg: gapWidth, outerR }, holdMs });
+  const subPagesRef = useRef<readonly (readonly RadialSubItem[])[]>([]);
   const timerRef = useRef(0);
   const confirmTimerRef = useRef(0);
   const pendingNullRef = useRef(0);
@@ -91,7 +106,22 @@ function RadialPreview() {
   anchorRef.current = anchor;
   itemsRef.current = items;
   confirmRef.current = confirm;
-  ctxRef.current = { cfg: { gapWidthDeg: gapWidth, outerR }, holdMs };
+  // ② 席位来自派生模型（单一动作源；画布接线时改喂 controller 事实）：条件模拟 → 灰显/文案
+  const subFacts: SubRingFacts = {
+    isRoot: sim.root,
+    isCenter: sim.center,
+    hasCid: sim.center,
+    isHub: sim.hub,
+    hasDesc: true,
+    hasNote: true,
+  };
+  const subPages = subRingPagesFor(subFacts); // eslint-disable-line -- 每次渲染重建（沙盒 6 席，成本可忽略）
+  subPagesRef.current = subPages;
+  ctxRef.current = {
+    cfg: { gapWidthDeg: gapWidth, outerR },
+    holdMs,
+    sub: subOn ? { seats: subPages[0]?.length ?? 0, pages: subPages } : undefined,
+  };
 
   const pushLog = useCallback((text: string) => {
     logIdRef.current += 1;
@@ -144,6 +174,20 @@ function RadialPreview() {
           pushLog('取消');
           break;
         case 'commit': {
+          // ② 二级沙盒：外圈席位提交（itemId 前缀 sub:）
+          if (effect.itemId.startsWith('sub:')) {
+            const hit = subPagesRef.current.flat().find((it) => it.id === effect.itemId);
+            pushLog(
+              effect.itemId === 'sub:more-menu'
+                ? '〔二级〕提交：打开完整菜单（沙盒只回日志；画布接 actions.openMenu）'
+                : effect.itemId === 'sub:copy-cid' || effect.itemId === 'sub:copy-text'
+                  ? `〔二级〕提交：${hit?.label ?? effect.itemId}（沙盒只回日志；画布写剪贴板）`
+                  : effect.itemId === 'sub:add-sibling'
+                    ? '〔二级〕提交：新建同级节点（沙盒只回日志；画布走 addSibling 同一命令）'
+                    : `〔二级〕提交：${hit?.label ?? effect.itemId}`,
+            );
+            break;
+          }
           const item = itemsRef.current.find((it) => it.id === effect.itemId);
           if (item?.danger) {
             // 危险动作不直接执行：转入二次确认（防误触）
@@ -174,6 +218,16 @@ function RadialPreview() {
     [handleEffect],
   );
 
+  // ② 二级环沙盒：悬停「更多」停顿 dwellMs → 下钻（confirm 提交一级高亮「更多」= 下钻外圈）
+  useEffect(() => {
+    if (!subOn || state.phase !== 'ring' || (state.level ?? 1) !== 1 || state.highlight !== 'left') return;
+    const t = window.setTimeout(() => {
+      pushLog(`〔二级〕悬停「更多」${dwellMs}ms → 外圈展开（${subPagesRef.current[0]?.length ?? 0} 席）`);
+      dispatch({ t: 'confirm' });
+    }, dwellMs);
+    return () => window.clearTimeout(t);
+  }, [subOn, dwellMs, state.phase, state.level, state.highlight, pushLog, dispatch]);
+
   // 锚点 = 节点卡右上角（每次渲染后校准：拖动 / 窗口缩放 / 布局变化全覆盖）。
   // 不用依赖数组——值不变则保持原引用，不触发额外渲染（规避 useExhaustiveDependencies 误报）。
   useLayoutEffect(() => {
@@ -199,7 +253,7 @@ function RadialPreview() {
     const loop = (): void => {
       const cur = stateRef.current;
       if (cur.phase !== 'arming') return;
-      const p = Math.min(1, (performance.now() - cur.altDownAt) / Math.max(1, ctxRef.current.holdMs));
+      const p = Math.min(1, (performance.now() - cur.altDownAt) / Math.max(1, ctxRef.current.holdMs ?? RADIAL_HOLD_MS));
       setCharge(p);
       if (p < 1) raf = requestAnimationFrame(loop);
     };
@@ -352,6 +406,12 @@ function RadialPreview() {
   const geo = state.phase === 'ring' ? radialGeometryOf(state, { gapWidthDeg: gapWidth, outerR }) : null;
   const chargeGeo = state.phase === 'arming' ? radialGeometryOf(state, { gapWidthDeg: gapWidth, outerR }) : null;
   const highlightItem: RadialItem | null = state.highlight ? itemAt(items, state.highlight) : null;
+  // ② 二级环：level 2 = 外圈展开中（主环降透明，两环同场景）
+  const level = state.level ?? 1;
+  const subPage = Math.min(state.subPage ?? 0, Math.max(0, subPages.length - 1));
+  const subItems = subPages[subPage] ?? [];
+  const subSub = level === 2 && geo && subItems.length > 0 ? subRingOf(geo, subItems.length) : null;
+  const subIdx = state.subIndex ?? null; // 窄化：可选字段 → number | null
 
   return (
     <div className="page">
@@ -363,6 +423,9 @@ function RadialPreview() {
         <span>
           按住 Alt（或 Shift）≥{Math.round(holdMs)}ms 出环（蓄力弧充满即浮现） · 快击 Alt+方向键 = 预方向 ·
           方向键漫游 / 悬停高亮 · 点击/Enter 提交 · 「删除」需二次确认 · Esc 取消 · 节点卡可拖动
+          <b className="hud-note">
+            ② 二级环沙盒已并入本页：按住 Alt 出环 → 高亮「更多」并停顿 → 外圈展开（席位 4/5/6 与展开延时可在右栏调）
+          </b>
         </span>
       </header>
 
@@ -398,9 +461,17 @@ function RadialPreview() {
       {/* 蓄力进度弧：按住后 0→阈值 逐帧推进，环浮现前把它「充满」 */}
       {chargeGeo && <ChargeArc geo={chargeGeo} progress={charge} />}
 
-      {geo && <RadialRing geo={geo} highlight={state.highlight} items={items} />}
+      {/* 主环：二级展开时降透明（非当前级） */}
+      {geo && (
+        <div className={level === 2 ? 'ring-dim' : undefined}>
+          <RadialRing geo={geo} highlight={state.highlight} items={items} />
+        </div>
+      )}
 
-      {geo && highlightItem && state.highlight && (
+      {/* ② 二级环：外圈 N 席 + 席位浮标（渲染叠层在拆分件里） */}
+      <SubRingLayer sub={subSub} items={subItems} idx={subIdx} />
+
+      {geo && level === 1 && highlightItem && state.highlight && (
         <div className="float-label" style={floatLabelStyle(geo, slotCenterDeg(state.highlight))}>
           <svg
             className="fl-ico"
@@ -483,6 +554,16 @@ function RadialPreview() {
           <input type="checkbox" checked={rootSim} onChange={(e) => setRootSim(e.target.checked)} />
           <span>模拟根节点（禁用「删除」）</span>
         </label>
+        <SubRingPanel
+          on={subOn}
+          dwellMs={dwellMs}
+          items={subPages[0] ?? []}
+          pageCount={subPages.length}
+          sim={sim}
+          onToggle={setSubOn}
+          onDwell={setDwellMs}
+          onSim={(patch) => setSim((p) => ({ ...p, ...patch }))}
+        />
         <button
           className="hold-btn"
           onPointerDown={(e) => {

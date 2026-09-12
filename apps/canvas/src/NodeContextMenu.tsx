@@ -5,15 +5,22 @@
  *   ① 通用（新建/编辑/层级/折叠/删除）
  *   ② 实体节点专属（改引用 → 开 picker；在关系图中显示 → 开面板）
  *   ③ 关系模式专属（连线到… → 以该节点为源新建自由边；E8 仅关系模式暴露）
- *   ④ 幕布描述（右键「编辑描述」= 与 Shift+Enter 同一动作）
+ *   ④ 描述 / 笔记 / 中心（**T5 起与二级环共用**：闭包由宿主经 `nodeMenuBags.ts` 构建后注入）
  *
- * 为什么整块抽走：菜单项的构造（24 行）与 `<ContextMenu>` 的渲染是同一件事，
+ * 为什么整块抽走：菜单项的构造与 `<ContextMenu>` 的渲染是同一件事，
  * 分开只会让主函数留着一堆 setState 回调。
  *
- * 不是什么：不含菜单项的渲染与键盘交互（`ContextMenu` 自己管）。
+ * 不是什么：不含菜单项的渲染与键盘交互（`ContextMenu` 自己管）；
+ * 也不含「与环共用」的三袋闭包（那部分在 `nodeMenuBags.ts`，菜单与环消费同一份）。
  */
-import { pathOfNode } from '@mindcanvas/kernel';
-import { anchorOfNode, collectCenters, contextMenuItemsFor, ContextMenu, planAttachIsland, readGrowDir, removeCenter, upsertCenter, type EditorController, type SectionMenuActions } from '@mindcanvas/react';
+import {
+  contextMenuItemsFor,
+  ContextMenu,
+  readGrowDir,
+  type CenterMenuActions,
+  type EditorController,
+  type SectionMenuActions,
+} from '@mindcanvas/react';
 import { readLensMap } from '@mindcanvas/kernel';
 import { nodeById } from './hooks/useEdgeActions.js';
 import { applyLen, currentLenOf } from './lenEdit.js';
@@ -34,23 +41,18 @@ export interface NodeContextMenuProps {
   controller: EditorController;
   /** 是否关系编辑模式（决定是否有「连线到…」入口） */
   relationMode: boolean;
-  /** C3：当前文档名（复制中心编号的「文档名#cid」格式） */
-  docName: string;
+  /**
+   * T5：与二级环**共用**的动作袋（由 `MindmapStage` 构建一次）——
+   * 菜单项与环席位调的是同一段闭包（单一动作源，防两处漂移）。
+   * （描述 / 笔记的袋不再进菜单——T6 阶段 1 起由环席位承担。）
+   */
+  centerActions: CenterMenuActions;
   /** 打开实体 picker（改引用） */
   setPicker: (v: { nodeId: string; query: string; current: { kind: string; id: string } | null } | null) => void;
   /** 打开侧面板（'relation' 等） */
   setPanel: (v: PanelId) => void;
   /** 开始连线（以该节点为源） */
   setLinkDraft: (v: { sourceId: string; x: number; y: number } | null) => void;
-  /** 进入描述编辑 */
-  setDescEditingId: (id: string) => void;
-  /**
-   * 打开固定 note 笔记（内容可为空 —— 用户可能正要新建）。
-   * 传**索引路径**而非 id：文档重新解析会重建 id，路径才能稳定复现同一个节点。
-   */
-  setPinnedNotePath: (path: number[], editing?: boolean) => void;
-  /** A5：接回/事务失败的告警回调（命令层结构化拒绝 → 用户可见提示） */
-  onAttachError?: (message: string) => void;
   /** v1.8.1：「出线长度 › 自定义…」→ 宿主弹数值气泡（原生 prompt 已退役，裁决 M3） */
   onRequestLenCustom?: (id: string, x: number, y: number, current: number | null) => void;
   /** v1.5.0 Section 三态菜单动作（D1：Section ⇒ center；写入走 controller 事务通道） */
@@ -62,13 +64,10 @@ export function NodeContextMenu({
   ctxMenu,
   controller,
   relationMode,
-  docName,
+  centerActions,
   setPicker,
   setPanel,
   setLinkDraft,
-  setDescEditingId,
-  setPinnedNotePath,
-  onAttachError,
   onRequestLenCustom,
   sectionActions,
   onClose,
@@ -98,76 +97,9 @@ export function NodeContextMenu({
               onStartLink: (id) => setLinkDraft({ sourceId: id, x: ctxMenu.x, y: ctxMenu.y }),
             }
           : undefined,
-        // v1.3.0 幕布描述入口：右键「编辑描述」= 与 Shift+Enter 同一动作
-        { onStart: (id) => setDescEditingId(id) },
-        // note 笔记入口：固定展示并进入编辑（与描述是不同内容）
-        { onStart: (id) => setPinnedNotePath(pathOfNode(controller.root, id) ?? [], true) },
-        // G6′：中心升格 / 降格。坐标写进 root.note.centers（文档级，节点保持纯净）
-        {
-          isCenter: (id) => {
-            const at = anchorOfNode(controller.root, id);
-            if (!at) return false;
-            return collectCenters(controller.root).some((c) => c.at === at);
-          },
-          // G3：跨岛父级连接显示状态（缺省 hide）
-          parentLinkOf: (id) => {
-            const at = anchorOfNode(controller.root, id);
-            if (!at) return 'hide';
-            return (
-              collectCenters(controller.root).find((c) => c.at === at)?.parentLink ?? 'hide'
-            );
-          },
-          onToggleParentLink: (id, next) => {
-            const at = anchorOfNode(controller.root, id);
-            if (!at) return;
-            const nextNote = upsertCenter(controller.root.note, at, { parentLink: next });
-            controller.updateNote(controller.root.id, {
-              centers: nextNote.centers ?? undefined,
-            });
-          },
-          // G2（A5）：切断独立标记与接回（成环/深度校验在命令层，失败经 onAttachError 上报）
-          isDetached: (id) => {
-            const at = anchorOfNode(controller.root, id);
-            if (!at) return false;
-            return (
-              collectCenters(controller.root).find((c) => c.at === at)?.detached ?? false
-            );
-          },
-          onAttach: (id, targetParentId) => {
-            const plan = planAttachIsland(controller.root, id, targetParentId);
-            if (!plan.ok) {
-              onAttachError?.(plan.error.message);
-              return;
-            }
-            const result = controller.applyTransaction(plan.ops);
-            if (!result.ok) onAttachError?.(result.error.message);
-          },
-          onPromote: (id, dir) => {
-            const at = anchorOfNode(controller.root, id);
-            if (!at) return;
-            const next = upsertCenter(controller.root.note, at, { dir });
-            controller.updateNote(controller.root.id, { centers: next.centers ?? undefined });
-          },
-          onDemote: (id) => {
-            const at = anchorOfNode(controller.root, id);
-            if (!at) return;
-            const next = removeCenter(controller.root.note, at);
-            const centers = next.centers as unknown[] | undefined;
-            const history = next.center_pos as unknown[] | undefined;
-            controller.updateNote(controller.root.id, {
-              // 清空后连键一起删（undefined 键被 updateNote 清除），避免留 centers: []
-              centers: centers && centers.length > 0 ? centers : undefined,
-              center_pos: history && history.length > 0 ? history : undefined,
-            });
-          },
-          // C3：中心 cid 查询与复制（格式「文档名#cid」——跨文件时代天然兼容 doc+cid 寻址）
-          cidOf: (id) => collectCenters(controller.root).find((c) => c.nodeId === id)?.cid,
-          onCopyCid: (id) => {
-            const cid = collectCenters(controller.root).find((c) => c.nodeId === id)?.cid;
-            if (!cid) return;
-            void navigator.clipboard?.writeText(`${docName}#${cid}`);
-          },
-        },
+        // 中心：T5 起与二级环**共用**同一闭包（`nodeMenuBags.ts` 构建，宿主传入）；
+        // 描述 / 笔记入口自 T6 起移出菜单（环席位承担），故不再传袋
+        centerActions,
         // D3′：生长方向（note.dir 语义意图；updateNote 合并写——
         // dir: undefined 删键 = 恢复继承；OpHistory 天然覆盖 undo）
         {

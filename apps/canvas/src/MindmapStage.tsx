@@ -78,6 +78,7 @@ import {
   matchPreDirKey,
   itemAt,
   RADIAL_ITEMS_V1,
+  submenuItemsFor,
   OutlinePanel,
   PluginHost,
   QaEditor,
@@ -114,6 +115,7 @@ import { RecentDocMenu } from './RecentDocMenu.js';
 import { useEntityPick } from './hooks/useEntityPick.js';
 import { useExportActions } from './hooks/useExportActions.js';
 import { RadialStageOverlay, useRadialStage } from './hooks/useRadialStage.js';
+import { makeCenterActions, makeDescActions, makeNoteActions } from './nodeMenuBags.js';
 import { ghostBoxOf } from './radialGhost.js';
 import { LenBubble } from './LenBubble.js';
 import { applyLen } from './lenEdit.js';
@@ -509,10 +511,22 @@ function StageContent({
     return () => clearTimeout(timer);
   }, [preDirHint]);
 
+  /**
+   * ② 二级环（T5）：节点动作袋（描述 / 笔记 / 中心）——与右键菜单**同一份闭包**。
+   * 袋在函数体后段构建（依赖其后的 host 回调 state），此处以 ref 承接：
+   * `getSubModel` 只在 Alt 按下（会话开始）时读，届时已就绪。
+   */
+  const nodeBagsRef = useRef<Parameters<typeof submenuItemsFor>[2] | null>(null);
+
   // v1.8.0 Phase 2：环形快捷操作（按住 Alt ≥250ms 出环）——与预方向共用键位，
   // 「快击=手势 / 慢按=菜单」由状态机相位分层；动作与既有命令同路径（单一动作源）。
   const radial = useRadialStage({
     getSelectedId: () => controller.selectedId,
+    // ② 二级环：席位与页来自派生模型（条件灰显 / 动态文案 / 翻页定义都不在接线层重写）
+    getSubModel: (id) => {
+      const bags = nodeBagsRef.current;
+      return bags ? submenuItemsFor(controller, id, bags) : null;
+    },
     getAnchor: (id) => apiRef.current?.nodeCorner(id) ?? null,
     setPreDir: (id, dir) => {
       preDirsRef.current = new Map(preDirsRef.current).set(id, dir);
@@ -896,6 +910,18 @@ function StageContent({
 
   // A5：命令拒绝/事务失败的告警（4s 自动消退；与中心诊断条同样「宁可不写也不错写」）
   const [commandNotice, setCommandNotice] = useState<string | null>(null);
+  // ② 二级环（T5）：动作袋构建一次，右键菜单与环席位消费**同一份**（单一动作源，防两处漂移）
+  const nodeBagHost = {
+    setDescEditingId,
+    setPinnedNotePath,
+    onAttachError: setCommandNotice,
+  };
+  const nodeBags = {
+    descActions: makeDescActions(nodeBagHost),
+    noteActions: makeNoteActions(controller, nodeBagHost),
+    centerActions: makeCenterActions(controller, doc.name, nodeBagHost),
+  };
+  nodeBagsRef.current = nodeBags; // 渲染期同步进 ref（`getSubModel` 到 Alt 按下才读）
   useEffect(() => {
     if (commandNotice === null) return;
     const timer = setTimeout(() => setCommandNotice(null), 4000);
@@ -1056,10 +1082,11 @@ function StageContent({
         case 'delete':
           if (!sel) return;
           e.preventDefault();
-          if (confirm(`删除节点「${getNodeLabel(controller.root, sel)}」及其全部子节点？`)) {
-            controller.removeNode(sel);
-            controller.select(null);
-          }
+          // 直删（裁决 M2：原生 confirm 退役——IDE 内嵌 webview 会**静默吞掉**原生对话框：
+          // 不是「弹窗被拒」而是 confirm 恒返回 false → 表现为「不弹气泡也删不掉」）。
+          // 撤销（Ctrl+Z）兜底；根节点由 controller.removeNode 守卫（返回 false，不动）。
+          controller.removeNode(sel);
+          controller.select(null);
           return;
         case 'edit':
           if (!sel) return;
@@ -1951,13 +1978,10 @@ function StageContent({
           ctxMenu={ctxMenu}
           controller={controller}
           relationMode={relationMode}
-          docName={doc.name}
+          centerActions={nodeBags.centerActions} // 描述 / 笔记的袋仍由 nodeBags 供给**环**（getSubModel）
           setPicker={setPicker}
           setPanel={setPanel}
           setLinkDraft={setLinkDraft}
-          setDescEditingId={setDescEditingId}
-          setPinnedNotePath={setPinnedNotePath}
-          onAttachError={(message) => setCommandNotice(message)}
           onRequestLenCustom={(id, x, y, current) => setLenBubble({ id, x, y, current })}
           sectionActions={sectionActions}
           onClose={() => setCtxMenu(null)}
