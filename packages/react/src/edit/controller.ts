@@ -55,16 +55,14 @@ export interface EditorControllerOptions {
 /**
  * R1-A4 op 白名单：仅「路径锚可能受影响」的 op 触发迁移，其余短路（零开销）。
  * - move-node / add-child：结构变化 → 路径/实体锚重算
- * - update-node：仅当 patch 触及锚名语义（text 改名 / type+ref 转实体与转回）——
- *   note/style 等高频 patch 直接短路
+ * - update-node：仅 text patch（改名）——note/style 等高频 patch 直接短路。
+ *   已知缺口：setEntityRef（转实体/转回）不改锚（kernel anchor-migrate 不支持
+ *   路径锚→实体锚的重建+回验，强行迁移会被 migration-verify-failed 整批拒绝）
+ *   → 转换后旧路径锚悬空（R0 健康度可见），留待后续批次。
  */
 function isAnchorAffectingOp(op: TreeOp): boolean {
   if (op.type === 'move-node' || op.type === 'add-child') return true;
-  if (op.type === 'update-node') {
-    return (
-      op.patch.text !== undefined || op.patch.type !== undefined || op.patch.ref !== undefined
-    );
-  }
+  if (op.type === 'update-node') return op.patch.text !== undefined;
   return false;
 }
 

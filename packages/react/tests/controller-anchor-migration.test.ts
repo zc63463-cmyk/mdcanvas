@@ -254,3 +254,145 @@ describe('R1-1 健康度联动（观测先行闭环）', () => {
     expect(health.problems).toEqual([]);
   });
 });
+
+describe('R1-2 结构编辑入口全枚举：操作后边锚存活（表驱动）', () => {
+  /** 路径锚夹具：根[任务[K3[K3子], K4], 生活]，边 = 任务 → 任务/K3 */
+  function makeFixture() {
+    const controller = makeController(makeTree());
+    const ids = {
+      rootId: controller.root.id,
+      task: idOf(controller.root, '任务'),
+      k3: idOf(controller.root, 'K3'),
+      k3Child: idOf(controller.root, 'K3子'),
+      k4: idOf(controller.root, 'K4'),
+    };
+    return { controller, ids };
+  }
+
+  /** 重设边目标（数据面构造；表行各自关注不同端点） */
+  function rewireEdge(controller: EditorController, to: string): void {
+    controller.root.note = {
+      edges: [{ from: 'node:根/任务', to, rel: 'relates-to' }],
+    };
+  }
+
+  const pathCases: {
+    name: string;
+    run: (c: EditorController, ids: ReturnType<typeof makeFixture>['ids']) => void;
+    edgeTo: string;
+    expectTo: string | null;
+  }[] = [
+    {
+      name: 'updateText 改名 → 锚重写',
+      run: (c, ids) => c.updateText(ids.k3, 'K33'),
+      edgeTo: 'node:根/任务/K3',
+      expectTo: 'node:根/任务/K33',
+    },
+    {
+      name: 'indent 缩进 → 子路径锚跟随',
+      run: (c, ids) => {
+        rewireEdge(c, 'node:根/任务/K4');
+        c.indent(ids.k4);
+      },
+      edgeTo: 'node:根/任务/K4',
+      expectTo: 'node:根/任务/K3/K4',
+    },
+    {
+      name: 'outdent 反缩进 → 路径锚缩短',
+      run: (c, ids) => {
+        rewireEdge(c, 'node:根/任务/K3/K3子');
+        c.outdent(ids.k3Child);
+      },
+      edgeTo: 'node:根/任务/K3/K3子',
+      expectTo: 'node:根/任务/K3子',
+    },
+    {
+      name: 'apply(move-node) 重排 → 跨父新路径',
+      run: (c, ids) =>
+        c.apply({ type: 'move-node', id: ids.k3, targetParentId: ids.rootId, index: c.root.children.length }),
+      edgeTo: 'node:根/任务/K3',
+      expectTo: 'node:根/K3',
+    },
+    {
+      name: 'applyTransaction([move-node]) 批次重排 → 同样迁移',
+      run: (c, ids) =>
+        c.applyTransaction([
+          { type: 'move-node', id: ids.k3, targetParentId: ids.rootId, index: c.root.children.length },
+        ]),
+      edgeTo: 'node:根/任务/K3',
+      expectTo: 'node:根/K3',
+    },
+    {
+      name: 'addSibling 新建同级 → 既有锚不受扰',
+      run: (c, ids) => c.addSibling(ids.k3, 'K5'),
+      edgeTo: 'node:根/任务/K3',
+      expectTo: 'node:根/任务/K3',
+    },
+    {
+      name: 'addChild 新建子节点 → 既有锚不受扰',
+      run: (c, ids) => c.addChild(ids.task, '新节点'),
+      edgeTo: 'node:根/任务/K3',
+      expectTo: 'node:根/任务/K3',
+    },
+    {
+      // 已知缺口（R1-A4 白名单只含 text patch）：kernel anchor-migrate 不支持
+      // 路径锚→实体锚的重建+回验（migration-verify-failed）——转换后旧锚悬空，
+      // 由 R0 健康度可见，留待后续批次；此行钉现状防无声回归。
+      name: 'setEntityRef 转实体 → 已知缺口：锚不迁移（悬空可见）',
+      run: (c, ids) => c.setEntityRef(ids.k3, { kind: 'issue', id: '8' }),
+      edgeTo: 'node:根/任务/K3',
+      expectTo: null,
+    },
+    {
+      name: 'removeNode 删除被引用节点 → 悬空（偏差钉：删除不阻断，锚原样保留）',
+      run: (c, ids) => c.removeNode(ids.k3),
+      edgeTo: 'node:根/任务/K3',
+      expectTo: null,
+    },
+  ];
+
+  it.each(pathCases)('$name', ({ run, edgeTo, expectTo }) => {
+    const { controller, ids } = makeFixture();
+    rewireEdge(controller, edgeTo);
+    expect(collectFreeEdges(controller.root)[0]?.state).toBe('well-formed'); // 前置有效
+
+    run(controller, ids);
+
+    if (expectTo === null) {
+      expect(edgeTexts(controller.root)[0]?.to).toBe(edgeTo); // 原样保留
+      expect(collectFreeEdges(controller.root)[0]?.state).toBe('dangling');
+    } else {
+      expect(edgeTexts(controller.root)[0]?.to).toBe(expectTo);
+      expect(collectFreeEdges(controller.root)[0]?.state).toBe('well-formed');
+    }
+  });
+
+  /** 实体锚夹具：根[任务[@issue:8]]，边 = 任务 → @issue:8 */
+  function makeEntityFixture() {
+    const root = ast(
+      makeTextNode('根', [makeTextNode('任务', [makeEntityNode({ kind: 'issue', id: '8' })])]),
+    );
+    root.note = { edges: [{ from: 'node:根/任务', to: '@issue:8', rel: 'relates-to' }] };
+    const controller = makeController(root);
+    return { controller, task: idOf(controller.root, '任务') };
+  }
+
+  const entityCases: {
+    name: string;
+    run: (c: EditorController, task: string) => void;
+    expectTo: string;
+  }[] = [
+    {
+      name: 'addEntityChild 同名实体 → 裸锚重写为 #1 消歧',
+      run: (c, task) => c.addEntityChild(task, { kind: 'issue', id: '8' }),
+      expectTo: '@issue:8#1',
+    },
+  ];
+
+  it.each(entityCases)('$name', ({ run, expectTo }) => {
+    const { controller, task } = makeEntityFixture();
+    run(controller, task);
+    expect(edgeTexts(controller.root)[0]?.to).toBe(expectTo);
+    expect(collectFreeEdges(controller.root)[0]?.state).toBe('well-formed');
+  });
+});
