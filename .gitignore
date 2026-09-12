@@ -15,6 +15,13 @@ coverage/
 .playwright-cli/
 dogfood-output/
 
+# 真浏览器验证截图（tools/verify-*.mjs 产物，可重生成）
+verify-shots/
+
+# Python 编译缓存（tools/graph-engine 下由 Python 生成）
+__pycache__/
+*.pyc
+
 # 临时备份（格式化/重构前源码快照，验收后删除）
 .backup-*/
 
