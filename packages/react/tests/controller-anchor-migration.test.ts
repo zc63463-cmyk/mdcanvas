@@ -1,0 +1,256 @@
+/**
+ * R1-1：锚引用迁移收敛到编辑管线。
+ *
+ * 契约（派遣计划 R1-A1/A2/A4）：
+ * - 白名单 op（update-node 触及锚名 / move-node / add-child）在编辑管线内统一
+ *   触发 planReferenceMigration：改名/缩进/反缩进/重排后边锚被重写且仍 well-formed
+ *   （旧契约「改名 → dangling」在此反转——契约更新，强度不降）。
+ * - 冲突（新路径不可唯一表示）→ 整批拒绝：root 未变、history 未变、信息可读。
+ * - 迁移与结构 op 同一 history 条目：一次 undo 同时回滚文本与边锚。
+ */
+import { describe, expect, it, vi } from 'vitest';
+import { astToEditable, makeEntityNode, makeTextNode, type EditableNode } from '@mindcanvas/kernel';
+import { FrameScheduler } from '../src/render/scheduler.js';
+import {
+  collectFreeEdges,
+  EditorController,
+  type EdgeHealth,
+  edgeHealthOf,
+} from '../src/index.js';
+import type { EditorControllerOptions } from '../src/edit/controller.js';
+
+function ast(tree: EditableNode): EditableNode {
+  const built = astToEditable(tree);
+  if (built === null) throw new Error('fixture broken: astToEditable returned null');
+  return built;
+}
+
+/** 真实控制器（node 环境无 rAF——同步 FrameScheduler，与 growdir-growth 同款） */
+function makeController(root: EditableNode, opts: EditorControllerOptions = {}): EditorController {
+  const frame = new FrameScheduler({
+    raf: (cb) => {
+      cb();
+      return 1;
+    },
+    rafCancel: () => undefined,
+  });
+  return new EditorController(root, opts, frame);
+}
+
+function makeTree(): EditableNode {
+  const root = ast(
+    makeTextNode('根', [
+      makeTextNode('任务', [makeTextNode('K3', [makeTextNode('K3子')]), makeTextNode('K4')]),
+      makeTextNode('生活'),
+    ]),
+  );
+  root.note = { edges: [{ from: 'node:根/任务', to: 'node:根/任务/K3', rel: 'relates-to' }] };
+  return root;
+}
+
+function idOf(root: EditableNode, text: string): string {
+  const found: string[] = [];
+  const walk = (n: EditableNode): void => {
+    if (n.text === text) found.push(n.id);
+    n.children.forEach(walk);
+  };
+  walk(root);
+  const hit = found[0];
+  if (hit === undefined || found.length > 1) throw new Error(`fixture broken: ${text}`);
+  return hit;
+}
+
+function edgeTexts(root: EditableNode): { from: string; to: string }[] {
+  const raw = root.note?.edges;
+  if (!Array.isArray(raw)) return [];
+  const out: { from: string; to: string }[] = [];
+  for (const e of raw) {
+    if (typeof e === 'object' && e !== null && 'from' in e && 'to' in e) {
+      const from = (e as { from?: unknown }).from;
+      const to = (e as { to?: unknown }).to;
+      if (typeof from === 'string' && typeof to === 'string') out.push({ from, to });
+    }
+  }
+  return out;
+}
+
+/** 改名前后的原始对照（报告用：锚文本 + 三态） */
+function edgeSnapshot(root: EditableNode): string {
+  const e = edgeTexts(root)[0];
+  const state = collectFreeEdges(root)[0]?.state ?? 'dropped';
+  return `edges[0] = ${e ? `${e.from} → ${e.to}` : '(malformed)'}  |  state = ${state}`;
+}
+
+describe('R1-1 编辑管线内锚迁移：四类操作后边锚仍 well-formed', () => {
+  it('改名（updateText）：边锚重写为新路径且 well-formed', () => {
+    const controller = makeController(makeTree());
+    const k3 = idOf(controller.root, 'K3');
+    // 改名前对照
+    expect(edgeSnapshot(controller.root)).toBe(
+      'edges[0] = node:根/任务 → node:根/任务/K3  |  state = well-formed',
+    );
+
+    controller.updateText(k3, 'K33');
+
+    // 改名后对照：锚文本已被重写（非 dangling）
+    expect(edgeSnapshot(controller.root)).toBe(
+      'edges[0] = node:根/任务 → node:根/任务/K33  |  state = well-formed',
+    );
+  });
+
+  it('缩进（indent）：子路径锚随结构更新', () => {
+    const controller = makeController(makeTree());
+    const k4 = idOf(controller.root, 'K4');
+    // 边先指到 K4（改写 to —— 经同一管线写边属未来批次，这里直接构造数据面）
+    const root0 = controller.root;
+    root0.note = { edges: [{ from: 'node:根/任务', to: 'node:根/任务/K4', rel: 'relates-to' }] };
+
+    expect(controller.indent(k4)).toBe(true);
+
+    expect(edgeTexts(controller.root)[0]).toEqual({ from: 'node:根/任务', to: 'node:根/任务/K3/K4' });
+    expect(collectFreeEdges(controller.root)[0]?.state).toBe('well-formed');
+  });
+
+  it('反缩进（outdent）：路径锚缩短且 well-formed', () => {
+    const controller = makeController(makeTree());
+    const k3 = idOf(controller.root, 'K3');
+    const k3Child = idOf(controller.root, 'K3子');
+    // 边指到 K3子（深路径）
+    controller.root.note = {
+      edges: [{ from: 'node:根/任务', to: 'node:根/任务/K3/K3子', rel: 'relates-to' }],
+    };
+
+    expect(controller.outdent(k3Child)).toBe(true);
+    // K3子 上移一级后：K3 的路径未变，K3子 锚……outdent 的是 K3子 自己——
+    // 它成为 任务 的后一兄弟，锚 = node:根/任务/K3子
+    expect(k3).not.toBe('');
+    expect(edgeTexts(controller.root)[0]).toEqual({
+      from: 'node:根/任务',
+      to: 'node:根/任务/K3子',
+    });
+    expect(collectFreeEdges(controller.root)[0]?.state).toBe('well-formed');
+  });
+
+  it('重排（apply move-node）：跨父移动后边锚跟随新路径', () => {
+    const controller = makeController(makeTree());
+    const k3 = idOf(controller.root, 'K3');
+    const rootId = controller.root.id;
+
+    controller.apply({
+      type: 'move-node',
+      id: k3,
+      targetParentId: rootId,
+      index: controller.root.children.length,
+    });
+
+    expect(edgeTexts(controller.root)[0]).toEqual({ from: 'node:根/任务', to: 'node:根/K3' });
+    expect(collectFreeEdges(controller.root)[0]?.state).toBe('well-formed');
+  });
+
+  it('applyTransaction 批次（含 move-node）同样触发迁移', () => {
+    const controller = makeController(makeTree());
+    const k3 = idOf(controller.root, 'K3');
+    const rootId = controller.root.id;
+
+    const result = controller.applyTransaction([
+      { type: 'move-node', id: k3, targetParentId: rootId, index: controller.root.children.length },
+    ]);
+
+    expect(result.ok).toBe(true);
+    expect(edgeTexts(controller.root)[0]).toEqual({ from: 'node:根/任务', to: 'node:根/K3' });
+    expect(collectFreeEdges(controller.root)[0]?.state).toBe('well-formed');
+  });
+
+  it('新增同名实体（add-child）：既有裸实体锚重写为 #1 消歧且 well-formed', () => {
+    const root = ast(
+      makeTextNode('根', [makeTextNode('任务', [makeEntityNode({ kind: 'issue', id: '8' })])]),
+    );
+    root.note = { edges: [{ from: 'node:根/任务', to: '@issue:8', rel: 'relates-to' }] };
+    const controller = makeController(root);
+    const task = idOf(controller.root, '任务');
+
+    controller.addEntityChild(task, { kind: 'issue', id: '8' });
+
+    expect(edgeTexts(controller.root)[0]).toEqual({ from: 'node:根/任务', to: '@issue:8#1' });
+    expect(collectFreeEdges(controller.root)[0]?.state).toBe('well-formed');
+  });
+});
+
+describe('R1-1 冲突：整批拒绝 + 可读信息（R1-A2）', () => {
+  it('apply：改名撞同级同名 → 拒绝（root 未变、history 未变）+ 回调收到含冲突码的信息', () => {
+    const onAnchorConflict = vi.fn();
+    const controller = makeController(makeTree(), { onAnchorConflict });
+    // 种子一条 history（证明冲突未入史：undo 撤的是种子）
+    const life = idOf(controller.root, '生活');
+    controller.updateText(life, '生活2');
+    expect(controller.canUndo).toBe(true);
+
+    const k3 = idOf(controller.root, 'K3');
+    const before = controller.root;
+    controller.updateText(k3, 'K4'); // 与同级 K4 撞名，且边锚指向 K3
+
+    expect(controller.root).toBe(before); // root 未变
+    expect(idOf(controller.root, 'K3')).toBe(k3); // 改名未生效
+    controller.undo();
+    expect(idOf(controller.root, '生活')).toBe(life);
+    const lifeNode = controller.root.children.find((n) => n.text === '生活');
+    expect(lifeNode).toBeDefined(); // undo 撤销的是种子动作 → 冲突批未入 history
+    expect(onAnchorConflict).toHaveBeenCalledTimes(1);
+    expect(String(onAnchorConflict.mock.calls[0]?.[0])).toContain('anchor-ambiguous-path');
+    expect(String(onAnchorConflict.mock.calls[0]?.[0])).toContain('node:根/任务/K3');
+  });
+
+  it('applyTransaction：冲突 → ok:false（code=reference-conflict）且零副作用', () => {
+    const controller = makeController(makeTree());
+    const life = idOf(controller.root, '生活');
+    controller.updateText(life, '生活2');
+    const before = controller.root;
+
+    const k3 = idOf(controller.root, 'K3');
+    const result = controller.applyTransaction([
+      { type: 'update-node', id: k3, patch: { text: 'K4' } },
+    ]);
+
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.error.code).toBe('reference-conflict');
+      expect(result.error.message).toContain('anchor-ambiguous-path');
+    }
+    expect(controller.root).toBe(before);
+    controller.undo();
+    const lifeNode = controller.root.children.find((n) => n.text === '生活');
+    expect(lifeNode).toBeDefined(); // 撤的是种子 → 冲突批未入 history
+  });
+});
+
+describe('R1-1 undo 契约：一次 Ctrl+Z 同时回滚文本与边锚', () => {
+  it('改名 + 迁移后 undo：文本与边锚同回', () => {
+    const controller = makeController(makeTree());
+    const k3 = idOf(controller.root, 'K3');
+
+    controller.updateText(k3, 'K33');
+    expect(edgeTexts(controller.root)[0]?.to).toBe('node:根/任务/K33');
+
+    expect(controller.undo()).toBe(true);
+
+    const node = controller.root.children[0]?.children.find((n) => n.id === k3);
+    expect(node?.text).toBe('K3');
+    expect(edgeTexts(controller.root)[0]).toEqual({
+      from: 'node:根/任务',
+      to: 'node:根/任务/K3',
+    });
+    expect(collectFreeEdges(controller.root)[0]?.state).toBe('well-formed');
+  });
+});
+
+describe('R1-1 健康度联动（观测先行闭环）', () => {
+  it('改名后 edgeHealthOf 无 dangling 病例', () => {
+    const controller = makeController(makeTree());
+    const k3 = idOf(controller.root, 'K3');
+    controller.updateText(k3, 'K33');
+    const health: EdgeHealth = edgeHealthOf(controller.root);
+    expect(health.byState.dangling).toBe(0);
+    expect(health.byState.stale).toBe(0);
+    expect(health.problems).toEqual([]);
+  });
+});

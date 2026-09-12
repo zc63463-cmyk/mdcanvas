@@ -189,16 +189,56 @@ function applyGroupMemberUpdate(note: Note | undefined, field: string, to: strin
   return out;
 }
 
-/** 迁移 updates → 追加 update-node ops（基于 staged 树逐条应用，保证 note 全量 patch 顺序一致） */
-function migrationOps(
+/** 冲突 → 用户可读文案（cut/attach 与 R1-1 编辑管线共用同一格式；含冲突码 + 字段 + 锚文本） */
+export function formatReferenceConflict(c: {
+  code: string;
+  field: string;
+  anchor?: string;
+  message?: string;
+}): string {
+  const anchor = c.anchor !== undefined && c.anchor !== '' ? `：${c.anchor}` : '';
+  return `引用迁移冲突（${c.code} @ ${c.field}）${anchor}：${c.message ?? '新路径不可唯一表示'}`;
+}
+
+/** 读迁移 field 指向的当前锚值（field 形如 centers[0].at / edges[1].from / groups[0].members[2]） */
+function readAnchorField(note: Note | undefined, field: string): string | undefined {
+  if (!note) return undefined;
+  const m = /^([a-z_]+)\[(\d+)\]\.(?:members\[(\d+)\]|([a-z]+))$/.exec(field);
+  const key = m?.[1];
+  if (key === undefined) return undefined;
+  const arr = note[key];
+  if (!Array.isArray(arr)) return undefined;
+  const at = m?.[2];
+  const item = arr[at !== undefined ? Number(at) : -1];
+  if (!isRec(item)) return undefined;
+  const mi = m?.[3];
+  if (mi !== undefined) {
+    const members = item.members;
+    if (!Array.isArray(members)) return undefined;
+    const mv = members[Number(mi)];
+    return typeof mv === 'string' ? mv : undefined;
+  }
+  const prop = m?.[4];
+  if (prop === undefined) return undefined;
+  const v = item[prop];
+  return typeof v === 'string' ? v : undefined;
+}
+
+/**
+ * R1-1：迁移 updates → 顺序 update-node ops（在 staged 树上逐条应用，保证 note 全量 patch 一致）。
+ * 幂等：当前字段值已等于 to 的 update 跳过——controller 管线对 cut/attach 批次
+ * （内含各自的迁移 op）重入迁移时不产生冗余 op。
+ */
+export function buildMigrationOps(
   staged: EditableNode,
   updates: readonly { noteKey: string; field: string; to: string }[],
-  ops: TreeOp[],
-): { staged: EditableNode; conflicts: boolean } {
+): { ops: TreeOp[]; staged: EditableNode } {
+  const ops: TreeOp[] = [];
   let cur = staged;
   for (const u of updates) {
     const node = getNode(cur, u.noteKey);
     if (!node) continue;
+    if (readAnchorField(node.note, u.field) === u.to) continue;
     const isGroupMember = u.field.startsWith('groups[') && u.field.includes('.members[');
     const nextNote = isGroupMember
       ? applyGroupMemberUpdate(node.note, u.field, u.to)
@@ -206,7 +246,18 @@ function migrationOps(
     cur = applyOp(cur, { type: 'update-node', id: u.noteKey, patch: { note: nextNote } });
     ops.push({ type: 'update-node', id: u.noteKey, patch: { note: nextNote } });
   }
-  return { staged: cur, conflicts: false };
+  return { ops, staged: cur };
+}
+
+/** 迁移 updates → 追加 update-node ops（基于 staged 树逐条应用，保证 note 全量 patch 顺序一致） */
+function migrationOps(
+  staged: EditableNode,
+  updates: readonly { noteKey: string; field: string; to: string }[],
+  ops: TreeOp[],
+): { staged: EditableNode; conflicts: boolean } {
+  const built = buildMigrationOps(staged, updates);
+  ops.push(...built.ops);
+  return { staged: built.staged, conflicts: false };
 }
 
 /**
@@ -298,7 +349,7 @@ export function planCutTreeEdge(
       error: {
         code: 'reference-conflict',
         message: c
-          ? `引用迁移冲突（${c.code} @ ${c.field}）：${c.message ?? '新路径不可唯一表示'}`
+          ? formatReferenceConflict(c)
           : '引用迁移冲突：新路径不可唯一表示',
       },
     };
@@ -393,7 +444,7 @@ export function planAttachIsland(
       error: {
         code: 'reference-conflict',
         message: c
-          ? `引用迁移冲突（${c.code} @ ${c.field}）：${c.message ?? '新路径不可唯一表示'}`
+          ? formatReferenceConflict(c)
           : '引用迁移冲突：新路径不可唯一表示',
       },
     };

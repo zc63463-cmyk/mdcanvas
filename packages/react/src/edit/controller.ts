@@ -4,8 +4,15 @@
  * - 变更 → epoch++ → 经 FrameScheduler 单帧广播（复用 K3 调度纪律：无永续 rAF）
  * - 折叠/选中/编辑态是独立瞬时状态（不进 history，参考源同语义）
  * - serialize 走 kernel serializeMm(editableToAst(root))——canonical 往返保证
+ * - R1-1：锚引用迁移收敛到管线（R1-A1）——白名单 op 在 apply/applyTransaction 一处
+ *   统一触发 planReferenceMigration：结构编辑后既有锚引用被重写（改名/缩进/反缩进/
+ *   重排不再断开关系线）；冲突整批拒绝（R1-A2「宁可不写也不错写」）。
+ *   remove-node 不参与迁移（偏差，见 CHANGELOG）：迁移对「目标被删」只能产出
+ *   target-lost 冲突 → 会阻断一切「删除被边引用的节点」这一合法主流程；
+ *   删除维持既有语义（边悬空 → R0 健康度可见 → R2 重挂修复）。
  */
 import {
+  applyOp,
   editableToAst,
   findNode,
   getNode,
@@ -15,12 +22,18 @@ import {
   OpHistory,
   parentIdOf,
   pathOf,
+  planReferenceMigration,
   serializeMm,
   type EditableNode,
   type Note,
   type TransactionResult,
   type TreeOp,
 } from '@mindcanvas/kernel';
+import {
+  buildMigrationOps,
+  collectReferenceAnchors,
+  formatReferenceConflict,
+} from './cutAttach.js';
 import { FrameScheduler } from '../render/scheduler.js';
 
 export interface EditorControllerOptions {
@@ -32,7 +45,30 @@ export interface EditorControllerOptions {
    * 路径在结构未变时稳定（pathOf/nodeByPath）。
    */
   storage?: { load: () => number[][]; save: (paths: number[][]) => void };
+  /**
+   * R1-1：apply() 的锚迁移冲突回调（apply 返回形状是树本身，冲突经此上报）。
+   * applyTransaction 的冲突走返回值（ok:false + code=reference-conflict），不经此回调。
+   */
+  onAnchorConflict?: (message: string) => void;
 }
+
+/**
+ * R1-A4 op 白名单：仅「路径锚可能受影响」的 op 触发迁移，其余短路（零开销）。
+ * - move-node / add-child：结构变化 → 路径/实体锚重算
+ * - update-node：仅当 patch 触及锚名语义（text 改名 / type+ref 转实体与转回）——
+ *   note/style 等高频 patch 直接短路
+ */
+function isAnchorAffectingOp(op: TreeOp): boolean {
+  if (op.type === 'move-node' || op.type === 'add-child') return true;
+  if (op.type === 'update-node') {
+    return (
+      op.patch.text !== undefined || op.patch.type !== undefined || op.patch.ref !== undefined
+    );
+  }
+  return false;
+}
+
+const MIGRATION_CONFLICT_FALLBACK = '引用迁移冲突：新路径不可唯一表示';
 
 export class EditorController {
   /** 折叠集合（不可变 Set：toggle 产出新引用，驱动布局重算） */
@@ -48,12 +84,14 @@ export class EditorController {
   private epoch = 0;
   private newText: string;
   private storage: EditorControllerOptions['storage'];
+  private onAnchorConflict: ((message: string) => void) | undefined;
 
   constructor(initial: EditableNode, opts: EditorControllerOptions = {}, frame?: FrameScheduler) {
     this.history = new OpHistory(initial);
     this.newText = opts.newText ?? '新节点';
     this.frame = frame ?? new FrameScheduler();
     this.storage = opts.storage;
+    this.onAnchorConflict = opts.onAnchorConflict;
     // 折叠持久化：构造时按路径恢复（节点 id 每次解析重生成，路径在结构未变时稳定）
     const saved = this.storage?.load();
     if (saved && saved.length > 0) {
@@ -88,20 +126,70 @@ export class EditorController {
   /** 应用任意合法 op（返回应用后的根；非法/不可逆/被拒绝 → 原根，不置脏不广播） */
   apply(op: TreeOp): EditableNode {
     const before = this.root;
-    const next = this.history.apply(op);
-    if (next !== before) {
-      this.dirty = true;
-      this.notify();
+    if (!isAnchorAffectingOp(op)) {
+      const next = this.history.apply(op);
+      if (next !== before) {
+        this.dirty = true;
+        this.notify();
+      }
+      return next;
     }
-    return next;
+    // R1-1 白名单 op：预演 → 锚迁移（与 op 同一 history 条目）→ 提交
+    const simulated = applyOp(before, op);
+    if (simulated === before) {
+      // op 未产生变化（非法/被拒/零位移）→ 原路径，保留既有语义
+      return this.history.apply(op);
+    }
+    const plan = planReferenceMigration(before, simulated, collectReferenceAnchors(before));
+    if (!plan.ok) {
+      const c = plan.conflicts[0];
+      this.onAnchorConflict?.(c ? formatReferenceConflict(c) : MIGRATION_CONFLICT_FALLBACK);
+      return before; // 整批拒绝：不写 history、不改 root（R1-A2）
+    }
+    const mig = buildMigrationOps(simulated, plan.updates);
+    const result = this.history.applyTransaction([op, ...mig.ops]);
+    if (!result.ok) return before; // 防御：批次校验失败零副作用（结构化错误经 debug 场景排查）
+    this.dirty = true;
+    this.notify();
+    return this.root;
   }
 
   /**
    * A5：原子批次事务（透传 kernel OpHistory.applyTransaction）。
    * 全批预校验、失败零副作用；成功一次 history 记录、一次 dirty/广播。
    * 断言一刀切语义见 kernel TransactionResult；禁止以「连调多次 apply」替代。
+   * R1-1：批次含白名单 op → 先预演整批再做锚迁移（迁移 op 追加到同一批次，
+   * 一次 undo 同撤）；冲突 → ok:false（code=reference-conflict），整批拒绝。
    */
   applyTransaction(ops: readonly TreeOp[]): TransactionResult {
+    const before = this.root;
+    if (ops.length > 0 && ops.some(isAnchorAffectingOp)) {
+      let staged = before;
+      for (const op of ops) staged = applyOp(staged, op);
+      if (staged !== before) {
+        const plan = planReferenceMigration(before, staged, collectReferenceAnchors(before));
+        if (!plan.ok) {
+          const c = plan.conflicts[0];
+          return {
+            ok: false,
+            error: {
+              code: 'reference-conflict',
+              step: 0,
+              message: c ? formatReferenceConflict(c) : MIGRATION_CONFLICT_FALLBACK,
+            },
+          };
+        }
+        const mig = buildMigrationOps(staged, plan.updates);
+        if (mig.ops.length > 0) {
+          const result = this.history.applyTransaction([...ops, ...mig.ops]);
+          if (result.ok && result.applied > 0) {
+            this.dirty = true;
+            this.notify();
+          }
+          return result;
+        }
+      }
+    }
     const result = this.history.applyTransaction(ops);
     if (result.ok && result.applied > 0) {
       this.dirty = true;
