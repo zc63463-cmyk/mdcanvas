@@ -22,6 +22,12 @@ export interface DocumentActionsOptions {
   autoSaveTimer: RefObject<ReturnType<typeof setTimeout> | null>;
   /** 落盘瞬态通知（FA1-T1：驱动顶部「保存中…」指示）；可选，缺省不通知 */
   onSavingChange?: (saving: boolean) => void;
+  /**
+   * A-D4：未保存修改时的切换确认（宿主提供自定义模态；resolve true = 放弃修改并切换）。
+   * 缺省 undefined → **保守策略：视为 false（不切换）**，绝不静默丢数据。
+   * 替代 window.confirm —— 它在 IDE webview 中会被静默吞掉（false/undefined 且无 UI）。
+   */
+  confirmDiscard?: () => Promise<boolean>;
 }
 
 export interface DocumentActions {
@@ -46,6 +52,7 @@ export function useDocumentActions({
   fileInputRef,
   autoSaveTimer,
   onSavingChange,
+  confirmDiscard,
 }: DocumentActionsOptions): DocumentActions {
   /** 落盘瞬态：手动保存也走它，避免「自动保存有指示、Ctrl+S 没有」的割裂 */
   const runSave = useCallback(
@@ -70,7 +77,9 @@ export function useDocumentActions({
 
   const applyDoc = useCallback(
     async (next: MindDoc): Promise<boolean> => {
-      if (controller.dirty && !window.confirm('当前文档有未保存的修改，确定放弃并切换？')) {
+      // A-D4：未保存守卫走注入式确认器（宿主自定义模态）——不再触碰会被 webview 吞掉的 confirm。
+      // 缺省保守 false：宿主未接线时宁可「不切换」，也绝不静默丢数据。
+      if (controller.dirty && !((await confirmDiscard?.()) ?? false)) {
         return false;
       }
       setDoc(next);
@@ -85,7 +94,7 @@ export function useDocumentActions({
       });
       return true;
     },
-    [controller, setDoc, docHost],
+    [controller, setDoc, docHost, confirmDiscard],
   );
 
   const handleOpen = useCallback(async (): Promise<void> => {

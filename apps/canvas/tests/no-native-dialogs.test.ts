@@ -8,7 +8,7 @@
  * `MindmapStage` 键盘删除路径残留 `confirm()`，右键菜单那批已按裁决 M2 改直删，唯独漏了它）。
  *
  * 规则：画布壳体（apps/canvas/src）不得再引入原生对话框；
- * 存量各处各有替代计划（见 ALLOW 注释），**修一处从白名单删一处**。
+ * 存量例外已于 2026-09-12（债务腾挪批次 A）**全部清零**——空集继续保留：防将来回潮。
  */
 import { readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
@@ -16,10 +16,8 @@ import { describe, expect, it } from 'vitest';
 
 const SRC_DIR = new URL('../src/', import.meta.url).pathname.replace(/^\/([A-Za-z]:)/, '$1');
 
-/** 存量例外：各有替代计划，勿再新增 */
-const ALLOW = new Set([
-  'hooks/useDocumentActions.ts', // 未保存修改时切换文档确认 → 待自定义模态（涉及数据丢失语义，需产品决策）
-]);
+/** 存量例外：**已全部清除**（2026-09-12 债务腾挪批次 A）——空集保留：防将来回潮 */
+const ALLOW = new Set<string>();
 
 /** 裸调用（排除 `settleConfirm(` / `window.confirm(` 这类：前一个字符是词字符或点号即不算裸调用） */
 const NATIVE_DIALOG = /(?<![\w.$])(confirm|prompt|alert)\s*\(/;

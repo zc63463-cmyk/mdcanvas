@@ -8,11 +8,12 @@
  * 不测什么：不测导出（见 useExportActions，依赖 Blob/URL/alert）；
  * 不测自动保存（那是 StageContent 内的 effect）。
  */
-import { act, renderHook } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, renderHook } from '@testing-library/react';
 import type { RefObject } from 'react';
 import type { DocumentHost, EditorController, FsFileHandle, MindDoc } from '@mindcanvas/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { useDocumentActions } from '../src/hooks/useDocumentActions';
+import { UnsavedPrompt } from '../src/UnsavedPrompt.js';
 
 /** 最小可用的 controller：只实现本 hook 触碰的成员 */
 function makeController(over: Partial<EditorController> = {}): EditorController {
@@ -55,6 +56,8 @@ function setup(over: {
   controller?: Partial<EditorController>;
   docHost?: Partial<DocumentHost>;
   doc?: Partial<MindDoc>;
+  /** A-D4：未保存切换确认的注入式问询器（替代 window.confirm） */
+  confirmDiscard?: () => Promise<boolean>;
 } = {}) {
   const controller = makeController(over.controller);
   const docHost = makeDocHost(over.docHost);
@@ -63,12 +66,21 @@ function setup(over: {
   const fileInputRef = { current: null } as RefObject<HTMLInputElement | null>;
   const autoSaveTimer: RefObject<ReturnType<typeof setTimeout> | null> = { current: null };
   const { result } = renderHook(() =>
-    useDocumentActions({ controller, docHost, doc, setDoc, fileInputRef, autoSaveTimer }),
+    useDocumentActions({
+      controller,
+      docHost,
+      doc,
+      setDoc,
+      fileInputRef,
+      autoSaveTimer,
+      confirmDiscard: over.confirmDiscard,
+    }),
   );
   return { result, controller, docHost, doc, setDoc, fileInputRef, autoSaveTimer };
 }
 
 afterEach(() => {
+  cleanup(); // 组件级渲染（UnsavedPrompt 用例）随用例卸载
   vi.restoreAllMocks();
   vi.unstubAllGlobals(); // handleOpen 用例注入的 window.showOpenFilePicker 随用例回收
 });
@@ -86,27 +98,66 @@ describe('useDocumentActions · applyDoc', () => {
     expect(docHost.remember).toHaveBeenCalledWith(next);
   });
 
-  it('有未保存修改且用户取消 → 不切换、不记住', async () => {
-    vi.spyOn(window, 'confirm').mockReturnValue(false);
-    const { result, docHost, setDoc } = setup({ controller: { dirty: true } });
+  // A-D4：未保存确认改注入式确认器（confirmDiscard）——window.confirm 在 webview 会被静默吞掉。
+  // 每例都把 window.confirm 换成会抛错的 spy：实现只要回退到原生对话框即失败。
+  it('dirty + 确认器返回 false → 不切换、不记住、不触碰 window.confirm', async () => {
+    const confirmSpy = vi.spyOn(window, 'confirm').mockImplementation(() => {
+      throw new Error('native confirm() 被调用');
+    });
+    const confirmDiscard = vi.fn(async () => false);
+    const { result, docHost, setDoc } = setup({ controller: { dirty: true }, confirmDiscard });
 
     await act(async () => {
       await result.current.applyDoc({ ...baseDoc, name: 'b.mm.md' });
     });
 
+    expect(confirmDiscard).toHaveBeenCalledTimes(1);
     expect(setDoc).not.toHaveBeenCalled();
     expect(docHost.remember).not.toHaveBeenCalled();
+    expect(confirmSpy).not.toHaveBeenCalled();
   });
 
-  it('有未保存修改但用户确认 → 正常切换', async () => {
-    vi.spyOn(window, 'confirm').mockReturnValue(true);
-    const { result, setDoc } = setup({ controller: { dirty: true } });
+  it('dirty + 确认器返回 true → 正常切换', async () => {
+    const confirmSpy = vi.spyOn(window, 'confirm').mockImplementation(() => {
+      throw new Error('native confirm() 被调用');
+    });
+    const confirmDiscard = vi.fn(async () => true);
+    const { result, setDoc } = setup({ controller: { dirty: true }, confirmDiscard });
     const next = { ...baseDoc, name: 'b.mm.md' };
 
     await act(async () => {
       await result.current.applyDoc(next);
     });
 
+    expect(confirmDiscard).toHaveBeenCalledTimes(1);
+    expect(setDoc).toHaveBeenCalledWith(next);
+    expect(confirmSpy).not.toHaveBeenCalled();
+  });
+
+  it('dirty 且未注入确认器 → 保守返回 false（绝不静默丢数据）', async () => {
+    const confirmSpy = vi.spyOn(window, 'confirm').mockImplementation(() => {
+      throw new Error('native confirm() 被调用');
+    });
+    const { result, setDoc } = setup({ controller: { dirty: true } });
+
+    await act(async () => {
+      await expect(result.current.applyDoc({ ...baseDoc, name: 'b.mm.md' })).resolves.toBe(false);
+    });
+
+    expect(setDoc).not.toHaveBeenCalled();
+    expect(confirmSpy).not.toHaveBeenCalled();
+  });
+
+  it('不 dirty → 不调用确认器，直接切换', async () => {
+    const confirmDiscard = vi.fn(async () => true);
+    const { result, setDoc } = setup({ controller: { dirty: false }, confirmDiscard });
+    const next = { ...baseDoc, name: 'b.mm.md' };
+
+    await act(async () => {
+      await result.current.applyDoc(next);
+    });
+
+    expect(confirmDiscard).not.toHaveBeenCalled();
     expect(setDoc).toHaveBeenCalledWith(next);
   });
 });
@@ -314,5 +365,48 @@ describe('useDocumentActions · handleSaveAs', () => {
     });
 
     expect(docHost.save).toHaveBeenCalledWith(expect.objectContaining({ handle: undefined }));
+  });
+});
+
+/**
+ * A-D4：UnsavedPrompt 是「未保存切换确认」的载体（替代 window.confirm）。
+ * 两按钮语义（决策 A1）：放弃修改并切换 / 取消；键盘语义与 LenBubble 一致（Enter 确认 / Esc 取消）。
+ */
+describe('UnsavedPrompt · 两按钮模态（A-D4）', () => {
+  it('open=false → 不渲染任何内容', () => {
+    const onSettle = vi.fn();
+    const { container } = render(<UnsavedPrompt open={false} onSettle={onSettle} />);
+    expect(container.querySelector('[data-unsaved-prompt]')).toBeNull();
+  });
+
+  it('点「放弃修改并切换」→ settle(true)', () => {
+    const onSettle = vi.fn();
+    const { container } = render(<UnsavedPrompt open onSettle={onSettle} />);
+    fireEvent.click(container.querySelector('[data-unsaved-ok]')!);
+    expect(onSettle).toHaveBeenCalledWith(true);
+  });
+
+  it('点「取消」→ settle(false)', () => {
+    const onSettle = vi.fn();
+    const { container } = render(<UnsavedPrompt open onSettle={onSettle} />);
+    fireEvent.click(container.querySelector('[data-unsaved-cancel]')!);
+    expect(onSettle).toHaveBeenCalledWith(false);
+  });
+
+  it('Enter = 确认 / Esc = 取消', () => {
+    const onSettle = vi.fn();
+    const { container } = render(<UnsavedPrompt open onSettle={onSettle} />);
+    const card = container.querySelector('[data-unsaved-prompt]')!;
+    fireEvent.keyDown(card, { key: 'Enter' });
+    expect(onSettle).toHaveBeenLastCalledWith(true);
+    fireEvent.keyDown(card, { key: 'Escape' });
+    expect(onSettle).toHaveBeenLastCalledWith(false);
+  });
+
+  it('点背板（模态之外）→ settle(false)（保守：绝不误当作确认）', () => {
+    const onSettle = vi.fn();
+    const { container } = render(<UnsavedPrompt open onSettle={onSettle} />);
+    fireEvent.pointerDown(container.querySelector('[data-unsaved-backdrop]')!);
+    expect(onSettle).toHaveBeenCalledWith(false);
   });
 });

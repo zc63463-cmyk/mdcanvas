@@ -118,6 +118,7 @@ import { RadialStageOverlay, useRadialStage } from './hooks/useRadialStage.js';
 import { makeCenterActions, makeDescActions, makeNoteActions } from './nodeMenuBags.js';
 import { ghostBoxOf } from './radialGhost.js';
 import { LenBubble } from './LenBubble.js';
+import { UnsavedPrompt } from './UnsavedPrompt.js';
 import { applyLen } from './lenEdit.js';
 import { PerfPanel } from './PerfPanel.js';
 import { SidePanels } from './SidePanels.js';
@@ -394,6 +395,24 @@ function StageContent({
   // FA1-T1：落盘中转瞬态（驱动「保存中...」指示）；saving 期间不重复触发
   const [saving, setSaving] = useState(false);
 
+  // A-D4：未保存切换确认——自定义模态（替代被 webview 静默吞掉的 window.confirm）
+  const [discardAsk, setDiscardAsk] = useState(false);
+  const discardResolver = useRef<((ok: boolean) => void) | null>(null);
+  const confirmDiscard = useCallback(
+    (): Promise<boolean> =>
+      new Promise<boolean>((resolve) => {
+        discardResolver.current = resolve;
+        setDiscardAsk(true);
+      }),
+    [],
+  );
+  const settleDiscard = useCallback((ok: boolean): void => {
+    setDiscardAsk(false);
+    const resolve = discardResolver.current;
+    discardResolver.current = null;
+    resolve?.(ok);
+  }, []);
+
   // 文档操作（打开/新建/保存/另存为）—— 依赖 autoSaveTimer，故在其定义之后调用
   const { applyDoc, handleOpen, handleNew, handleSave, handleSaveAs } = useDocumentActions({
     controller,
@@ -403,6 +422,7 @@ function StageContent({
     fileInputRef,
     autoSaveTimer,
     onSavingChange: setSaving,
+    confirmDiscard,
   });
 
   useEffect(() => {
@@ -2002,6 +2022,9 @@ function StageContent({
           onCancel={() => setLenBubble(null)}
         />
       )}
+
+      {/* A-D4：未保存切换确认（取代原生 confirm——webview 静默吞掉；放弃/取消两按钮） */}
+      <UnsavedPrompt open={discardAsk} onSettle={settleDiscard} />
 
       {/* E7 树边标注 + E5 连线创建器 / 边编辑浮窗 —— 已抽到 EdgeDraftLayer */}
       <EdgeDraftLayer
