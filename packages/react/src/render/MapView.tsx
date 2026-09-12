@@ -736,9 +736,10 @@ export function MapView({
     return base;
   };
 
-  // E8：自由边端点取盒（稳定引用）。
-  // 关键：非动画期间 identity 不变 → FreeEdgeLayer 内的路由结果可缓存，
-  // pan/zoom 不触发重算（路由在世界坐标系，与视口无关）；仅动画逐帧变化时重算。
+  // E8：自由边端点取盒（稳定引用）——路由缓存的前提之一，但**单靠此处不足**。
+  // G-P4 注释对齐（详见 docs/dispatch/2026-09-12-freeedge-routing-recompute-plan.md）：
+  // 让 pan 不再逐帧重算的真正链路 = visibleFreeEdges 内容键稳定（G-P1）+ 裁剪窗口量化（G-P2）
+  // → 路由重算频率 ≤ 每 256px 一次；仅动画逐帧变化时才回到逐帧重算。
   const edgeBoxOf = useCallback(
     (id: string): Box | undefined => {
       const b = derived.boxes.get(id);

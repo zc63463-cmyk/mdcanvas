@@ -135,8 +135,11 @@ export function FreeEdgeLayer({
   const dragRef = useRef(drag);
   dragRef.current = drag;
   // 路由缓存（E8 性能 P4）：仅在「边集 / 端点盒 / 树结构 / 障碍集」变化时重算。
-  // pan/zoom 不触发——路由在世界坐标系，且 boxOf 与 obstacles 已在 MapView 侧稳定化。
-  // 仅节点过渡动画期间（animBoxes 逐帧变化）才会逐帧重算，动画结束即回到缓存态。
+  // pan/zoom 的真实条件（G-P4 注释对齐，详见 docs/dispatch/2026-09-12-freeedge-routing-recompute-plan.md）：
+  // 世界坐标路由与视口无关，且 boxOf / obstacles / collapsed 已稳定化 —— 但要害在 `edges`：其身份由
+  //   ① 内容键稳定（G-P1）：成员不变 → 复用引用；② 裁剪窗口量化（G-P2）：memo 只在跨 256px 网格时重跑
+  // ⇒ pan 期重算频率 ≈ 每 256px 至多一次（且仅成员真的变化时）；成员不变的小步平移 = 0 次。
+  // 仅节点过渡动画期间（animBoxes 逐帧变化，且 MapView 侧 obstacles 置空 + fastRouting）才逐帧重算。
   //
   // G-P3（每边成本）：整表重算的内层 O(N) 降为「每次重算一次 + 每边 O(1)/轻量」：
   //  ① 端点解析器：一次 O(N) 树遍历摊薄到全部边（旧：每端点一次 collapsedAncestors DFS）；
