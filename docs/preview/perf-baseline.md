@@ -90,3 +90,45 @@ pnpm --filter @mindcanvas/kernel test -- --run tests/layout-incremental.test.ts
 - T6 增量布局把编辑 relayout 压到全量 1% 左右（87K 节点 1.67 ms）——大规模编辑的体验瓶颈已消除
 - T7 后端抽象为 Canvas 切换提供接口与场景原语（节点卡/文本/连线/图片/分组）
 - 既有计时抖动（非本次引入）：kernel `benchmark-layout.test.ts` 线性度检查、react `perf.test.ts viewMs<8ms` 在并行负载下偶发超时——建议后续放宽为双倍中位数而非绝对阈值
+
+## 六、交互性能基线（批次 B · 2026-09-12）
+
+> 命令：`node tools/bench-interaction.mjs http://localhost:5174`（真浏览器，需先起 canvas dev server）
+> 场景：清 localStorage → 默认 demo 文档（25 节点）→ 20 步空白拖拽平移（+360px / −120px）
+
+### 6.1 机制指标（pan 期节点 DOM 变更）
+
+| 指标 | 口径 | 2026-09-12 基线（改动前） |
+|---|---|---|
+| `nodeMutations` | 落在节点 `g[data-node-id]`（自身或内部）的 DOM 变更次数 | **0** |
+| `nodeMountChurn` | 裁剪引起的整节点挂载/卸载数 | 0（25 节点全部在视口内，无裁剪） |
+| `childListTotal` / `attributesTotal` | 全文档变更数（参考项） | 0 / 161 |
+| `frameGapMsP50` / `P95` | pan 窗口内 rAF 间隔 | **17 / 17 ms** |
+| `nodesBefore` → `nodesAfter` | 可见节点数 | 25 → 25 |
+| `panApplied` | 投影 `transform` 是否变化（平移生效证据） | **true**（x 783.1 → 1143.1） |
+
+**口径修正（P0 实测证伪计划预期）**：计划 B-P0 预期基线 `nodeMutations > 0`（"现状会 > 0 → P2 先红"）。
+实测在**平移确实生效**（投影 transform 已变）的前提下 `nodeMutations = 0` —— React 的结构复用已避免节点
+DOM 重挂。pan 期的 DOM 变更只有两类：(a) 节点 g 内部重挂（实测 0）；(b) 裁剪引起的整节点挂/卸载
+（单独计 `nodeMountChurn`，属**预期行为**，memo 也不应消除）。
+因此 **P2 的判别性机制指标改用「节点组件渲染次数」**（jsdom 里对 `NodeG` 做模块级计数封装：
+现状每次 pan × 每个可见节点各渲染一次 → 先红；memo + 稳定 props 后归零 → 绿），
+本表 `nodeMutations` 转为**非回归守卫**（P1/P2/P3 后必须仍为 0）。
+
+> 侦察记录（避免后人重复踩坑）：①「打开即有大图」不可达 → 按计划在 25 节点 demo 上测机制指标；
+> ②节点 g 的 DOM 命中不可靠（`elementFromPoint` 落在 `svg` 上，节点盒几何须用 `getBoundingClientRect`
+> 自行排除），起点选择已改为「网格扫描 + 距节点盒 ≥28px + topmost=svg」；
+> ③起点落在节点盒上会静默变成**节点拖拽**（投影 g 的 children 多一层、transform 不变）——`panApplied`
+> 字段就是为此设的证据位。
+
+### 6.2 规模指标（`node scripts/bench-scale.mjs`，2026-09-12 复跑）
+
+| 节点 | 全量布局 | 可见集过滤 `cullMs` | 连线构建 | 首帧计算 | 平移重绘上限 | 增量编辑 |
+|---|---|---|---|---|---|---|
+| 5,461 | 9.0 ms | **0.15 ms** | 1.7 ms | 10.8 ms | 536 fps | 0.12 ms |
+| 21,845 | 48.9 ms | **2.08 ms** | 12.6 ms | 63.6 ms | 68 fps | 0.46 ms |
+| 87,381 | 178.7 ms | **8.06 ms** | 53.0 ms | 239.7 ms | 16 fps | 4.80 ms |
+
+> 与 2026-08-29 记录（0.07 / 0.64 / 4.0 ms）相比偏高，属本机环境抖动（同日多次复跑亦有 ±30% 波动）；
+> P1 的 `cullMs ↓≥50%` 判定以**同日复跑**为对照基准。
+
