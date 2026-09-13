@@ -7,6 +7,18 @@
 > （09-05~09-06）与「图引擎适配 / 文件工作台」（09-10）等批次未单独标号，
 > 按完成时间归入对应段落末尾的「同批」小节。
 
+## [1.8.7] — 2026-09-13 · 关系线 R4（能力补齐：菜单 / 反向 / 失效语义 / 级联 / 批量）
+
+**触发**：关系线能力面收尾——`reverseOf` 全仓零消费者、失效边静默吞新建并塑形他人、级联从未定义、无批量。计划：`docs/dispatch/2026-09-13-edge-r4-capabilities-plan.md`。
+
+- **R4-1** 边右键菜单：FreeEdgeLayer 命中区 `onContextMenu`（preventDefault + stopPropagation 防两层菜单；右键同左键语义先选中）→ MapView `onEdgeContext?` → 新 `edgeContextItems.ts`（数据在 react / 渲染在宿主，禁用矩阵测试钉死：回调缺省即禁用、manual 不禁重挂、dangling/对称/未注册不禁反向与复制）→ EdgeDraftLayer 渲染 ContextMenu + 重挂复用 EdgeAnchorPicker；菜单状态提升 Stage（4 行）。宿主接线：重挂/复制/失效/删除走 `useEdgeActions` 唯一写路径（新增 duplicateEdge / setEdgeInvalid）。
+- **R4-2** 反向（数据层反转）：`reverseEdge`——交换 from/to；rel 三态（成对反向 → `reverseOf` 换名 / 对称不变 / 未注册不变 + message 经 commandNotice 提示，R4-A2）；渲染端保形（manual 交换 + routingSide 翻转，同 R3-3 问题域）；**与 dir 正交（反向不改 dir）**。表驱动 **18 组合**（rel 三态 × dir 三态 × manual 有无全交叉，覆盖计划要求的 12 组合）+ 端点保位（真实渲染 d 起终点互换）+ undo 全回滚。EdgeEditor 加法扩展可选 `onReverse?`（缺省不渲染按钮）。
+- **R4-3** 失效语义补全：① 去重口径——`connectEdge` 只对未失效边查重，同名失效边不吞新建（并存 + 提示「已存在 N 条同名失效边」）；② 失效边**退出路由协调**（R4-A3）：不占 stagger 档、不进 routedPolylines、不参与跳线，仍照常绘制灰虚线——契约测试（A→D × B→C 交叉判别场景）+ 真浏览器硬断言（其余边 d 逐字节相同，`tools/verify-edge-invalid-routing.mjs`，截图 verify-shots/edge-invalid-*.png）+ 独立可回退 commit；③ 空 label：label 空串回落 rel（与计划偏差：EdgeLabel 本就有空文本守卫，「渲染空胶囊」前提不成立——实测钉死后补回落语义）。
+- **R4-4** 级联（限定语义，R4-A4）：成对反向边（同一节点对无序匹配 + rel === reverseOf，源 rel 非对称、已注册）**同步失效 / 恢复**——同一 invalidAt 时间戳、已失效不覆盖原戳、已有效恢复 no-op、一次 undo 全回滚；对称 / 未注册 / 非成对不联动（表驱动钉死）；EdgeDraftLayer 失效/恢复收敛为 hook 动作。**明确不做**：节点删除→自动失效标记（保持 dangling 自然语义 + R0 可见）、传递闭包、跨文档。
+- **R4-5** 批量（最小可用，**未触发停止上报条款**）：Shift+点边多选（`selectedEdgeKeys?`/`onSelect` 第 4 参均为加法，MapView 改动 8 行 <30；多选状态存 useEdgeActions 而非画布手势层，无新手势机制；Shift+点边与「Shift+点两节点连线」目标不同、无冲突）→ 批量条（`data-edge-multi-bar`：N 条 + 失效/恢复/删除）；批量删除/失效/恢复各一次写一条 history（一次 undo 全回滚），批量失效跳过已失效并提示「已跳过 N 条已失效」；单条选中与编辑回归钉全绿。清空路径：Esc / 退出关系模式 / 单选——**点空白清空未做**（与 pan 手势相邻，按停止条款精神豁免）。
+
+**验收**：kernel **480** / react **1093** / canvas **170** = **1743 全绿**（R3 基线 1694 + 本批 +49）；tsc ×3 / dist 重建 / depcruise（402 模块）/ lint **1481 warnings + 46 infos 持平**（新代码零告警）/ budget 持平（bang 89/90、asCast 31/31、bigFiles 3/4——MindmapStage 2269 / MapView 2088 属宿主接线与透传增长）；阈值/契约测试零放宽（新增 props 全部可选、缺省回落原行为，既有用例零修改）。
+
 ## [1.8.6] — 2026-09-13 · 关系线 R3（自动行为可预期化）
 
 **触发**：三类静默——「点了没反应」（manual 边上 routingSide/Opp 永不生效、Opp 对跳线恒落 right）、「形状悄悄变了」（切 dir 手工几何换端）、「方向反了无感知」（指定侧无解静默变直连）。计划：`docs/dispatch/2026-09-13-edge-r3-predictable-autobehavior-plan.md`。
