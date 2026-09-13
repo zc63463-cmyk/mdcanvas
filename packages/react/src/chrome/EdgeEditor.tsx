@@ -8,7 +8,7 @@
  * 共享纯函数/样式/小组件已抽至 edgeEditorShared.tsx（A-D1）并在本文件显式 re-export；
  * collectNodeChoices / edge 数组纯函数：可测；写入统一经 updateNote（undo 继承）。
  */
-import { useMemo, useState } from 'react';
+import { useState } from 'react';
 import type { LinkDir } from '@mindcanvas/kernel';
 import { useTheme } from '../theme/ThemeContext.js';
 import type { DocEdge, EdgeManual, EdgeStyle } from '../render/freeEdges.js';
@@ -24,14 +24,13 @@ import {
   REL_TEMPLATES,
   RoutingSideToggle,
   StyleRow,
-  type NodeChoice,
   type TreeEdgeAnn,
 } from './edgeEditorShared.js';
-import { defaultRelationSchema } from './relationSchema.js';
 import { EdgeAnchorPicker, type EdgeAnchorChoice } from './EdgeAnchorPicker.js';
 
 export type { DocEdge, EdgeStyle } from '../render/freeEdges.js';
 export type { NodeChoice, TreeEdgeAnn } from './edgeEditorShared.js';
+export { LinkCreator } from './LinkCreator.js';
 export {
   appendEdge,
   collectNodeChoices,
@@ -470,160 +469,3 @@ export function TreeEdgeEditor({
 }
 
 /** LinkCreator：新建连线（源 = 右键节点；目标从候选选，rel 模板 + dir + 可选 label/note/样式） */
-export function LinkCreator({
-  choices,
-  x,
-  y,
-  onCreate,
-  onClose,
-}: {
-  choices: readonly NodeChoice[];
-  x: number;
-  y: number;
-  onCreate: (edge: DocEdge) => void;
-  onClose: () => void;
-}) {
-  const { token } = useTheme();
-  const [query, setQuery] = useState('');
-  const [picked, setPicked] = useState<NodeChoice | null>(null);
-  const [rel, setRel] = useState('relates-to');
-  const [dir, setDir] = useState<LinkDir>('fwd');
-  const [label, setLabel] = useState('');
-  const [note, setNote] = useState('');
-  const [style, setStyle] = useState<EdgeStyle>({});
-  const filtered = useMemo(
-    () =>
-      (query.trim() === '' ? choices : choices.filter((c) => c.label.includes(query.trim()))).slice(
-        0,
-        40,
-      ),
-    [choices, query],
-  );
-  const canCreate = picked !== null && rel.trim() !== '';
-  return (
-    <div
-      data-link-creator
-      style={{ ...popStyle(), width: 300, ...clampPos(x, y, 300, 400), color: token.color.text }}
-      onPointerDown={(e) => e.stopPropagation()}
-    >
-      <div style={headRow}>
-        <span style={{ fontSize: 12, fontWeight: 600, color: token.color.selection }}>连线到…</span>
-        <span style={{ flex: 1 }} />
-        <span data-link-creator-close onClick={onClose} style={closeBtn}>
-          ×
-        </span>
-      </div>
-      {!picked && (
-        <>
-          <input
-            autoFocus
-            data-link-query
-            value={query}
-            placeholder="搜索节点 / 实体…"
-            onChange={(e) => setQuery(e.target.value)}
-            style={{ ...inputStyle, marginBottom: 6 }}
-          />
-          <div data-link-choices style={{ maxHeight: 150, overflowY: 'auto', marginBottom: 8 }}>
-            {filtered.map((c) => (
-              <div
-                key={c.anchor}
-                data-link-choice
-                onClick={() => setPicked(c)}
-                style={{
-                  padding: '4px 6px',
-                  borderRadius: 6,
-                  cursor: 'pointer',
-                  fontSize: 12,
-                  overflow: 'hidden',
-                  textOverflow: 'ellipsis',
-                  whiteSpace: 'nowrap',
-                }}
-              >
-                {c.label}
-              </div>
-            ))}
-            {filtered.length === 0 && (
-              <div style={{ fontSize: 11, opacity: 0.6, padding: 4 }}>无候选</div>
-            )}
-          </div>
-        </>
-      )}
-      {picked && (
-        <div
-          data-link-target
-          style={{
-            marginBottom: 6,
-            padding: '4px 6px',
-            borderRadius: 6,
-            border: '1px solid rgba(128,128,128,0.3)',
-            fontSize: 12,
-          }}
-        >
-          {picked.label}
-        </div>
-      )}
-      <div style={{ display: 'flex', gap: 6, alignItems: 'center', marginBottom: 6 }}>
-        <input
-          data-link-rel
-          list="rel-templates-creator"
-          placeholder="关系类型"
-          value={rel}
-          onChange={(e) => setRel(e.target.value)}
-          style={inputStyle}
-        />
-        <datalist id="rel-templates-creator">
-          {defaultRelationSchema.activeOptions().map((o) => (
-            <option key={o.value} value={o.value}>
-              {o.label}
-            </option>
-          ))}
-        </datalist>
-        <DirToggle value={dir} onChange={setDir} />
-      </div>
-      <div style={{ display: 'flex', gap: 6, marginBottom: 6 }}>
-        <input
-          data-link-label
-          placeholder="标签"
-          value={label}
-          onChange={(e) => setLabel(e.target.value)}
-          style={inputStyle}
-        />
-        <input
-          data-link-note
-          placeholder="备注"
-          value={note}
-          onChange={(e) => setNote(e.target.value)}
-          style={inputStyle}
-        />
-      </div>
-      <div style={{ marginBottom: 8 }}>
-        <StyleRow style={style} onStyle={(patch) => setStyle((s) => ({ ...s, ...patch }))} />
-      </div>
-      <button
-        data-link-create
-        disabled={!canCreate}
-        onClick={() => {
-          if (!picked) return;
-          onCreate({
-            from: '',
-            to: picked.anchor,
-            rel: rel.trim(),
-            ...(dir !== 'fwd' ? { dir } : {}),
-            ...(label.trim() !== '' ? { label: label.trim() } : {}),
-            ...(note.trim() !== '' ? { note: note.trim() } : {}),
-            ...(style.color || style.dashed || style.width !== undefined ? { style } : {}),
-          });
-        }}
-        style={{
-          ...inputStyle,
-          cursor: canCreate ? 'pointer' : 'not-allowed',
-          opacity: canCreate ? 1 : 0.45,
-          color: token.color.selection,
-          borderColor: token.color.selection,
-        }}
-      >
-        创建连线
-      </button>
-    </div>
-  );
-}
