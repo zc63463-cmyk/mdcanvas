@@ -181,12 +181,17 @@ export function FreeEdgeLayer({
         routeCacheRef.current = cache;
       }
     }
+    // R4-3②：失效（invalidAt）边退出路由协调——不占 stagger 档、不进
+    // routedPolylines（他人绕行/交叉罚分输入）、不参与跳线；自身仍路由并绘制（灰虚线）。
+    const inactiveKeys = new Set<string>();
     for (const edge of edges) {
       const eps = freeEdgeEndpoints(edge, boxOf, root, collapsed, resolveEndpoint);
       // 源锚未解析/端点盒缺失 → 不绘制（此前退化成指向世界原点的误导性直线）
       if (!eps.renderable) continue;
-      const seq = eps.toId === '' ? 0 : (staggerSeen.get(eps.toId) ?? 0);
-      if (eps.toId !== '') staggerSeen.set(eps.toId, seq + 1);
+      const inactive = edge.invalidAt !== undefined;
+      if (inactive) inactiveKeys.add(edge.key);
+      const seq = inactive ? 0 : (staggerSeen.get(eps.toId) ?? 0);
+      if (!inactive && eps.toId !== '') staggerSeen.set(eps.toId, seq + 1);
       // 按 id 排除两端自身卡片（动画期间坐标不可靠，见 obstacles 注释）；
       // G-P3：经预构建表排除（等价性：与 filter+map 逐项同序，测试钉死）；
       // G-P3b：大图时先索引粗筛（保守界推导见 obstacleTable.near 注释），收益不足（长边窗口≈全图）
@@ -202,7 +207,7 @@ export function FreeEdgeLayer({
         hit ??
         (edge.manual
           ? manualPathOf(edge, eps.from, eps.to)
-          : routeAesthetic(eps.from, eps.to, obs, routedPolylines, {
+          : routeAesthetic(eps.from, eps.to, obs, inactive ? [] : routedPolylines, {
               // 用户指定的绕行侧优先于评分自动选择（对标 markvault forceSide）
               ...(edge.routingSide ? { forceSide: edge.routingSide } : {}),
               // P0 · 平行入边错位（步长 = 盒边长 × 0.0625，最多 4 档防出盒内缩）
@@ -210,12 +215,17 @@ export function FreeEdgeLayer({
             }));
       if (!hit) cache?.lru.set(key, route);
       m.set(edge.key, { eps, route });
-      if (route.points.length >= 2) routedPolylines.push([...route.points]);
+      if (!inactive && route.points.length >= 2) routedPolylines.push([...route.points]);
     }
 
     // P2-1：动画/瞬态（fastRouting）跳过跨边交叉检测与 Line jumps——瞬态让步帧率。
     // 静态态行为与原实现逐位一致（applyLineJumps 抽出自下方的跳线块）。
-    return fastRouting ? m : applyLineJumps(m);
+    // R4-3②：失效边不参与跳线（不生弧、不收弧）——从输入集中剔除后合并回原条目。
+    if (fastRouting) return m;
+    if (inactiveKeys.size === 0) return applyLineJumps(m);
+    const activeOnly = new Map([...m].filter(([k]) => !inactiveKeys.has(k)));
+    const jumped = applyLineJumps(activeOnly);
+    return new Map([...jumped, ...[...m].filter(([k]) => inactiveKeys.has(k))]);
   }, [edges, boxOf, root, collapsed, fastRouting, resolveEndpoint, obstacleTable]);
 
   // Opp 精确翻转：把实际渲染结果抛给上层（含跨边交叉协调与 Line jumps 的最终 d）。
