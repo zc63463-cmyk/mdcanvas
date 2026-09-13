@@ -11,7 +11,12 @@
  */
 import { describe, expect, it } from 'vitest';
 import { makeEntityNode, makeTextNode } from '@mindcanvas/kernel';
-import { applySpanReplace, findEntityNodeId, parseTextLinks } from '../src/edit/textLinks.js';
+import {
+  applySpanReplace,
+  findEntityNodeId,
+  parseTextLinks,
+  preferredLinkAnchor,
+} from '../src/edit/textLinks.js';
 
 /** 测试树：根 → [任务 → A（cid:c1）, B] */
 function tree(): { root: ReturnType<typeof makeTextNode>; aId: string } {
@@ -265,5 +270,20 @@ describe('findEntityNodeId（实体锚 → 树中节点）', () => {
     const root = makeTextNode('根', [makeEntityNode({ kind: 'issue', id: '88' })]);
     expect(findEntityNodeId(root, '@issue:99')).toBeNull();
     expect(findEntityNodeId(root, '@issue:88#2')).toBeNull();
+  });
+});
+
+describe('preferredLinkAnchor（插入链接的首选锚，T-A7）', () => {
+  it('目标节点有 cid → 写 cid:（稳定身份）；无 cid → 用回退锚（路径）', () => {
+    const { root, aId } = tree();
+    expect(preferredLinkAnchor(root, aId, 'node:根/任务/A')).toBe('cid:c1');
+    const bNode = root.children[1];
+    if (!bNode) throw new Error('夹具解析失败：B 缺失');
+    expect(preferredLinkAnchor(root, bNode.id, 'node:根/B')).toBe('node:根/B');
+  });
+
+  it('nodeId 不在树中 → 回退锚原样', () => {
+    const { root } = tree();
+    expect(preferredLinkAnchor(root, 'no-such-id', 'node:根/B')).toBe('node:根/B');
   });
 });

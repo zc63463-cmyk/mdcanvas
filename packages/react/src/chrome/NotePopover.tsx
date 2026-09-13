@@ -18,10 +18,14 @@
  * 之前的"受控 + useEffect 同步外部文本"会让 textarea 实例在每次 props 变化时重建、
  * 焦点丢失 → 用户体验是"点击就消失"。
  */
-import { useEffect, useRef } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import type { EditableNode } from '@mindcanvas/kernel';
+import { preferredLinkAnchor } from '../edit/textLinks.js';
 import { CHROME } from '../theme/tokens.js';
 import type { TokenSet } from '../theme/types.js';
+import { collectNodeChoices } from './edgeEditorShared.js';
+import { EdgeAnchorPicker } from './EdgeAnchorPicker.js';
 import { QaEditor } from './QaEditor.js';
 import { TextLinkSpans } from './TextLinkSpans.js';
 
@@ -187,6 +191,46 @@ export function NotePopover({
 }: NotePopoverProps) {
   const taRef = useRef<HTMLTextAreaElement | null>(null);
   const rootRef = useRef<HTMLDivElement | null>(null);
+
+  // L3：插入链接（复用 EdgeAnchorPicker；textarea 光标处插入，T-A7 目标有 cid 优先写 cid:）
+  const [picker, setPicker] = useState(false);
+  const pickerRangeRef = useRef<{ start: number; end: number } | null>(null);
+  // 预览态（editing=false）零开销：不做全树候选收集
+  const choices = useMemo(
+    () => (editing && root ? collectNodeChoices(root) : []),
+    [editing, root],
+  );
+
+  /** L3：打开候选选择器（先记录光标区间——picker 过滤框的 autoFocus 会让 textarea 失焦） */
+  const openPicker = (): void => {
+    const ta = taRef.current;
+    pickerRangeRef.current =
+      ta === null
+        ? null
+        : { start: ta.selectionStart ?? ta.value.length, end: ta.selectionEnd ?? ta.value.length };
+    setPicker(true);
+  };
+
+  /** L3：候选选中 → 光标处插入 `[显示名](锚)`（锚取目标 cid 优先；显示名取路径末段） */
+  const insertLinkAt = (anchor: string): void => {
+    setPicker(false);
+    const ta = taRef.current;
+    if (ta === null) return;
+    const choice = choices.find((c) => c.anchor === anchor);
+    const labelText = (choice?.label ?? anchor).split(' / ').pop() ?? anchor;
+    const target =
+      root !== undefined && choice !== undefined
+        ? preferredLinkAnchor(root, choice.id, anchor)
+        : anchor;
+    const snippet = `[${labelText}](${target})`;
+    const pos = pickerRangeRef.current ?? { start: ta.value.length, end: ta.value.length };
+    const start = Math.min(pos.start, ta.value.length);
+    const end = Math.min(pos.end, ta.value.length);
+    ta.value = ta.value.slice(0, start) + snippet + ta.value.slice(end);
+    const caret = start + snippet.length;
+    ta.focus();
+    ta.setSelectionRange(caret, caret);
+  };
 
   const s = Number.isFinite(scale) && scale > 0 ? scale : 1;
   // 编辑态一律用屏幕浮窗：嵌入卡片是布局预留的固定矮槽（120 基线），装不下编辑器；
@@ -421,13 +465,31 @@ export function NotePopover({
       <div data-note-textarea style={textStyle}>
         <div
           style={{
-            color: CHROME.textMuted,
-            fontSize: fontPx,
-            fontWeight: 600,
+            display: 'flex',
+            alignItems: 'center',
             marginBottom: 4,
           }}
         >
-          正文
+          <span style={{ flex: 1, color: CHROME.textMuted, fontSize: fontPx, fontWeight: 600 }}>
+            正文
+          </span>
+          {editing && root !== undefined && (
+            <button
+              type="button"
+              data-insert-link
+              onClick={openPicker}
+              style={{
+                border: 'none',
+                background: 'transparent',
+                color: token.color.linkStroke,
+                cursor: 'pointer',
+                fontSize: fontMutedPx,
+                padding: '0 2px',
+              }}
+            >
+              插入链接
+            </button>
+          )}
         </div>
         {editing ? (
           <textarea
@@ -470,6 +532,14 @@ export function NotePopover({
           </div>
         )}
       </div>
+      {/* L3：候选选择器 portal 到 body —— 浮窗根有 transform（合成器层），
+          fixed 遮罩若留在浮窗内会被 transform 困住（遮罩只盖浮窗、点外面无法取消）。 */}
+      {picker &&
+        root !== undefined &&
+        createPortal(
+          <EdgeAnchorPicker choices={choices} onPick={insertLinkAt} onClose={() => setPicker(false)} />,
+          document.body,
+        )}
     </div>
   );
 }

@@ -1,8 +1,12 @@
 /** 固定 note 笔记：节点向下生长后填充其布局预留区。 */
-import { useRef } from 'react';
+import { useMemo, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import type { EditableNode } from '@mindcanvas/kernel';
+import { preferredLinkAnchor } from '../edit/textLinks.js';
 import { CHROME } from '../theme/tokens.js';
 import type { TokenSet } from '../theme/types.js';
+import { collectNodeChoices } from './edgeEditorShared.js';
+import { EdgeAnchorPicker } from './EdgeAnchorPicker.js';
 import { QaEditor } from './QaEditor.js';
 import { TextLinkSpans } from './TextLinkSpans.js';
 
@@ -56,6 +60,41 @@ export function NoteGrowthPanel({
   onJumpToAnchor,
 }: NoteGrowthPanelProps) {
   const textRef = useRef<HTMLTextAreaElement | null>(null);
+  // L3：插入链接（复用 EdgeAnchorPicker；textarea 光标处插入，T-A7 目标有 cid 优先写 cid:）
+  const [picker, setPicker] = useState(false);
+  const pickerRangeRef = useRef<{ start: number; end: number } | null>(null);
+  // 预览态（editing=false）零开销：不做全树候选收集
+  const choices = useMemo(
+    () => (editing && root ? collectNodeChoices(root) : []),
+    [editing, root],
+  );
+  const openPicker = (): void => {
+    const ta = textRef.current;
+    pickerRangeRef.current =
+      ta === null
+        ? null
+        : { start: ta.selectionStart ?? ta.value.length, end: ta.selectionEnd ?? ta.value.length };
+    setPicker(true);
+  };
+  const insertLinkAt = (anchor: string): void => {
+    setPicker(false);
+    const ta = textRef.current;
+    if (ta === null) return;
+    const choice = choices.find((c) => c.anchor === anchor);
+    const labelText = (choice?.label ?? anchor).split(' / ').pop() ?? anchor;
+    const target =
+      root !== undefined && choice !== undefined
+        ? preferredLinkAnchor(root, choice.id, anchor)
+        : anchor;
+    const snippet = `[${labelText}](${target})`;
+    const pos = pickerRangeRef.current ?? { start: ta.value.length, end: ta.value.length };
+    const start = Math.min(pos.start, ta.value.length);
+    const end = Math.min(pos.end, ta.value.length);
+    ta.value = ta.value.slice(0, start) + snippet + ta.value.slice(end);
+    const caret = start + snippet.length;
+    ta.focus();
+    ta.setSelectionRange(caret, caret);
+  };
   const s = scale;
   const stop = (e: React.SyntheticEvent): void => e.stopPropagation();
   const commitText = (): void => {
@@ -113,7 +152,19 @@ export function NoteGrowthPanel({
         ) : <span style={{ color: CHROME.textMuted }}>无序列</span>}
       </div>
       <div data-note-growth-text style={section}>
-        <div style={{ color: CHROME.textMuted, fontSize: CHROME.fontSizeSmall * s, fontWeight: 600, marginBottom: 3 * s }}>正文</div>
+        <div style={{ display: 'flex', alignItems: 'center', marginBottom: 3 * s }}>
+          <span style={{ flex: 1, color: CHROME.textMuted, fontSize: CHROME.fontSizeSmall * s, fontWeight: 600 }}>正文</span>
+          {editing && root !== undefined && (
+            <button
+              type="button"
+              data-insert-link
+              onClick={openPicker}
+              style={{ border: 'none', background: 'transparent', color: token.color.linkStroke, cursor: 'pointer', fontSize: CHROME.fontSizeSmall * s, padding: '0 2px' }}
+            >
+              插入链接
+            </button>
+          )}
+        </div>
         {editing ? (
           <textarea
             ref={textRef}
@@ -133,6 +184,13 @@ export function NoteGrowthPanel({
           </div>
         )}
       </div>
+      {/* L3：候选选择器 portal 到 body（面板根无 transform，但保持与 NotePopover 同款纪律） */}
+      {picker &&
+        root !== undefined &&
+        createPortal(
+          <EdgeAnchorPicker choices={choices} onPick={insertLinkAt} onClose={() => setPicker(false)} />,
+          document.body,
+        )}
     </div>
   );
 }

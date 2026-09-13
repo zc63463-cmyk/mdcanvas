@@ -240,3 +240,26 @@ export function findEntityNodeId(root: EditableNode, entityTarget: string): stri
   walk(root);
   return found;
 }
+
+/**
+ * 插入链接的首选锚（T-A7）：目标节点已有 cid → `cid:cX`（改名/移动天然跟随）；
+ * 无 cid → 回退锚原样（路径锚 / 实体锚，靠 L2 迁移跟随）。
+ * **不做全库补发**（T-A7 明确）：cid 只由升格/切断等显式事务分配。
+ */
+export function preferredLinkAnchor(
+  root: EditableNode,
+  nodeId: string,
+  fallback: string,
+): string {
+  let cid: string | null = null;
+  const walk = (n: EditableNode): boolean => {
+    if (n.id === nodeId) {
+      const c = n.note?.cid;
+      cid = typeof c === 'string' && c !== '' ? c : null;
+      return true;
+    }
+    return n.children.some(walk);
+  };
+  walk(root);
+  return cid === null ? fallback : `cid:${cid}`;
+}
