@@ -7,6 +7,21 @@
 > （09-05~09-06）与「图引擎适配 / 文件工作台」（09-10）等批次未单独标号，
 > 按完成时间归入对应段落末尾的「同批」小节。
 
+## [1.8.8] — 2026-09-13 · 编辑流保全（保存不再打断会话）
+
+**触发**：用户实测——每次编辑提交 / 新建节点后「页面回正刷新」：选中丢失、正在编辑的内容丢失，必须重新点节点。计划：`docs/dispatch/2026-09-13-edit-flow-session-integrity-plan.md`（因果链已定位到 file:line）。
+
+- **病根（保存 → 重建回读环）**：autosave 300ms 落盘后 `setDoc((d) => ({ ...d, source }))` 改写 `doc.source` → 数据管线按新 source 重解析（`buildEditable(doc.source)`，每次全量 parse + 重建节点 id）→ 文档重建 effect（deps `[doc.source]`）误触发：`controller.reset()` + 实体表重建 + 收起 QA + `fit()`（「页面回正」真身）。**四类损失**：选中 / 编辑中（editingId、descEditingId）/ Undo 历史 / 折叠态。
+- **E-1** `MindDoc.savedSource` 新增字段（「最近一次成功保存的内容快照」）+ 抽 `useAutoSave`（`apps/canvas/src/hooks/useAutoSave.ts`，纯搬迁）——保存写回改 `savedSource`，不再改写 `source`；判别测试 `useAutoSave.test.tsx`（写回口径 / dirty·handle·saved 三重早退 / unmount 清理，5 例）。
+- **E-2** 手动保存 / 另存为同口径：`useDocumentActions` 两处 setDoc 补丁改 `savedSource`；`remember()` 契约「传入即内容」不动（防 spread 残留旧值）；判别 +2 例。
+- **E-3** 抽 `useDocumentSwitch`（`apps/canvas/src/hooks/useDocumentSwitch.ts`，纯搬迁 B1 重建 effect）——文档切换语义单点化；判别测试双向钉：t1「仅 savedSource/ts/handle 变 → reset/setEntities/setExpandedQaId/fit 零调用」（防误触发）、t2「source 变 → 四动作各恰一次」（防删功能）。
+- **E-4** 连带口径：文档库 / 最近文档快照改读 `doc.savedSource ?? doc.source`（deps 同步）；`useAutoSave` / `useDocumentSwitch` / `MindmapStage` 加防回潮注释（保存路径不得改写 `doc.source`）。
+- **契约变更**：`source` 语义收敛为「本次会话打开 / 新建时的内容（解析输入）」；新增 `savedSource` 承担「最近一次成功保存的快照」；全部消费点一律 `savedSource ?? source`（新建文档首次保存前无该字段）。
+
+**验收**：kernel **480** / react **1093** / canvas **179** = **1752 全绿**（E 批 +9：useAutoSave 5 + useDocumentActions 2 + useDocumentSwitch 2）；tsc ×3 / react dist 重建 / depcruise（406 模块）零违规 / lint **1464 warnings + 46 infos**（搬迁段 useExhaustiveDependencies 警告以 `biome-ignore` 显式抑制——该段 deps 为刻意保留、原代码即带 `eslint-disable` 声明；全仓净降 17，exit 0）/ budget 全持平（bang 89/90、asCast 31/31、bigFiles 3/4——**MindmapStage 2269 → 2241 行**）；阈值 / 契约测试零放宽；`CULL_MARGIN` 未动。
+
+**判别性证据（两条阴性对照，DoD）**：① `useAutoSave` 写回改回 `source` → 判别用例红（`AssertionError: expected undefined to be 'SRC'`）；② `useDocumentSwitch` deps 改对象身份 `[doc]` → t1 红（`expected "vi.fn()" to not be called at all, but actually been called 1 times`，reset 误触发）；两者恢复后复跑全绿（7 passed）、`git diff` 为空。
+
 ## [1.8.7] — 2026-09-13 · 关系线 R4（能力补齐：菜单 / 反向 / 失效语义 / 级联 / 批量）
 
 **触发**：关系线能力面收尾——`reverseOf` 全仓零消费者、失效边静默吞新建并塑形他人、级联从未定义、无批量。计划：`docs/dispatch/2026-09-13-edge-r4-capabilities-plan.md`。
