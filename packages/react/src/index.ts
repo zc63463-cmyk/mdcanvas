@@ -379,6 +379,7 @@ export {
   edgeAnchorCandidates,
   findCrossings,
   inferBowSide,
+  inferBowSideFromPoints,
   pathWithJumps,
   pointClearance,
   polylineHitsObstacle,

@@ -50,6 +50,7 @@ export function EdgeEditor({
   x,
   y,
   currentD,
+  currentBowSide,
   onChange,
   onStyle,
   onInvalidate,
@@ -85,6 +86,13 @@ export function EdgeEditor({
    * Opp 按钮用它推断 auto 模式下算法实际选了哪一侧，才能精确翻到另一侧。
    */
   currentD?: string;
+  /**
+   * R5-1 补：鼓向的**首选来源** = 路由折线顶点推出的侧（宿主经 `RouteResult.points` 计算）。
+   * 与 currentD 的区别：d 可能含折线跳桥（其抬升会被读成鼓向），顶点不含桥 ——
+   * 「直线 + 跳线」必须判 'auto'（落 right 兜底），否则 Opp 会按跳线方向翻转（R5-1 形态漂移）。
+   * 缺省（旧调用方）→ 回落 currentD 字符串解析，行为不变。
+   */
+  currentBowSide?: 'left' | 'right' | 'auto';
   onChange: (patch: Partial<DocEdge>) => void;
   onStyle: (patch: EdgeStyle) => void;
   onDelete: () => void;
@@ -109,9 +117,9 @@ export function EdgeEditor({
   const invalidated = edge.invalidAt !== undefined;
   // Opp 一键反向：
   //   · routingSide 已设 → 翻转到另一侧（'left'↔'right'）
-  //   · auto（未设）→ 用 inferBowSide 从当前实际渲染路径推断鼓向，再翻到另一侧。
-  //     currentD 由上层把 FreeEdgeLayer 的真实路由结果透传而来（含跨边协调与 Line jumps），
-  //     比"照抄一份路由逻辑重算"可靠 —— 后者会漏掉这些影响而与实际渲染不一致。
+  //   · auto（未设）→ 推断当前鼓向再翻到另一侧：**首选 currentBowSide**（宿主由
+  //     路由折线顶点算出——跳线桥不进判定）；缺省回落 currentD 字符串解析
+  //     （由上层把 FreeEdgeLayer 的真实路由结果透传而来，兼容旧调用方与既有测试）。
   //   · 极端兜底：拿不到 currentD 或路径是直线（推断为 auto）→ 落到 'right'，
   //     之后再点即正常 toggle（与既有行为一致，不会卡死）。
   // R3-1：manual 锁定期间 routingSide/Opp 对渲染**永远不生效**（manual 优先于
@@ -120,7 +128,8 @@ export function EdgeEditor({
   const MANUAL_LOCKED_TITLE = '已锁定手工几何（manual）——双击 bend 恢复自动后方可设置绕行侧';
   const flipSide = () => {
     if (manualLocked) return;
-    const inferred = edge.routingSide ?? (currentD ? inferBowSide(currentD) : 'auto');
+    const inferred =
+      edge.routingSide ?? currentBowSide ?? (currentD ? inferBowSide(currentD) : 'auto');
     // R3-2：'auto' 兜底仍落 right，但给行内提示（不再静默）
     setAutoHint(inferred === 'auto');
     const opp: 'left' | 'right' = inferred === 'right' ? 'left' : 'right';

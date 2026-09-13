@@ -17,6 +17,7 @@ import {
   edgeAnchorCandidates,
   findCrossings,
   inferBowSide,
+  inferBowSideFromPoints,
   pathWithJumps,
   polylineHitsObstacle,
   routeAesthetic,
@@ -633,6 +634,60 @@ describe('inferBowSide：从路径 d 推断当前鼓向（Opp 的前置）', () 
     expect(inferBowSide(flipped.d)).toBe(opposite);
     // 且确实换了另一侧（不是原地不动）
     expect(flipped.d).not.toBe(auto.d);
+  });
+});
+
+describe('inferBowSideFromPoints：从路由顶点直接判向（跳线桥免疫）', () => {
+  it('两点直线 → auto；而同一条边的跳线 d 经字符串解析会按跳线方向落侧', () => {
+    const straight = [
+      { x: 0, y: 0 },
+      { x: 100, y: 0 },
+    ];
+    expect(inferBowSideFromPoints(straight)).toBe('auto');
+    // 记录两法差异（这就是 EdgeEditor 改走顶点的原因）：折线跳桥把 rise/fall 抬离弦
+    // radius，字符串 API 会把「跳线方向」读成鼓向（R5-1 已知形态事实）。
+    expect(inferBowSide(pathWithJumps(straight, [{ x: 50, y: 0 }], 5))).toBe('right');
+  });
+
+  it('三点弓形 → 与 inferBowSide 同约定（上弓 left / 下弓 right）', () => {
+    expect(
+      inferBowSideFromPoints([
+        { x: 0, y: 100 },
+        { x: 100, y: 60 },
+        { x: 200, y: 100 },
+      ]),
+    ).toBe('left');
+    expect(
+      inferBowSideFromPoints([
+        { x: 0, y: 100 },
+        { x: 100, y: 140 },
+        { x: 200, y: 100 },
+      ]),
+    ).toBe('right');
+  });
+
+  it('共线三点 / 顶点不足 / 退化弦 → auto', () => {
+    expect(
+      inferBowSideFromPoints([
+        { x: 0, y: 0 },
+        { x: 50, y: 0 },
+        { x: 100, y: 0 },
+      ]),
+    ).toBe('auto');
+    expect(
+      inferBowSideFromPoints([
+        { x: 0, y: 0 },
+        { x: 100, y: 0 },
+      ]),
+    ).toBe('auto');
+    expect(inferBowSideFromPoints([])).toBe('auto');
+    expect(
+      inferBowSideFromPoints([
+        { x: 0, y: 0 },
+        { x: 0, y: 0 },
+        { x: 0, y: 0 },
+      ]),
+    ).toBe('auto');
   });
 });
 

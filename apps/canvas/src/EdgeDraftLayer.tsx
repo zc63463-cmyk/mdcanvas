@@ -174,6 +174,7 @@ export function EdgeDraftLayer({
           x={edgeActions.edgeSel.x}
           y={edgeActions.edgeSel.y}
           currentD={edgeActions.selEdgeCurrentD}
+          currentBowSide={edgeActions.selEdgeBowSide}
           choices={edgeActions.nodeChoices}
           onReattach={(side, anchor) => {
             edgeActions.reattachEdge(selEdgeOpen.index, side, anchor);

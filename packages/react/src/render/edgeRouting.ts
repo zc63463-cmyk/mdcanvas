@@ -505,6 +505,39 @@ export function manualBezier(
 }
 
 /**
+ * R5-1 补：从**路由折线顶点**直接推断鼓向（`RouteResult.points`；EdgeEditor 的首选来源）。
+ *
+ * 为什么另开一条而不是继续解析 d：d 里可能有**折线跳桥**（pathWithJumps 注入 4 个顶点，
+ * 其中 rise/fall 离弦 = radius）——「完全无弓的直线 + 跳线」会被读成有侧（R5-1 形态漂移；
+ * 实测：同一条水平直线，桥 d → 'right'，顶点 → 'auto'）。
+ * 顶点来自路由结果（`applyLineJumps` 只改写 d、不改 points）→ 跳线桥天然不进判定。
+ *
+ * 约定与 `inferBowSide` 分支② 逐位一致：cross(弦, 顶点偏移) > 0 → 'right'；
+ * 顶点不足 3 / 共线 / 退化弦 → 'auto'。
+ */
+export function inferBowSideFromPoints(
+  points: readonly { x: number; y: number }[],
+): 'left' | 'right' | 'auto' {
+  if (points.length < 3) return 'auto';
+  const first = points[0];
+  const last = points[points.length - 1];
+  if (first === undefined || last === undefined) return 'auto';
+  const dx = last.x - first.x;
+  const dy = last.y - first.y;
+  if (Math.hypot(dx, dy) < 1e-6) return 'auto';
+  let best = 0;
+  for (let i = 1; i + 1 < points.length; i++) {
+    const p = points[i];
+    if (p === undefined) continue;
+    // 与 inferBowSide 分支① 同一款法向偏移符号约定：cross(弦, 顶点偏移) > 0 → right
+    const nOffset = (p.x - first.x) * -dy + (p.y - first.y) * dx;
+    if (Math.abs(nOffset) > Math.abs(best)) best = nOffset;
+  }
+  if (Math.abs(best) < 1e-6) return 'auto';
+  return best > 0 ? 'right' : 'left';
+}
+
+/**
  * 从 path d 推断连线当前鼓向：'left' / 'right' / 'auto'（无法判断时）。
  *
  * 用于「Opp」一键反向操作 —— 当 routingSide 未显式设置、靠算法自动选择时，
@@ -533,30 +566,11 @@ export function inferBowSide(d: string): 'left' | 'right' | 'auto' {
     if (Math.abs(nOffset) < 1e-6) return 'auto';
     return nOffset > 0 ? 'right' : 'left';
   }
-  // ② R3-2：多段路径（跳线 d = M…L 折线跳…L…；R5-1 起跳线为梯形桥、顶点离弦 ≤ radius）——
-  //    主体是 L 折线，跳线只是过障小桥（其法向是「跳」的方向，不代表连线整体鼓向），
-  //    故取【离首末弦最远的路径顶点】的偏移符号判定：弓形主体顶点（路由中点）必然主导；
-  //    跳线顶点只在完全无弓的直线上才会被选中（按跳线抬升方向落侧，非 'auto'）。
-  //    历史 C 形态路径（人工/旧数据）同样经 onPathPointsOf 落此分支；
-  //    三点共线 / 顶点不足 → 'auto'。
-  const pathPoints = onPathPointsOf(d);
-  if (pathPoints.length < 3) return 'auto';
-  const first = pathPoints[0];
-  const last = pathPoints[pathPoints.length - 1];
-  if (first === undefined || last === undefined) return 'auto';
-  const dx = last.x - first.x;
-  const dy = last.y - first.y;
-  if (Math.hypot(dx, dy) < 1e-6) return 'auto';
-  let best = 0;
-  for (let i = 1; i + 1 < pathPoints.length; i++) {
-    const p = pathPoints[i];
-    if (p === undefined) continue;
-    // 与 ① 同一款法向偏移符号约定：cross(弦, 顶点偏移) > 0 → right
-    const nOffset = (p.x - first.x) * -dy + (p.y - first.y) * dx;
-    if (Math.abs(nOffset) > Math.abs(best)) best = nOffset;
-  }
-  if (Math.abs(best) < 1e-6) return 'auto';
-  return best > 0 ? 'right' : 'left';
+  // ② R3-2 多段路径（折线主体 + 可能的跳线桥）——委托顶点版（R5-1 补）：
+  //    跳线桥不属于「鼓」（其顶点离弦仅 radius），桥在场时按**顶点**判定更准；
+  //    字符串里桥与主体的区分不可靠 —— 顶点集天然不含桥，见 inferBowSideFromPoints。
+  //    历史 C 形态路径（人工/旧数据）同样经 onPathPointsOf 落此分支。
+  return inferBowSideFromPoints(onPathPointsOf(d));
 }
 
 /** 从 path d 提取全部「在路径上」的点（M 起点 + L 端点 + C 端点；控制点不在路径上，剔除）。

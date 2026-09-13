@@ -572,6 +572,54 @@ describe('EdgeEditor Opp：跳线判定与 auto 兜底提示（R3-2）', () => {
     );
   }
 
+  /** R5-1 补：鼓向首选来源 = 路由顶点（`currentBowSide`）；字符串 d 仅作回落 */
+  function mountOppWithSide(
+    currentD: string,
+    currentBowSide: 'left' | 'right' | 'auto',
+    onChange: (p: unknown) => void,
+  ) {
+    return render(
+      <ThemeProvider>
+        <EdgeEditor
+          edge={oppEdge}
+          x={10}
+          y={10}
+          currentD={currentD}
+          currentBowSide={currentBowSide}
+          onChange={onChange}
+          onStyle={vi.fn()}
+          onInvalidate={vi.fn()}
+          onRestore={vi.fn()}
+          onDelete={() => undefined}
+          onClose={() => undefined}
+        />
+      </ThemeProvider>,
+    );
+  }
+
+  it('直线上带跳线：currentBowSide=auto 优先于 currentD → 落 right（auto 兜底，不按跳线方向翻转）', () => {
+    // 直线 + 折线跳桥：只看 d 会解析出 'right'（跳线方向）→ 落 left（R5-1 漂移）；
+    // 顶点法给 'auto' → 落 right（与 R5-1 之前的 auto 兜底行为一致）。
+    const bridgedStraight = pathWithJumps(
+      [
+        { x: 0, y: 100 },
+        { x: 200, y: 100 },
+      ],
+      [{ x: 100, y: 100 }],
+    );
+    const onChange = vi.fn();
+    const { container } = mountOppWithSide(bridgedStraight, 'auto', onChange);
+    fireEvent.click(q4('[data-edge-opp]', container));
+    expect(onChange).toHaveBeenCalledWith({ routingSide: 'right' });
+  });
+
+  it('currentBowSide 缺省（旧调用方）→ 回落 currentD 字符串解析（兼容钉）', () => {
+    const onChange = vi.fn();
+    const { container } = mountOpp(jumpedLeftD, onChange);
+    fireEvent.click(q4('[data-edge-opp]', container));
+    expect(onChange).toHaveBeenCalledWith({ routingSide: 'right' }); // 上弓 left → 翻 right
+  });
+
   it('跳线边点 Opp → routingSide 翻到另一侧（今天：恒落 right）', () => {
     const onChange = vi.fn();
     const { container } = mountOpp(jumpedLeftD, onChange);

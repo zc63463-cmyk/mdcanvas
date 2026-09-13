@@ -24,6 +24,7 @@ import {
   collectNodeChoices,
   edgesOf,
   findDuplicateEdge,
+  inferBowSideFromPoints,
   patchEdgeAt,
   removeEdgeAt,
   type DocEdge,
@@ -50,8 +51,13 @@ export interface EdgeActions {
   anchorById: Map<string, string>;
   /** 当前选中的边（含 index），未选为 null */
   selEdge: (FreeEdge & { index: number }) | null;
-  /** 选中边当前的实际路径 d（供 EdgeEditor 推断 auto 模式的鼓向） */
+  /** 选中边当前的实际路径 d（供 EdgeEditor 回落解析 / 诊断） */
   selEdgeCurrentD: string | undefined;
+  /**
+   * R5-1 补：选中边当前的鼓向（由**路由折线顶点**推断——跳线桥不进判定）。
+   * undefined = 未收到该 select 边的路由（或已换边）。Opp 的**首选来源**。
+   */
+  selEdgeBowSide: 'left' | 'right' | 'auto' | undefined;
   /** R3-4：选中边是否处于「指定侧无解 → 直穿降级」（值比较，同值不触发） */
   selEdgeForcedSideFallback: boolean;
   /** 选中态本身（key + 屏幕坐标） */
@@ -140,6 +146,12 @@ export function useEdgeActions(controller: EditorController): EdgeActions {
   const selEdgeKeyRef = useRef<string | null>(null);
   selEdgeKeyRef.current = selEdge?.key ?? null;
   const [selEdgeFallback, setSelEdgeFallback] = useState(false);
+  // R5-1 补：鼓向（顶点版）+ 所属边 key —— **按 key 门控**：换边后不得复用上一结论。
+  // 存三值枚举（不是顶点数组）：值比较可短路（与 selEdgeD 同款防重渲纪律）。
+  const [selEdgeBow, setSelEdgeBow] = useState<{
+    key: string;
+    side: 'left' | 'right' | 'auto';
+  } | null>(null);
   // R4-5：多选集合（空数组 = 未激活批量；单选 setEdgeSel 清空之）
   const [edgeMultiSel, setEdgeMultiSel] = useState<readonly string[]>([]);
   const handleEdgeRoutes = useCallback((routes: ReadonlyMap<string, EdgeRouteEntry>) => {
@@ -150,8 +162,17 @@ export function useEdgeActions(controller: EditorController): EdgeActions {
     // R3-4：与 selEdgeD 同款值比较——同值不 setState，掐断重渲死循环
     const fb = entry?.route.forcedSideFallback === true;
     setSelEdgeFallback((prev) => (prev === fb ? prev : fb));
+    // R5-1 补：鼓向取**顶点**（entry.route.points）——跳线只改写 d、不改 points，
+    // 桥的抬升不会被读成鼓向（直线 + 跳线 → 'auto'，与 R5-1 之前行为一致）。
+    const bow =
+      entry !== undefined && key !== null
+        ? { key, side: inferBowSideFromPoints(entry.route.points) }
+        : null;
+    setSelEdgeBow((prev) => (prev?.key === bow?.key && prev?.side === bow?.side ? prev : bow));
   }, []);
   const selEdgeCurrentD = selEdge ? selEdgeD : undefined;
+  const selEdgeBowSide =
+    selEdge !== null && selEdgeBow?.key === selEdge.key ? selEdgeBow.side : undefined;
   const selEdgeForcedSideFallback = selEdge !== null ? selEdgeFallback : false;
 
   const writeEdges = useCallback(
@@ -360,6 +381,7 @@ export function useEdgeActions(controller: EditorController): EdgeActions {
     anchorById,
     selEdge,
     selEdgeCurrentD,
+    selEdgeBowSide,
     edgeMultiSel,
     selEdgeForcedSideFallback,
     edgeSel,
