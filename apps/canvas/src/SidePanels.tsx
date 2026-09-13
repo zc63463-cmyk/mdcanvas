@@ -56,6 +56,10 @@ export interface SidePanelsProps {
   activeRefKey: string | null;
   /** 形状跟随 EntityGraphPanel 的 edges（用 ComponentProps 推导，避免依赖其内部类型名） */
   edgeItems: ComponentProps<typeof EntityGraphPanel>['edges'];
+  /** R2-3：重挂候选 + 行内动作（写路径归宿主 useEdgeActions，本组件不持有写逻辑） */
+  choices?: ComponentProps<typeof EntityGraphPanel>['choices'];
+  onReattachEdge?: ComponentProps<typeof EntityGraphPanel>['onReattachEdge'];
+  onDeleteEdge?: ComponentProps<typeof EntityGraphPanel>['onDeleteEdge'];
   /** 图库上传（P1-1）：上传按钮 / 面板拖拽 → 文件数组（上层经资产宿主入清单） */
   onUpload: (files: File[]) => void;
   /** 定位并选中节点（由调用方封装「收起快速注释展开态 + 画布定位」） */
@@ -72,6 +76,9 @@ export function SidePanels({
   relations,
   activeRefKey,
   edgeItems,
+  choices,
+  onReattachEdge,
+  onDeleteEdge,
   onUpload,
   onSelectNode,
   onClose,
@@ -171,6 +178,9 @@ export function SidePanels({
           edges={edgeItems}
           onFocusNode={onSelectNode}
           onClose={onClose}
+          choices={choices}
+          onReattachEdge={onReattachEdge}
+          onDeleteEdge={onDeleteEdge}
         />
       )}
     </>

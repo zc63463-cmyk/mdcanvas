@@ -24,6 +24,7 @@ import {
   edgesOf,
   findDuplicateEdge,
   patchEdgeAt,
+  removeEdgeAt,
   type DocEdge,
   type EdgeManual,
   type EdgeRouteEntry,
@@ -57,6 +58,8 @@ export interface EdgeActions {
   writeEdges: (edges: DocEdge[]) => void;
   /** R2-1：重挂指定边的指定端（唯一重挂写路径：writeEdges + patchEdgeAt；不动 invalidAt） */
   reattachEdge: (index: number, side: 'from' | 'to', anchor: string) => void;
+  /** R2-3：删除指定边（同一写路径：writeEdges + removeEdgeAt） */
+  deleteEdge: (index: number) => void;
   /** 写入「人工锁定」几何；null = 清空锁定恢复自动 */
   writeEdgeManual: (index: number, manual: EdgeManual | null) => void;
   /** 建边；同 from+to+rel 已存在则直接选中打开编辑器（防重叠双线） */
@@ -116,6 +119,13 @@ export function useEdgeActions(controller: EditorController): EdgeActions {
     [controller, writeEdges],
   );
 
+  const deleteEdge = useCallback(
+    (index: number): void => {
+      writeEdges(removeEdgeAt(edgesOf(controller.root.note), index));
+    },
+    [controller, writeEdges],
+  );
+
   const writeEdgeManual = useCallback(
     (index: number, manual: EdgeManual | null): void => {
       const cur = edgesOf(controller.root.note);
@@ -150,6 +160,7 @@ export function useEdgeActions(controller: EditorController): EdgeActions {
     writeEdges,
     writeEdgeManual,
     reattachEdge,
+    deleteEdge,
     connectEdge,
     handleEdgeRoutes,
   };

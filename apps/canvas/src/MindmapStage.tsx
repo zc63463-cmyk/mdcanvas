@@ -688,6 +688,9 @@ function StageContent({
       targetText: e.targetId ? textOf(e.targetId) : e.to,
       // R0-3：锚定三态透传 → 面板按状态分区（悬空/陈旧不再与正常行混排）
       state: e.state,
+      // R2-3：两端原始锚文本（重挂 picker 排除另一端防自关联）
+      from: e.from,
+      to: e.to,
       ...(e.invalidAt !== undefined ? { invalidAt: e.invalidAt } : {}),
       ...(e.source !== undefined ? { source: e.source } : {}),
     }));
@@ -2101,6 +2104,11 @@ function StageContent({
         relations={relations}
         activeRefKey={activeRefKey}
         edgeItems={edgeItems}
+        choices={edgeActions.nodeChoices}
+        onReattachEdge={(key, side, anchor) =>
+          edgeActions.reattachEdge(Number(key.slice(1)), side, anchor)
+        }
+        onDeleteEdge={(key) => edgeActions.deleteEdge(Number(key.slice(1)))}
         onUpload={(files) => {
           // P1-1 图库上传入口：按钮/面板拖拽 → 仅入图库清单（使用 = 点击资产插入）
           void (async () => {

@@ -270,3 +270,129 @@ describe('EntityGraphPanel 语义边区：按状态分组（R0-3）', () => {
     expect(container.querySelectorAll('[data-edge-group="dangling"]').length).toBe(0);
   });
 });
+
+describe('EntityGraphPanel 行内动作（R2-3）', () => {
+  /** 缺元素即抛错（替代 `!` 断言——新增代码零 lint 告警纪律） */
+  function qa(sel: string, root: ParentNode): Element {
+    const el = root.querySelector(sel);
+    if (el === null) throw new Error(`element not found: ${sel}`);
+    return el;
+  }
+
+  const actionEdges: EdgeListItem[] = [
+    {
+      key: 'e0',
+      rel: 'relates-to',
+      dir: 'fwd',
+      sourceId: 'n1',
+      sourceText: '任务',
+      targetId: 'n2',
+      targetText: '生活',
+      state: 'well-formed',
+      from: 'node:根/任务',
+      to: 'node:根/生活',
+    },
+    {
+      key: 'e1',
+      rel: 'relates-to',
+      dir: 'fwd',
+      sourceId: '',
+      sourceText: 'node:根/幽灵',
+      targetId: 'n2',
+      targetText: '生活',
+      state: 'dangling',
+      from: 'node:根/幽灵',
+      to: 'node:根/生活',
+    },
+    {
+      key: 'e2',
+      rel: 'causes',
+      dir: 'fwd',
+      sourceId: 'n1',
+      sourceText: '任务',
+      targetId: null,
+      targetText: 'node:根/坏',
+      state: 'stale',
+      from: 'node:根/任务',
+      to: 'node:根/坏',
+    },
+  ];
+
+  const pickerChoices = [
+    { id: 'n1', label: '任务', anchor: 'node:根/任务' },
+    { id: 'n2', label: '生活', anchor: 'node:根/生活' },
+  ];
+
+  it('缺省（不注入动作 props）→ 行内无重挂/删除按钮（向后兼容钉死）', () => {
+    const { container } = render(
+      <EntityGraphPanel
+        relations={[]}
+        edges={actionEdges}
+        onFocusNode={vi.fn()}
+        onClose={vi.fn()}
+      />,
+    );
+    expect(container.querySelector('[data-edge-reattach]')).toBeNull();
+    expect(container.querySelector('[data-edge-delete]')).toBeNull();
+  });
+
+  it('悬空行（源锚未解析）重挂端 = from：picker 打开 → 选题 → onReattachEdge(key,"from",anchor)', () => {
+    const onReattachEdge = vi.fn();
+    const { container } = render(
+      <EntityGraphPanel
+        relations={[]}
+        edges={actionEdges}
+        onFocusNode={vi.fn()}
+        onClose={vi.fn()}
+        choices={pickerChoices}
+        onReattachEdge={onReattachEdge}
+        onDeleteEdge={vi.fn()}
+      />,
+    );
+    fireEvent.click(qa('[data-edge-reattach="e1"]', container));
+    fireEvent.click(qa('[data-edge-anchor-option="node:根/任务"]', container));
+    expect(onReattachEdge).toHaveBeenCalledTimes(1);
+    expect(onReattachEdge).toHaveBeenCalledWith('e1', 'from', 'node:根/任务');
+  });
+
+  it('陈旧行（目标未解析）重挂端 = to；正常行无重挂但有删除', () => {
+    const onReattachEdge = vi.fn();
+    const { container } = render(
+      <EntityGraphPanel
+        relations={[]}
+        edges={actionEdges}
+        onFocusNode={vi.fn()}
+        onClose={vi.fn()}
+        choices={pickerChoices}
+        onReattachEdge={onReattachEdge}
+        onDeleteEdge={vi.fn()}
+      />,
+    );
+    fireEvent.click(qa('[data-edge-reattach="e2"]', container));
+    fireEvent.click(qa('[data-edge-anchor-option="node:根/生活"]', container));
+    expect(onReattachEdge).toHaveBeenCalledWith('e2', 'to', 'node:根/生活');
+    // 健康行：两端可解析 → 无重挂入口；删除入口仍在
+    expect(container.querySelector('[data-edge-reattach="e0"]')).toBeNull();
+    expect(container.querySelector('[data-edge-delete="e0"]')).not.toBeNull();
+  });
+
+  it('点删除 → onDeleteEdge(key) 且不触发行的 onFocusNode（stopPropagation）', () => {
+    const onDeleteEdge = vi.fn();
+    const onFocusNode = vi.fn();
+    const { container } = render(
+      <EntityGraphPanel
+        relations={[]}
+        edges={actionEdges}
+        onFocusNode={onFocusNode}
+        onClose={vi.fn()}
+        choices={pickerChoices}
+        onReattachEdge={vi.fn()}
+        onDeleteEdge={onDeleteEdge}
+      />,
+    );
+    fireEvent.click(qa('[data-edge-delete="e0"]', container));
+    expect(onDeleteEdge).toHaveBeenCalledTimes(1);
+    expect(onDeleteEdge).toHaveBeenCalledWith('e0');
+    expect(onFocusNode).not.toHaveBeenCalled();
+  });
+});
