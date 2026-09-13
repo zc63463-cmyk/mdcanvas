@@ -13,7 +13,7 @@ import { describe, expect, it } from 'vitest';
 import { LayoutCache, type LayoutResult } from '../src/layout/mindmap.js';
 import { layoutForest, type CenterSpec } from '../src/layout/forest.js';
 import { layoutIslands, projectIslands, type ValidatedCenterSpec } from '../src/layout/islands.js';
-import type { EditableNode } from '../src/tree/treeOps.js';
+import { updateNode, walkNodes, type EditableNode } from '../src/tree/treeOps.js';
 
 // ---------- C5 同款夹具 ----------
 
@@ -214,5 +214,179 @@ describe('F1：逐位等价基线（缓存开 vs 关闭；C5 矩阵 k×N）', ()
     const withCache2 = layoutForest(auto.specs, measure, collapsed, { cache, measureKey: 'K2' });
     const full2 = layoutForest(auto.specs, measure, collapsed);
     expectBitIdentical(withCache2, full2, 'all auto');
+  });
+});
+
+// ---------- F2：岛级缓存（未编辑岛零重算；非破坏式平移） ----------
+
+/** 非空取值辅助（测试内避免 `!`——lint 水位纪律） */
+function req<T>(v: T | undefined | null, msg: string): T {
+  if (v === undefined || v === null) throw new Error(`req 失败：${msg}`);
+  return v;
+}
+
+/** 计数 measure：记录被度量的节点 id——「未重算」的最强证据 = measure 零调用 */
+function countingMeasure(): {
+  measure: (n: EditableNode) => { w: number; h: number };
+  calls: string[];
+} {
+  const calls: string[] = [];
+  return {
+    calls,
+    measure: (n) => {
+      calls.push(n.id);
+      return measure(n);
+    },
+  };
+}
+
+/** 子树第一个最深叶子 */
+function deepLeaf(node: EditableNode): EditableNode {
+  let cur = node;
+  while (cur.children.length > 0) cur = req(cur.children[0], 'deepLeaf child');
+  return cur;
+}
+
+/** 子树全部 id */
+function subtreeIds(node: EditableNode): Set<string> {
+  const out = new Set<string>();
+  walkNodes(node, (n) => out.add(n.id));
+  return out;
+}
+
+describe('F2：岛级缓存（未编辑岛零重算；非破坏式平移）', () => {
+  it('★ 编辑最后一个岛 → 前序未编辑岛节点引用复用、其它岛零度量、全输出逐位等价', () => {
+    const root0 = buildTree(5);
+    const first = specsOf(root0, 3);
+    const collapsed = new Set<string>();
+    const cache = new LayoutCache();
+
+    const r1 = layoutForest(first.specs, measure, collapsed, { cache, measureKey: 'K' });
+    const byId1 = new Map(r1.nodes.map((n) => [n.node.id, n]));
+
+    // 编辑【最后一个中心】子树内最深叶子（文本加长 → 自身几何变化；
+    // 前序岛的 origin 不受影响：pos 岛 origin 恒定、rightMost 演进只看前序 bounds）
+    const picks = pickCenters(root0, 3);
+    const island3 = req(picks[2], '第 3 个中心');
+    const leaf = deepLeaf(island3);
+    const edited = updateNode(root0, leaf.id, { text: `${leaf.text ?? ''}#加长` });
+
+    const second = specsOf(edited, 3);
+    const spy = countingMeasure();
+    const r2 = layoutForest(second.specs, spy.measure, collapsed, { cache, measureKey: 'K' });
+    const byId2 = new Map(r2.nodes.map((n) => [n.node.id, n]));
+
+    // ① 未编辑岛（中心 1、2）节点引用复用（placedAt 命中 → 直接复用上次平移产物）
+    const ids1 = subtreeIds(req(first.specs[1], '中心 1').node);
+    const ids2 = subtreeIds(req(first.specs[2], '中心 2').node);
+    let checked = 0;
+    for (const id of [...ids1, ...ids2]) {
+      const b = byId1.get(id);
+      const a = byId2.get(id);
+      expect(a, `节点 ${id} 缺失`).toBeDefined();
+      expect(a, `未编辑岛节点 ${id} 应引用复用`).toBe(b);
+      checked += 1;
+    }
+    expect(checked).toBeGreaterThan(0);
+
+    // ② 编辑岛（中心 3）重算：引用必变
+    expect(byId2.get(island3.id), '编辑岛应重算（新对象）').not.toBe(byId1.get(island3.id));
+
+    // ③ 未编辑岛零度量：中心 1、2 中无一节点被重新 measure
+    for (const id of [...ids1, ...ids2]) {
+      expect(spy.calls.includes(id), `节点 ${id} 不应被重新度量`).toBe(false);
+    }
+
+    // ④ 全输出与无缓存路径逐位等价（编辑后的每一步都不得漂移）
+    const full = layoutForest(second.specs, measure, collapsed);
+    expectBitIdentical(r2, full, '编辑后（缓存开 vs 关）');
+  });
+
+  it('★ 幂等性：同文档连续 3 次（缓存开）输出逐位相同（坑 1 判别）', () => {
+    const root = buildTree(5);
+    const { specs } = specsOf(root, 3);
+    const collapsed = new Set<string>();
+    const cache = new LayoutCache();
+
+    const r1 = layoutForest(specs, measure, collapsed, { cache, measureKey: 'K' });
+    const r2 = layoutForest(specs, measure, collapsed, { cache, measureKey: 'K' });
+    const r3 = layoutForest(specs, measure, collapsed, { cache, measureKey: 'K' });
+
+    expectBitIdentical(r1, r2, '幂等 1→2');
+    expectBitIdentical(r2, r3, '幂等 2→3');
+  });
+
+  it('★ 编辑序列（20 步，pos 夹具）：每步缓存开/关逐位等价', () => {
+    let root = buildTree(5);
+    const leafIds = pickCenters(root, 3).map((c) => deepLeaf(c).id);
+    const collapsed = new Set<string>();
+    const cache = new LayoutCache();
+
+    for (let step = 0; step < 20; step++) {
+      const i = step % 3;
+      root = updateNode(root, req(leafIds[i], `第 ${i} 个叶子 id`), {
+        text: `step${step}-加长文本`,
+      });
+      const { specs } = specsOf(root, 3);
+      const inc = layoutForest(specs, measure, collapsed, { cache, measureKey: 'K' });
+      const full = layoutForest(specs, measure, collapsed);
+      expectBitIdentical(inc, full, `step ${step}`);
+    }
+  });
+
+  it('★ 编辑序列（8 步，无 pos 夹具）：前岛放大挤动后岛（place 重建路径），每步逐位等价', () => {
+    let root = buildTree(5);
+    const leafIds = pickCenters(root, 3).map((c) => deepLeaf(c).id);
+    const collapsed = new Set<string>();
+    const cache = new LayoutCache();
+
+    for (let step = 0; step < 8; step++) {
+      const i = step % 3;
+      root = updateNode(root, req(leafIds[i], `叶子 ${i}`), {
+        text: `s${step}-更长-文本-长-长-长`,
+      });
+      const { specs } = specsOf(root, 3, { pos: false });
+      const inc = layoutForest(specs, measure, collapsed, { cache, measureKey: 'K' });
+      const full = layoutForest(specs, measure, collapsed);
+      expectBitIdentical(inc, full, `auto step ${step}`);
+    }
+  });
+
+  it('折叠集引用变化 → 整体重算且逐位等价（契约：身份比较）', () => {
+    const root = buildTree(5);
+    const { specs } = specsOf(root, 3);
+    const cache = new LayoutCache();
+    const c1 = new Set<string>();
+    layoutForest(specs, measure, c1, { cache, measureKey: 'K' });
+
+    const inner = req(pickCenters(root, 3)[1], '中心 2').children[0];
+    const c2 = new Set<string>(inner ? [inner.id] : []);
+    const spy = countingMeasure();
+    const inc = layoutForest(specs, spy.measure, c2, { cache, measureKey: 'K' });
+    const full = layoutForest(specs, measure, c2);
+    expectBitIdentical(inc, full, '折叠变化');
+
+    // 整体重算：此前在缓存里的未编辑岛节点也被重新度量
+    const ids1 = subtreeIds(req(specs[1], '中心 1').node);
+    expect(
+      [...ids1].some((id) => spy.calls.includes(id)),
+      '折叠集换引用后未编辑岛也应重算',
+    ).toBe(true);
+  });
+
+  it('measureKey 变化 → 整体重算且逐位等价', () => {
+    const root = buildTree(5);
+    const { specs } = specsOf(root, 3);
+    const cache = new LayoutCache();
+    const collapsed = new Set<string>();
+    layoutForest(specs, measure, collapsed, { cache, measureKey: 'K1' });
+
+    const spy = countingMeasure();
+    const inc = layoutForest(specs, spy.measure, collapsed, { cache, measureKey: 'K2' });
+    const full = layoutForest(specs, measure, collapsed);
+    expectBitIdentical(inc, full, '度量键变化');
+
+    const ids2 = subtreeIds(req(specs[2], '中心 2').node);
+    expect([...ids2].some((id) => spy.calls.includes(id))).toBe(true);
   });
 });

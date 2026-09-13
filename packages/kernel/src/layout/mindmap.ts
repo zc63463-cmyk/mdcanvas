@@ -55,6 +55,25 @@ export const H_GAP = 64;
 export const V_GAP = 14;
 
 /**
+ * 森林岛级缓存条目（F2 岛级缓存）：一个岛的**局部**布局产物。
+ *
+ * ⚠️ 非破坏式契约（坑 1）：`local` 永远保持「未平移」形态——合并期由 forest 产出
+ * 平移副本（`placed`），岛屿平移**不得**回写 local；否则原地累加 + 跨调用复用
+ * = 几何逐次漂移。`placed` 记录上次平移的落点（placedAt 守卫）与产物：
+ * 落点相同 → 直接引用复用；不同 → 从 local 重建（纯函数，无累加）。
+ */
+export interface ForestIslandEntry {
+  /** 岛方向（缓存键的一部分：同岛根换方向 → 重算） */
+  dir: GrowDir;
+  /** 局部布局结果（根中心在局部原点附近；**永不被平移污染**） */
+  local: LayoutResult;
+  /** 有效方向回填（岛级产物——合并期重建连线要用；漏缓存则线型漂移） */
+  dirSink: Map<string, GrowDir>;
+  /** 上次平移产物 + 落点（placedAt 守卫：at 相同 → 引用复用，零分配） */
+  placed: { at: { x: number; y: number }; result: LayoutResult } | null;
+}
+
+/**
  * 增量布局缓存（M5-T6）：按 EditableNode 身份缓存「子树高度 / 已构建子树 / 放置戳」。
  * 前置契约（调用方保证，违反只影响提速、不影响正确性——结果恒等于全量）：
  * - collapsedIds 集合对象身份变化（任何折叠增删）→ 须传入新 cache 或调 reset()
@@ -73,6 +92,8 @@ export class LayoutCache {
   collects = new WeakMap<LayoutNode, { nodes: LayoutNode[]; links: LinkGeometry[] }>();
   /** 子树包围盒缓存（放置重放时失效） */
   bounds = new WeakMap<LayoutNode, { minX: number; minY: number; maxX: number; maxY: number }>();
+  /** 森林岛级缓存（F2）：岛根 EditableNode 身份 → 条目列表（按 dir 区分，通常 1 条） */
+  forestIslands = new WeakMap<EditableNode, ForestIslandEntry[]>();
   /** 缓存有效键 */
   collapsedKey: Set<string> | null = null;
   measureKey: string | null = null;
@@ -83,6 +104,7 @@ export class LayoutCache {
     this.stamps = new WeakMap();
     this.collects = new WeakMap();
     this.bounds = new WeakMap();
+    this.forestIslands = new WeakMap();
     this.collapsedKey = null;
     this.measureKey = null;
   }

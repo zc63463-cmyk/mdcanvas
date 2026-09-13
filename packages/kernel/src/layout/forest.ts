@@ -14,6 +14,7 @@
 import type { EditableNode } from '../tree/treeOps.js';
 import {
   layoutBounds,
+  type ForestIslandEntry,
   type GrowDir,
   type LayoutCache,
   type LayoutResult,
@@ -103,25 +104,35 @@ export function layoutForest(
   // ① 局部布局 + 记录每棵子树的局部包围盒（自动排列用真实 bounds，不再只用宽度）
   //    D2′ 接线：岛内也要支持「思想分叉」——走分支布局（注入 islandDir=岛方向）；
   //    无 note.dir 声明时 layoutMindmapBranched 内部逐像素回退经典布局，零行为变更。
+  //
+  //    F2 岛级缓存：键 = 岛根**对象身份** + dir（collapsedKey/measureKey 已在入口统一校验）。
+  //    身份键的可靠性（§1.4）：不可变编辑只重建到编辑点为止的祖先链 + 投影复用未变节点壳
+  //    ⇒ 编辑岛 I 内任一节点 → I 的投影岛根换壳（miss → 重算）；其它岛岛根身份不变（命中）。
+  //    已知边界：投影壳易位（如根岛/含嵌套升格的岛每次投影换新壳）→ 恒 miss 重算——
+  //    只影响提速、不影响正确性。
   const local = centers.map((spec) => {
-    // 方向结论回填：平移后重建连线要用同一份（显式声明 → 跟随显式父 → 基线反推）
+    const entries = cache?.forestIslands.get(spec.node);
+    const hit = entries?.find((e) => e.dir === spec.dir);
+    if (hit) return { spec, res: hit.local, dirSink: hit.dirSink, entry: hit };
+
     const dirSink = new Map<string, GrowDir>();
     const res = layoutMindmapBranched(spec.node, measure, collapsedIds, {
       islandDir: spec.dir,
       // 回退沿用岛内原四向布局（整棵朝该方向），保证无 note.dir 时零行为变更
       fallback: LAYOUT_BY_DIR[spec.dir],
       dirSink,
-      // F 批通道：cache / measureKey 透传到岛内布局调用面（分支路径暂不消费——
-      // 岛内缓存的消费点随 F2/F3 接入；此透传保证通道单一来源，不在调用侧散落）。
+      // 通道：cache / measureKey 透传到岛内布局调用面（分支路径暂不消费——
+      // 岛内缓存的消费点随 F3 接入；此透传保证通道单一来源，不在调用侧散落）。
       cache,
       measureKey: opts.measureKey,
     });
-    return {
-      spec,
-      res,
-      dirSink,
-      root: res.nodes.find((n) => n.parentId === null) ?? null,
-    };
+    const entry: ForestIslandEntry = { dir: spec.dir, local: res, dirSink, placed: null };
+    if (cache) {
+      const list = cache.forestIslands.get(spec.node);
+      if (list) list.push(entry);
+      else cache.forestIslands.set(spec.node, [entry]);
+    }
+    return { spec, res, dirSink, entry };
   });
 
   // ② 确定落点：有 pos 用 pos；无 pos 则**按真实包围盒**向右错开。
@@ -147,26 +158,68 @@ export function layoutForest(
     }
   }
 
-  // ③ 平移（令中心节点中心落在 origin）+ 重建 links + 合并
+  // ③ 合并：从**局部产物**产出平移副本（非破坏式——缓存条目永不被平移污染；
+  //    原地累加 + 跨调用复用 = 几何逐次漂移，坑 1）。
+  //    placedAt 守卫：落点与上次一致 → 直接复用上次平移产物（引用复用，零分配）；
+  //    否则从 local 重建（纯函数，无累加）。
   const nodes: LayoutNode[] = [];
   const links: LinkGeometry[] = [];
   local.forEach((item, i) => {
     const origin = origins[i] ?? { x: 0, y: 0 };
-    const root = item.root;
-    // 局部布局中「根节点中心」的位置 → 需要平移到 origin
-    const rcx = root ? root.box.x + root.box.w / 2 : 0;
-    const rcy = root ? root.box.y + root.box.h / 2 : 0;
-    const dx = origin.x - rcx;
-    const dy = origin.y - rcy;
-    for (const n of item.res.nodes) {
-      n.box.x += dx;
-      n.box.y += dy;
+    const entry = item.entry;
+    const placed = entry.placed;
+    if (placed && placed.at.x === origin.x && placed.at.y === origin.y) {
+      nodes.push(...placed.result.nodes);
+      links.push(...placed.result.links);
+      return;
     }
-    nodes.push(...item.res.nodes);
-    if (root) links.push(...islandLinks(root, item.spec.dir, item.dirSink));
+    const shifted = shiftIsland(item.res, origin, item.spec.dir, item.dirSink);
+    entry.placed = { at: { x: origin.x, y: origin.y }, result: shifted };
+    nodes.push(...shifted.nodes);
+    links.push(...shifted.links);
   });
 
   return { nodes, links, bounds: layoutBounds(nodes) };
+}
+
+/**
+ * 岛合并期平移（非破坏式）：从**局部产物**产出平移副本 + 重建岛内连线。
+ *
+ * 为什么重建 links：path 字符串内含绝对坐标，平移节点盒会让连线留在原地——
+ * 必须按平移后的世界坐标重算（岛内线型按 dirSink 有效方向选，见 islandLinks）。
+ *
+ * 为什么不原地平移：局部产物被岛级缓存跨调用持有；原地累加会让第二次平移基于
+ * 已平移的盒再加 delta（几何逐次漂移）。本函数对 local 零写入。
+ */
+function shiftIsland(
+  local: LayoutResult,
+  origin: { x: number; y: number },
+  dir: GrowDir,
+  dirSink: ReadonlyMap<string, GrowDir>,
+): LayoutResult {
+  const root = local.nodes.find((n) => n.parentId === null) ?? null;
+  if (!root) return emptyResult();
+  // 局部布局中「根节点中心」的位置 → 需要平移到 origin
+  const dx = origin.x - (root.box.x + root.box.w / 2);
+  const dy = origin.y - (root.box.y + root.box.h / 2);
+  const shiftedRoot = shiftTree(root, dx, dy);
+  // 前序收集（与 local.nodes 同序：同一棵树、同一遍历方式）
+  const nodes: LayoutNode[] = [];
+  const collect = (ln: LayoutNode): void => {
+    nodes.push(ln);
+    ln.children.forEach(collect);
+  };
+  collect(shiftedRoot);
+  return { nodes, links: islandLinks(shiftedRoot, dir, dirSink), bounds: layoutBounds(nodes) };
+}
+
+/** 平移副本树（全新对象；对源树零写入） */
+function shiftTree(ln: LayoutNode, dx: number, dy: number): LayoutNode {
+  return {
+    ...ln,
+    box: { x: ln.box.x + dx, y: ln.box.y + dy, w: ln.box.w, h: ln.box.h },
+    children: ln.children.map((c) => shiftTree(c, dx, dy)),
+  };
 }
 
 /**
