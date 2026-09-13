@@ -9,6 +9,7 @@ import {
   annotateTree,
   bezierLink,
   buildLayoutTree,
+  collectCached,
   collectLayout,
   H_GAP,
   isGrowDir,
@@ -16,7 +17,7 @@ import {
   layoutBounds,
   orgBeamLink,
   orgBeamLinkUp,
-  placeSubtree,
+  placeSubtreeIncremental,
   subtreeHeightCached,
   V_GAP,
   type LayoutCache,
@@ -55,7 +56,27 @@ function subtreeWidth(ln: LayoutNode): number {
   return Math.max(ln.box.w, cw);
 }
 
-function placeOrg(ln: LayoutNode, cx: number, y: number, dir: 1 | -1): void {
+/**
+ * 增量放置（F3）：放置参数 (dir, cx, y) 与上次一致 → 跳过整棵（坐标是参数的确定性
+ * 函数）；否则重放并失效该子树的 collects/bounds。首次全 miss 时与 placeOrg 逐式
+ * 相同（输出逐位一致）。
+ *
+ * stamps 借位（{side, top, xEdge} = {dir, cx, y}）：org 树对象（构建 side=0）与
+ * logic/mindmap 族（side=±1）在 cache.nodes 上因 side 不匹配而互不命中——
+ * stamps 槽、collects 槽天然按对象隔离，不存在跨族混读。
+ */
+function placeOrgIncremental(
+  ln: LayoutNode,
+  cx: number,
+  y: number,
+  dir: 1 | -1,
+  cache: LayoutCache | undefined,
+): void {
+  const prev = cache?.stamps.get(ln);
+  if (prev && prev.side === dir && prev.top === cx && prev.xEdge === y) return;
+  // 实际重放 → 该子树收集/包围盒缓存失效（盒坐标变了）
+  cache?.collects.delete(ln);
+  cache?.bounds.delete(ln);
   ln.box.x = cx - ln.box.w / 2;
   ln.box.y = y;
   if (ln.children.length > 0) {
@@ -65,24 +86,29 @@ function placeOrg(ln: LayoutNode, cx: number, y: number, dir: 1 | -1): void {
     const childY = y + dir * (ln.box.h + V_GAP);
     let x = cx - total / 2;
     for (const c of ln.children) {
-      placeOrg(c, x + subtreeWidth(c) / 2, childY, dir);
+      placeOrgIncremental(c, x + subtreeWidth(c) / 2, childY, dir, cache);
       x += subtreeWidth(c) + SUB_GAP;
     }
   }
+  cache?.stamps.set(ln, { side: dir, top: cx, xEdge: y });
 }
 
 /**
  * 组织架构布局（G6′：支持 direction，1 = 自顶向下 / -1 = 自底向上）。
  * 缺省 1，与既有行为逐位一致。
+ *
+ * F3：接 LayoutCache 增量原语（编辑局部化——未受影响子树不 measure/不重放/links 复用）。
  */
 export function layoutOrg(
   root: EditableNode,
   measure: MeasureFn,
   collapsedIds: Set<string>,
   direction: 1 | -1 = 1,
+  opts: { cache?: LayoutCache; measureKey?: string } = {},
 ): LayoutResult {
-  const tree = annotateTree(buildLayoutTree(root, measure, collapsedIds), 0, null);
-  placeOrg(tree, 0, 0, direction);
+  const cache = opts.cache;
+  const tree = buildSkeletonCached(root, measure, collapsedIds, cache, 0, 0, null, false);
+  placeOrgIncremental(tree, 0, 0, direction, cache);
   const link: LinkBuilder =
     direction > 0
       ? (p, c) =>
@@ -97,7 +123,7 @@ export function layoutOrg(
             c,
             (p.box.y + Math.max(...p.children.map((k) => k.box.y + k.box.h))) / 2,
           );
-  const { nodes, links } = collectLayout(tree, link);
+  const { nodes, links } = collectCached(tree, cache, link);
   return { nodes, links, bounds: layoutBounds(nodes) };
 }
 
@@ -182,29 +208,95 @@ export function layoutFishbone(
 
 // ---------- logic：单侧逻辑图（全部同侧延伸；direction=1 右 / -1 左） ----------
 
+/**
+ * 缓存感知的骨架构建（F3）：与 buildLayoutTree 同形，但按 `side/depth/parentId`
+ * 命中复用 cache.nodes（子树未变 → 整棵复用：跳过 measure 与递归）。
+ * 直接用最终语义的 depth/parentId 构建（logic/org 不再需要 annotateTree 二次重建）。
+ *
+ * - 根由调用方直接构建（useCache=false：side=0 的根侧向与「根文本」必测，每次新建；
+ *   其子层起走本函数并做命中检查）——与 layoutMindmap「rootNode 不入缓存」惯例一致。
+ * - 域隔离：logic 构建 side=±1（direction）、org 构建 side=0——同一 EditableNode 的
+ *   cache.nodes 槽位被异族写入时因 side 不匹配而重建（miss 安全，见 F3 报告）。
+ */
+function buildSkeletonCached(
+  node: EditableNode,
+  measure: MeasureFn,
+  collapsedIds: Set<string>,
+  cache: LayoutCache | undefined,
+  side: -1 | 0 | 1,
+  depth: number,
+  parentId: string | null,
+  /** 是否查/写缓存（根 = false；子树 = true） */
+  useCache: boolean,
+): LayoutNode {
+  if (useCache && cache) {
+    const cached = cache.nodes.get(node);
+    if (cached && cached.side === side && cached.depth === depth && cached.parentId === parentId) {
+      return cached;
+    }
+  }
+  const m = measure(node);
+  const children: LayoutNode[] = !collapsedIds.has(node.id)
+    ? node.children.map((c) =>
+        buildSkeletonCached(c, measure, collapsedIds, cache, side, depth + 1, node.id, useCache),
+      )
+    : [];
+  const ln: LayoutNode = {
+    node,
+    box: { x: 0, y: 0, w: m.w, h: m.h },
+    side,
+    depth,
+    parentId,
+    children,
+  };
+  if (useCache && cache) cache.nodes.set(node, ln);
+  return ln;
+}
+
+/**
+ * 单侧逻辑图（全部同侧延伸；direction=1 右 / -1 左）。
+ *
+ * F3：接 LayoutCache 增量原语——根每次新建（side=0，与旧输出逐位一致）、
+ * 子树层按方向命中复用（未变分支零 measure）；放置走 placeSubtreeIncremental
+ * （参数不变子树整棵跳过）、收集走 collectCached（links 复用）。
+ */
 export function layoutLogic(
   root: EditableNode,
   measure: MeasureFn,
   collapsedIds: Set<string>,
   direction: 1 | -1,
+  opts: { cache?: LayoutCache; measureKey?: string } = {},
 ): LayoutResult {
-  const tree = annotateTree(buildLayoutTree(root, measure, collapsedIds), 0, null);
-  tree.box.x = -tree.box.w / 2;
-  tree.box.y = -tree.box.h / 2;
-  const forceSide = (ln: LayoutNode): void => {
-    ln.side = direction;
-    for (const c of ln.children) forceSide(c);
+  const cache = opts.cache;
+  // 根：手工构建（side=0、居中定位——与旧路径逐位一致）；不查/不写缓存
+  const rootM = measure(root);
+  const tree: LayoutNode = {
+    node: root,
+    box: { x: -rootM.w / 2, y: -rootM.h / 2, w: rootM.w, h: rootM.h },
+    side: 0,
+    depth: 0,
+    parentId: null,
+    children: !collapsedIds.has(root.id)
+      ? root.children.map((c) =>
+          buildSkeletonCached(c, measure, collapsedIds, cache, direction, 1, root.id, true),
+        )
+      : [],
   };
-  for (const c of tree.children) forceSide(c);
   const total =
     tree.children.reduce((s, c) => s + subtreeHeightCached(c), 0) +
     V_GAP * Math.max(0, tree.children.length - 1);
   let cursor = -total / 2;
   for (const child of tree.children) {
-    placeSubtree(child, direction, cursor, direction > 0 ? tree.box.x + tree.box.w : tree.box.x);
+    placeSubtreeIncremental(
+      child,
+      direction,
+      cursor,
+      direction > 0 ? tree.box.x + tree.box.w : tree.box.x,
+      cache,
+    );
     cursor += subtreeHeightCached(child) + V_GAP;
   }
-  const { nodes, links } = collectLayout(tree);
+  const { nodes, links } = collectCached(tree, cache);
   return { nodes, links, bounds: layoutBounds(nodes) };
 }
 
@@ -258,11 +350,19 @@ export interface BranchLayoutOptions {
    * 岛内必须传 LAYOUT_BY_DIR[dir]——岛内原语义是「整棵朝该方向生长」，
    * 与经典 mindmap 的左右平衡不同（接线实测：直接回退 layoutMindmap 会破坏
    * forest 四向生长测试）。
+   *
+   * F3：第 4 参透传缓存选项——岛内经典布局（layoutLogic/layoutOrg）接
+   * LayoutCache 增量原语（编辑局部化）；实现为加法参数，旧调用方零改动。
    */
-  fallback?: (r: EditableNode, m: MeasureFn, c: Set<string>) => LayoutResult;
-  /** 增量缓存（透传 layoutMindmap 回退路径；分支路径为全量，忽略缓存命中） */
+  fallback?: (
+    r: EditableNode,
+    m: MeasureFn,
+    c: Set<string>,
+    opts?: { cache?: LayoutCache; measureKey?: string },
+  ) => LayoutResult;
+  /** 增量缓存（F3：透传回退路径/基准；分支路径自身步骤仍为全量） */
   cache?: LayoutCache;
-  /** 度量语义键（透传回退路径） */
+  /** 度量语义键（透传回退路径/基准） */
   measureKey?: string;
   /**
    * 碰撞消解参数（缺省启用默认值）。传 `false` 关闭——仅供对照测试

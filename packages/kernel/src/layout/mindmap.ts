@@ -55,12 +55,10 @@ export const H_GAP = 64;
 export const V_GAP = 14;
 
 /**
- * 森林岛级缓存条目（F2 岛级缓存）：一个岛的**局部**布局产物。
- *
- * ⚠️ 非破坏式契约（坑 1）：`local` 永远保持「未平移」形态——合并期由 forest 产出
- * 平移副本（`placed`），岛屿平移**不得**回写 local；否则原地累加 + 跨调用复用
- * = 几何逐次漂移。`placed` 记录上次平移的落点（placedAt 守卫）与产物：
- * 落点相同 → 直接引用复用；不同 → 从 local 重建（纯函数，无累加）。
+ * 森林岛级缓存条目（F2）：一个岛的**局部**布局产物。
+ * 非破坏式契约（坑 1）：`local` 永保「未平移」形态——岛屿平移只能由 forest 产出
+ * 平移副本（`placed`），**不得**回写 local（原地累加 + 跨调用复用 = 几何逐次漂移）。
+ * `placed` 记上次落点与产物：落点相同 → 引用复用；不同 → 从 local 重建（无累加）。
  */
 export interface ForestIslandEntry {
   /** 岛方向（缓存键的一部分：同岛根换方向 → 重算） */
@@ -250,19 +248,25 @@ export function layoutMindmap(
   return { nodes, links, bounds };
 }
 
-/** 增量收集：子树未变（放置未重放）→ 直接取缓存的前序/连线；否则递归收集并缓存 */
-function collectCached(
+/**
+ * 增量收集：子树未变（放置未重放）→ 直接取缓存的前序/连线；否则递归收集并缓存。
+ * 导出（F3）：岛内经典布局复用——links 构造器经 `link` 注入（默认 bezierLink 与
+ * layoutMindmap 逐位相同；layoutOrg 传 orgBeam）。同一 LayoutNode 的 collects 槽
+ * 由所属布局族决定；**域隔离靠对象**（构建期 side：logic=±1 / org=0 / mindmap=分区）。
+ */
+export function collectCached(
   ln: LayoutNode,
   cache: LayoutCache | undefined,
+  link: LinkBuilder = bezierLink,
 ): { nodes: LayoutNode[]; links: LinkGeometry[] } {
   const hit = cache?.collects.get(ln);
   if (hit) return hit;
   const nodes: LayoutNode[] = [ln];
   const links: LinkGeometry[] = [];
   for (const c of ln.children) {
-    const cc = collectCached(c, cache);
+    const cc = collectCached(c, cache, link);
     for (const n of cc.nodes) nodes.push(n);
-    links.push({ path: bezierLink(ln, c), depth: ln.depth, fromId: ln.node.id, toId: c.node.id });
+    links.push({ path: link(ln, c), depth: ln.depth, fromId: ln.node.id, toId: c.node.id });
     for (const l of cc.links) links.push(l);
   }
   const result = { nodes, links };
@@ -294,10 +298,13 @@ function boundsOf(
 }
 
 /**
- * 增量放置：放置参数（side/top/xEdge）与上次一致 → 跳过整棵（坐标是这些参数的确定性函数）；
+ * 增量放置：放置参数（side/top/xEdge）与上次一致 → 跳过整棵（坐标是参数的确定性函数）；
  * 否则递归重放——子节点同样按戳跳过，改变路径之外的兄弟保持原位。
+ * 导出（F3）：layoutLogic 语义与 layoutMindmap 逐式相同直接复用；layoutOrg 经
+ * placeOrgIncremental 借 stamps 槽——「同参数 ⇒ 盒=f(参数)」不变量 + 对象域隔离
+ * （构建 side=0 vs ±1）保证跨族不混读。
  */
-function placeSubtreeIncremental(
+export function placeSubtreeIncremental(
   ln: LayoutNode,
   side: -1 | 1,
   top: number,

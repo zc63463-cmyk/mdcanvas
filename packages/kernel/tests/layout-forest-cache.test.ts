@@ -389,4 +389,130 @@ describe('F2：岛级缓存（未编辑岛零重算；非破坏式平移）', ()
     const ids2 = subtreeIds(req(specs[2], '中心 2').node);
     expect([...ids2].some((id) => spy.calls.includes(id))).toBe(true);
   });
+
+  it('岛方向变化（spec.dir 改）→ 该岛重算且逐位等价（岛键含方向）', () => {
+    const root = buildTree(4);
+    const a = specsOf(root, 2);
+    const cache = new LayoutCache();
+    const collapsed = new Set<string>();
+    layoutForest(a.specs, measure, collapsed, { cache, measureKey: 'K' });
+
+    // 第 2 个升格岛的 dir：right → down（同岛根、换方向）
+    const mutated = a.specs.map((s, i) =>
+      i === 2 ? { node: s.node, dir: 'down' as const, ...(s.pos ? { pos: s.pos } : {}) } : s,
+    );
+    const inc = layoutForest(mutated, measure, collapsed, { cache, measureKey: 'K' });
+    const full = layoutForest(mutated, measure, collapsed);
+    expectBitIdentical(inc, full, 'dir 变化');
+
+    const spy = countingMeasure();
+    layoutForest(mutated, spy.measure, collapsed, { cache, measureKey: 'K' });
+    const ids0 = subtreeIds(req(a.specs[1], '升格岛 1').node);
+    expect([...ids0].some((id) => spy.calls.includes(id))).toBe(false);
+  });
+
+  it('★ 度量语义变化（换 measure + 换 key）→ 整体重算且逐位等价（键失效契约有效性）', () => {
+    const root = buildTree(5);
+    const { specs } = specsOf(root, 3);
+    const cache = new LayoutCache();
+    const collapsed = new Set<string>();
+    const measureA = (n: EditableNode): { w: number; h: number } => ({
+      w: 40 + (n.text ? n.text.length : 0) * 6,
+      h: 30,
+    });
+    const measureB = (n: EditableNode): { w: number; h: number } => ({
+      w: 40 + (n.text ? n.text.length : 0) * 9,
+      h: 44,
+    });
+
+    layoutForest(specs, measureA, collapsed, { cache, measureKey: 'A' });
+    const r2 = layoutForest(specs, measureB, collapsed, { cache, measureKey: 'B' });
+    const full = layoutForest(specs, measureB, collapsed);
+
+    expectBitIdentical(r2, full, '换 measure + 换 key');
+  });
+});
+
+// ---------- F3：岛内增量（编辑局部化） ----------
+
+/** walk 收集 id→EditableNode（观测 cache.nodes 身份用） */
+function nodeMap(node: EditableNode): Map<string, EditableNode> {
+  const out = new Map<string, EditableNode>();
+  walkNodes(node, (n) => out.set(n.id, n));
+  return out;
+}
+
+/**
+ * 「编辑路径之外」的 id 集。编辑路径 = 自 island 起沿 children[0] 链到最深叶
+ * （deepLeaf 的走法）——返回链上每个节点除首子外的**全部子树** id。
+ */
+function offPathIds(island: EditableNode): Set<string> {
+  const out = new Set<string>();
+  let cur: EditableNode | undefined = island;
+  while (cur) {
+    const chain: EditableNode | undefined = cur.children[0];
+    for (const c of cur.children) {
+      if (c !== chain) walkNodes(c, (n) => out.add(n.id));
+    }
+    cur = chain;
+  }
+  return out;
+}
+
+describe('F3：岛内增量（编辑局部化；深层编辑不重算未受影响分支）', () => {
+  it('★ 编辑大岛深层叶子 → 未受影响分支零 measure + cache.nodes 引用复用 + 逐位等价', () => {
+    const root = buildTree(6); // N=1093
+    const first = specsOf(root, 1); // k=1：根岛 + 一个大岛
+    const collapsed = new Set<string>();
+    const cache = new LayoutCache();
+
+    // 热身（暖缓存）
+    layoutForest(first.specs, measure, collapsed, { cache, measureKey: 'K' });
+
+    const island = req(pickCenters(root, 1)[0], '大岛根');
+    const offPath = offPathIds(island);
+    expect(offPath.size).toBeGreaterThan(100);
+
+    // 取样一个未受影响节点 → 记录热身后的 LayoutNode 身份
+    const sampleId = req([...offPath][0], '取样 id');
+    const map1 = nodeMap(req(first.specs[1], '大岛 spec').node);
+    const sampleNode = req(map1.get(sampleId), '取样节点对象');
+    const lnBefore = cache.nodes.get(sampleNode);
+
+    // 编辑 children[0] 链末端（最深叶子）
+    const leaf = deepLeaf(island);
+    const edited = updateNode(root, leaf.id, { text: `${leaf.text ?? ''}#深编辑` });
+    const second = specsOf(edited, 1);
+
+    const spy = countingMeasure();
+    const inc = layoutForest(second.specs, spy.measure, collapsed, { cache, measureKey: 'K' });
+
+    // ① 未受影响分支零 measure
+    const measured = new Set(spy.calls);
+    const violated = [...offPath].filter((id) => measured.has(id));
+    expect(violated, `未受影响节点被重新度量：${violated.slice(0, 5).join(',')}`).toEqual([]);
+
+    // ② cache.nodes 引用复用（岛内未受影响分支的 LayoutNode 身份跨调用不变）
+    expect(lnBefore, '热身应先建立 cache.nodes 条目').toBeDefined();
+    expect(cache.nodes.get(sampleNode), '未受影响分支应引用复用').toBe(lnBefore);
+
+    // ③ 全输出与无缓存路径逐位等价
+    const full = layoutForest(second.specs, measure, collapsed);
+    expectBitIdentical(inc, full, '深编辑后');
+  });
+
+  it('★ 大岛编辑序列（12 步，N=364）：每步逐位等价（岛内增量不漂移）', () => {
+    let root = buildTree(5);
+    const islandLeaf = deepLeaf(req(pickCenters(root, 1)[0], '岛根'));
+    const collapsed = new Set<string>();
+    const cache = new LayoutCache();
+
+    for (let step = 0; step < 12; step++) {
+      root = updateNode(root, islandLeaf.id, { text: `deep-${step}-加长` });
+      const { specs } = specsOf(root, 1);
+      const inc = layoutForest(specs, measure, collapsed, { cache, measureKey: 'K' });
+      const full = layoutForest(specs, measure, collapsed);
+      expectBitIdentical(inc, full, `deep step ${step}`);
+    }
+  });
 });

@@ -44,14 +44,23 @@ export interface CenterSpec {
   pos?: { x: number; y: number };
 }
 
-/** 方向 → 局部布局函数（仅取 nodes/bounds；links 平移后由 islandLinks 重建） */
-const LAYOUT_BY_DIR: Record<GrowDir, (r: EditableNode, m: MeasureFn, c: Set<string>) => LayoutResult> =
-  {
-    right: (r, m, c) => layoutLogic(r, m, c, 1),
-    left: (r, m, c) => layoutLogic(r, m, c, -1),
-    down: (r, m, c) => layoutOrg(r, m, c, 1),
-    up: (r, m, c) => layoutOrg(r, m, c, -1),
-  };
+/** 方向 → 局部布局函数（仅取 nodes/bounds；links 平移后由 islandLinks 重建）。
+ *  F3：第 4 参透传缓存选项——岛内经典布局（layoutLogic/layoutOrg）接 LayoutCache
+ *  增量原语（编辑局部化）；调用方（branching 的 fallback 调用点）负责传参。 */
+const LAYOUT_BY_DIR: Record<
+  GrowDir,
+  (
+    r: EditableNode,
+    m: MeasureFn,
+    c: Set<string>,
+    opts?: { cache?: LayoutCache; measureKey?: string },
+  ) => LayoutResult
+> = {
+  right: (r, m, c, o) => layoutLogic(r, m, c, 1, o),
+  left: (r, m, c, o) => layoutLogic(r, m, c, -1, o),
+  down: (r, m, c, o) => layoutOrg(r, m, c, 1, o),
+  up: (r, m, c, o) => layoutOrg(r, m, c, -1, o),
+};
 
 /** 方向 → 文档级布局类型（供 UI 复用同一套映射） */
 export const LAYOUT_KIND_BY_DIR: Record<GrowDir, LayoutKind> = {
@@ -121,8 +130,9 @@ export function layoutForest(
       // 回退沿用岛内原四向布局（整棵朝该方向），保证无 note.dir 时零行为变更
       fallback: LAYOUT_BY_DIR[spec.dir],
       dirSink,
-      // 通道：cache / measureKey 透传到岛内布局调用面（分支路径暂不消费——
-      // 岛内缓存的消费点随 F3 接入；此透传保证通道单一来源，不在调用侧散落）。
+      // 通道：cache / measureKey 透传到岛内布局调用面——无 dir 回退（LAYOUT_BY_DIR
+      // 四向经典布局）与分支基准（layoutMindmap）已接增量原语（F3）；分支路径自身的
+      // 骨架/消解/放置步骤仍为全量（范围与理由见 F3 收口报告）。
       cache,
       measureKey: opts.measureKey,
     });

@@ -107,7 +107,8 @@ export function layoutMindmapBranched(
       opts.fallback ??
       ((r: EditableNode, m: MeasureFn, c: Set<string>) =>
         layoutMindmap(r, m, c, { cache: opts.cache, measureKey: opts.measureKey }));
-    return fb(root, measure, collapsedIds);
+    // F3：把缓存选项透传给回退布局（LAYOUT_BY_DIR 的经典四向已接 LayoutCache 增量原语）
+    return fb(root, measure, collapsedIds, { cache: opts.cache, measureKey: opts.measureKey });
   }
 
   // 子树（含自身）是否含显式 dir 声明——决定是否需要递归展开内部分叉
@@ -157,8 +158,12 @@ export function layoutMindmapBranched(
   //   基准位置平移到对应侧，其余节点逐像素不动。
   //   注意：不能在每个子层级以该节点为根重跑经典布局——经典布局只在文档根层做左右
   //   平衡，子层重跑会引入根层特有的分配行为（实测把未声明的兄弟甩到另一侧）。
+  //   F3：基准接 LayoutCache（增量基准）——缓存只加速不改结果（等价性由分层测试锁死）。
   {
-    const base = layoutMindmap(root, measure, collapsedIds);
+    const base = layoutMindmap(root, measure, collapsedIds, {
+      cache: opts.cache,
+      measureKey: opts.measureKey,
+    });
     for (const bn of base.nodes) {
       const t = skeletonById.get(bn.node.id);
       if (t) t.box = { ...bn.box };

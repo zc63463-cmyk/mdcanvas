@@ -182,8 +182,8 @@ export function layoutDemo(
    * 空 → 沿用 layoutMindmap（既有行为，含 LayoutCache 增量）。
    *
    * F 批（森林布局缓存）：cache / measureKey 透传至森林路径（通道就位，键位在
-   * layoutForest 入口统一管理）——岛级缓存已接入（F2：未编辑岛零重算）；
-   * 岛内消费随 F3。
+   * layoutForest 入口统一管理）——岛级缓存（F2：未编辑岛零重算）与岛内增量
+   * （F3：编辑局部化）均已接入。
    */
   centers: readonly CenterSpec[] | null = null,
 ): DemoLayout {
