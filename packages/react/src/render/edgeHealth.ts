@@ -4,10 +4,18 @@
  * 口径声明：
  * - malformed 判定复用 collectFreeEdges 的丢弃谓词（「该下标未被产出」即畸形：
  *   非对象 / from|to 非 string），不复刻第二套判定——两套口径必然漂移。
- * - renderable / noBox 是【数据层口径】：本函数无 layout，画布 freeEdgeEndpoints
- *   的 renderable 还依赖布局盒（端点缺盒 / 折叠塌陷 → false），此处判不了，
- *   只会高估可渲染数，不假装等价。noBox = 任一端点锚不可解析到节点（画布
- *   「解析不到盒」中数据层可判定的子集）。
+ * - renderable / noBox 是【数据层口径】（无 layout，不假装与画布等价）。
+ *   与画布 freeEdgeEndpoints（freeEdges.ts:391-417）逐情形对照（R2-4 写准）：
+ *   · 源锚不可解析 → 画布不画，本函数也不计 renderable（一致）
+ *   · 靶锚不可解析 → 画布以 ghost 合成盒绘制，本函数计入 renderable（一致；
+ *     由 edge-health.test 的 renderable=6 断言钉死，1/2 号病例即 ghost）
+ *   · 数据自关联（from === to 或两端解析到同一节点）→ 画布零长退化不画，
+ *     本函数排除（一致）
+ *   · 端点盒缺失 / 折叠塌陷 / 零尺寸盒 → 画布 renderable:false，本函数无
+ *     layout 判不了 → renderable 相对画布【只会高估、不会低估】
+ * - noBox = 任一端点锚不可解析到节点（数据层「必然无盒」的子集）；【含 ghost
+ *   场景】——ghost 在画布会被合成盒绘制，此计数仅表示该端在数据层未解析，
+ *   与画布「无布局盒」不是同一口径。
  * - malformed 项被 collectFreeEdges 静默丢弃 → 其 state 恒 'stale'（与
  *   resolveAnchorToId「锚不可解析 → stale」契约一致），但不计入 byState
  *   （byState 只统计管线实际处理的项），由 malformed 单独计数。
@@ -30,7 +38,8 @@ export interface EdgeHealthItem {
   malformed?: boolean;
   /** 数据自关联（from === to 或两端解析到同一节点 → 画布不画） */
   selfAnchor?: boolean;
-  /** 任一端点锚不可解析（数据层口径，见文件头） */
+  /** 任一端点锚不可解析（数据层口径；【含 ghost 场景】——画布为 ghost 合成盒
+   *  仍绘制，此处仅表示该端数据层未解析，见文件头） */
   noBox?: boolean;
   /** rel 不在 relationSchema（提示用，不算错） */
   unknownRel?: boolean;
@@ -41,7 +50,8 @@ export interface EdgeHealthItem {
 export interface EdgeHealth {
   /** 原始数组长度（含 malformed） */
   total: number;
-  /** 数据层口径下可参与渲染的数量（见文件头口径声明） */
+  /** 数据层口径下可参与渲染的数量（ghost 计入——画布会画；布局缺盒/塌陷判不了
+   *  → 相对画布只会高估，见文件头逐情形对照） */
   renderable: number;
   byState: { wellFormed: number; dangling: number; stale: number };
   invalid: number;
