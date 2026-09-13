@@ -78,6 +78,18 @@ export interface EdgeActions {
    * 返回 cascaded = 联动条数（宿主提示「已同步 N 条反向关系」）。
    */
   setEdgeInvalid: (index: number, invalid: boolean) => { cascaded: number };
+  /** R4-5：多选集合（Shift+点边增删；单选/Esc/退出关系模式清空） */
+  edgeMultiSel: readonly string[];
+  /** R4-5：Shift+点边 → 加入/移出集合 */
+  toggleEdgeMulti: (key: string) => void;
+  /** R4-5：清空多选集合 */
+  clearEdgeMulti: () => void;
+  /** R4-5：批量删除集合内全部边（一次写一条 history，一次 undo 全回滚） */
+  batchDelete: () => void;
+  /** R4-5：批量失效——跳过已失效（返回 skipped 条数），同一时间戳，一次写 */
+  batchInvalidate: () => number;
+  /** R4-5：批量恢复——只对已失效生效（返回 restored 条数），一次写 */
+  batchRestore: () => number;
   /**
    * R3-3：切换方向（渲染端语义契约，R3-A3）——fwd ↔ back 时同一补丁内交换
    * manual.from/to 并翻转 routingSide（两端锚点与其侧向保位，手工把手不跳）；
@@ -128,6 +140,8 @@ export function useEdgeActions(controller: EditorController): EdgeActions {
   const selEdgeKeyRef = useRef<string | null>(null);
   selEdgeKeyRef.current = selEdge?.key ?? null;
   const [selEdgeFallback, setSelEdgeFallback] = useState(false);
+  // R4-5：多选集合（空数组 = 未激活批量；单选 setEdgeSel 清空之）
+  const [edgeMultiSel, setEdgeMultiSel] = useState<readonly string[]>([]);
   const handleEdgeRoutes = useCallback((routes: ReadonlyMap<string, EdgeRouteEntry>) => {
     const key = selEdgeKeyRef.current;
     const entry = key ? routes.get(key) : undefined;
@@ -236,6 +250,50 @@ export function useEdgeActions(controller: EditorController): EdgeActions {
     [controller, writeEdges],
   );
 
+  // ── R4-5：批量（多选集合 + 一次写一条 history 的批量动作）──────────────
+  const toggleEdgeMulti = useCallback((key: string): void => {
+    setEdgeMultiSel((prev) =>
+      prev.includes(key) ? prev.filter((k) => k !== key) : [...prev, key],
+    );
+  }, []);
+  const clearEdgeMulti = useCallback((): void => setEdgeMultiSel([]), []);
+  const batchDelete = useCallback((): void => {
+    if (edgeMultiSel.length === 0) return;
+    const cur = edgesOf(controller.root.note);
+    writeEdges(cur.filter((_, i) => !edgeMultiSel.includes(`e${i}`)));
+    setEdgeMultiSel([]);
+  }, [controller, writeEdges, edgeMultiSel]);
+  const batchInvalidate = useCallback((): number => {
+    if (edgeMultiSel.length === 0) return 0;
+    const cur = edgesOf(controller.root.note);
+    const ts = new Date().toISOString();
+    let skipped = 0;
+    const next = cur.map((e, i) => {
+      if (!edgeMultiSel.includes(`e${i}`)) return e;
+      if (e.invalidAt !== undefined) {
+        skipped += 1; // 跳过已失效（不覆盖既有标记）
+        return e;
+      }
+      return { ...e, invalidAt: ts };
+    });
+    writeEdges(next);
+    setEdgeMultiSel([]);
+    return skipped;
+  }, [controller, writeEdges, edgeMultiSel]);
+  const batchRestore = useCallback((): number => {
+    if (edgeMultiSel.length === 0) return 0;
+    const cur = edgesOf(controller.root.note);
+    let restored = 0;
+    const next = cur.map((e, i) => {
+      if (!edgeMultiSel.includes(`e${i}`) || e.invalidAt === undefined) return e;
+      restored += 1;
+      return { ...e, invalidAt: undefined };
+    });
+    writeEdges(next);
+    setEdgeMultiSel([]);
+    return restored;
+  }, [controller, writeEdges, edgeMultiSel]);
+
   const reverseEdge = useCallback(
     (index: number): { relChanged: boolean; message?: string } => {
       const cur = edgesOf(controller.root.note);
@@ -302,9 +360,13 @@ export function useEdgeActions(controller: EditorController): EdgeActions {
     anchorById,
     selEdge,
     selEdgeCurrentD,
+    edgeMultiSel,
     selEdgeForcedSideFallback,
     edgeSel,
-    setEdgeSel,
+    setEdgeSel: (v) => {
+      setEdgeSel(v);
+      setEdgeMultiSel([]); // R4-5：单选清空多选集合
+    },
     writeEdges,
     writeEdgeManual,
     reattachEdge,
@@ -312,6 +374,11 @@ export function useEdgeActions(controller: EditorController): EdgeActions {
     duplicateEdge,
     setEdgeInvalid,
     reverseEdge,
+    toggleEdgeMulti,
+    clearEdgeMulti,
+    batchDelete,
+    batchInvalidate,
+    batchRestore,
     setEdgeDir,
     connectEdge,
     handleEdgeRoutes,

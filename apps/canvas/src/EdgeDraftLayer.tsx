@@ -10,7 +10,7 @@
  *
  * 不是什么：不含边的图形路由与渲染（`FreeEdgeLayer`），那些在 `packages/react`。
  */
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import type { EditorController } from '@mindcanvas/react';
 import {
   anchorOfNode,
@@ -26,6 +26,8 @@ import {
   type EdgeStyle,
   type TreeEdgeAnn,
 } from '@mindcanvas/react';
+const CHROME_BG = 'rgba(22,24,29,0.92)';
+
 import {
   ContextMenu,
   defaultRelationSchema,
@@ -79,6 +81,16 @@ export function EdgeDraftLayer({
   const [reattachTarget, setReattachTarget] = useState<{ index: number; side: 'from' | 'to' } | null>(
     null,
   );
+  // R4-5：批量条打开时 Esc 清空集合
+  const multiCount = edgeActions.edgeMultiSel.length;
+  useEffect(() => {
+    if (multiCount === 0) return;
+    const onKey = (e: KeyboardEvent): void => {
+      if (e.key === 'Escape') edgeActions.clearEdgeMulti();
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [multiCount, edgeActions]);
 
   return (
     <>
@@ -258,6 +270,59 @@ export function EdgeDraftLayer({
           }}
           onClose={() => setReattachTarget(null)}
         />
+      )}
+      {/* R4-5：批量条（≥2 条多选时出现；失效跳过已失效并提示；删除一次 undo 全回滚） */}
+      {multiCount >= 2 && (
+        <div
+          data-edge-multi-bar
+          style={{
+            position: 'fixed',
+            left: '50%',
+            bottom: 48,
+            transform: 'translateX(-50%)',
+            zIndex: 30,
+            display: 'flex',
+            alignItems: 'center',
+            gap: 10,
+            padding: '6px 12px',
+            borderRadius: 8,
+            background: CHROME_BG,
+            border: '1px solid rgba(128,128,128,0.35)',
+            boxShadow: '0 12px 40px rgba(0,0,0,0.25)',
+            fontSize: 12,
+            color: '#ddd',
+          }}
+        >
+          <span style={{ fontWeight: 600 }}>{multiCount} 条</span>
+          <button
+            data-edge-multi-action
+            onClick={() => {
+              const skipped = edgeActions.batchInvalidate();
+              if (skipped > 0) onNotice?.(`已跳过 ${skipped} 条已失效`);
+            }}
+            style={{ background: 'transparent', border: 'none', color: '#ddd', cursor: 'pointer' }}
+          >
+            失效
+          </button>
+          <button
+            data-edge-multi-action
+            onClick={() => {
+              edgeActions.batchRestore();
+            }}
+            style={{ background: 'transparent', border: 'none', color: '#ddd', cursor: 'pointer' }}
+          >
+            恢复
+          </button>
+          <button
+            data-edge-multi-action
+            onClick={() => {
+              edgeActions.batchDelete();
+            }}
+            style={{ background: 'transparent', border: 'none', color: '#e24b4a', cursor: 'pointer' }}
+          >
+            删除
+          </button>
+        </div>
       )}
     </>
   );

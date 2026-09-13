@@ -208,8 +208,10 @@ export interface MapViewProps {
   onAssetDrop?: (files: File[], target: DropTarget) => void;
   /** 选中自由边 key（E3 边编辑高亮；null = 无） */
   selectedEdgeKey?: string | null;
+  /** R4-5：多选集合（批量高亮；与 selectedEdgeKey 并存） */
+  selectedEdgeKeys?: readonly string[];
   /** 点击自由边（E2 选中回调；带屏幕坐标供浮窗锚定） */
-  onEdgeClick?: (edge: FreeEdge, sx: number, sy: number) => void;
+  onEdgeClick?: (edge: FreeEdge, sx: number, sy: number, withShift?: boolean) => void;
   /** R4-1：右键自由边（关系模式；同 onEdgeClick 同族加法） */
   onEdgeContext?: (edge: FreeEdge, sx: number, sy: number) => void;
   /**
@@ -352,6 +354,7 @@ export function MapView({
   onAssetFiles,
   onAssetDrop,
   selectedEdgeKey,
+  selectedEdgeKeys,
   onEdgeClick,
   onEdgeContext,
   onEdgeManualChange,
@@ -1627,7 +1630,10 @@ export function MapView({
                   collapsed={collapsedIds ?? EMPTY_COLLAPSED}
                   token={token}
                   selectedKey={selectedEdgeKey}
-                  onSelect={(edge, sx, sy) => onEdgeClickRef.current?.(edge, sx, sy)}
+                  selectedKeys={selectedEdgeKeys}
+                  onSelect={(edge, sx, sy, withShift) =>
+                    onEdgeClickRef.current?.(edge, sx, sy, withShift)
+                  }
                   onEdgeContext={onEdgeContext}
                   interactive={relationMode}
                   // E8：避障路由（低 LOD 时为空数组 → 自动退化为原贝塞尔）

@@ -65,9 +65,11 @@ export interface FreeEdgeLayerProps {
   collapsed: ReadonlySet<string>;
   token: TokenSet;
   selectedKey?: string | null;
-  onSelect?: (edge: FreeEdge, sx: number, sy: number) => void;
+  onSelect?: (edge: FreeEdge, sx: number, sy: number, withShift?: boolean) => void;
   /** R4-1：右键边（关系模式；preventDefault + 选中后回调，带指针屏幕坐标） */
   onEdgeContext?: (edge: FreeEdge, sx: number, sy: number) => void;
+  /** R4-5：多选集合（批量高亮；与 selectedKey 单选并存） */
+  selectedKeys?: readonly string[];
   /** E8：连线只在关系模式下可点选编辑 */
   interactive?: boolean;
   /**
@@ -125,6 +127,7 @@ export function FreeEdgeLayer({
   selectedKey,
   onSelect,
   onEdgeContext,
+  selectedKeys,
   interactive = true,
   obstacles = [],
   toWorld,
@@ -339,7 +342,8 @@ export function FreeEdgeLayer({
             : visual.stroke;
         const dashed = invalidated || stale || visual.dashed;
         const width = visual.width;
-        const selected = selectedKey === edge.key;
+        const selected =
+          selectedKey === edge.key || (selectedKeys?.includes(edge.key) ?? false);
         const mId = markerIdOf(stroke);
         const both = edge.dir === 'both' && !eps.ghost;
         // R4-3③：label 空串也回落 rel（?? 只挡 undefined——空串 label 会丢失 rel 信息）；
@@ -366,13 +370,16 @@ export function FreeEdgeLayer({
                 strokeWidth={12}
                 style={{ pointerEvents: 'stroke', cursor: 'pointer' }}
                 onPointerDown={(e) => e.stopPropagation()}
-                onClick={(e) => onSelectRef?.(edge, e.clientX, e.clientY)}
                 onContextMenu={(e) => {
                   // R4-1：阻断画布空白菜单（两层菜单）+ 浏览器原生菜单；右键同左键语义（选中）
                   e.preventDefault();
                   e.stopPropagation();
                   onSelectRef?.(edge, e.clientX, e.clientY);
                   onEdgeContextRef?.(edge, e.clientX, e.clientY);
+                }}
+                onClick={(e) => {
+                  // R4-5：Shift 修饰随回调透传（多选切换由宿主决定）
+                  onSelectRef?.(edge, e.clientX, e.clientY, e.shiftKey);
                 }}
               />
             )}

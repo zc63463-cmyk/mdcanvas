@@ -1249,12 +1249,13 @@ function StageContent({
       if (e.key === 'Escape') {
         setLinkDraft(null);
         edgeActions.setEdgeSel(null);
+        edgeActions.clearEdgeMulti();
         setTreeEdgeEdit(null);
       }
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [linkDraft, edgeActions.edgeSel, treeEdgeEdit]);
+  }, [linkDraft, edgeActions.edgeSel, treeEdgeEdit, edgeActions.clearEdgeMulti]);
 
   if (!layout) return null;
 
@@ -1373,6 +1374,7 @@ function StageContent({
             if (!next) {
               setLinkDraft(null);
               edgeActions.setEdgeSel(null);
+              edgeActions.clearEdgeMulti();
               setTreeEdgeEdit(null);
             }
           }}
@@ -1585,7 +1587,12 @@ function StageContent({
         }}
         onQaChange={(id, qa) => controller.updateNote(id, { qa })}
         selectedEdgeKey={edgeActions.edgeSel?.key ?? null}
-        onEdgeClick={(edge, sx, sy) => edgeActions.setEdgeSel({ key: edge.key, x: sx, y: sy })}
+        selectedEdgeKeys={edgeActions.edgeMultiSel}
+        onEdgeClick={(edge, sx, sy, withShift) => {
+          // R4-5：Shift+点边 → 多选切换；普通点 → 单选（既有行为不变）
+          if (withShift) edgeActions.toggleEdgeMulti(edge.key);
+          else edgeActions.setEdgeSel({ key: edge.key, x: sx, y: sy });
+        }}
         onEdgeContext={(edge, sx, sy) => {
           edgeActions.setEdgeSel({ key: edge.key, x: sx, y: sy });
           setEdgeMenu({ edge, x: sx, y: sy });
