@@ -2,18 +2,20 @@
 /**
  * EdgeHealthBar（R0-2）：边健康度诊断条。
  *
- * 行为规格（派遣计划 R0-2）：
+ * 行为规格（派遣计划 R0-2 → R2-2 契约更新）：
  * - 仅当 problems.length > 0 渲染；全健康 → 不渲染（阴性对照钉死此条件）
  * - 文案 `⚠ 关系线诊断：N 条（悬空 X / 陈旧 Y / 失效 Z）` + 最多 3 条明细 + 其余略
- * - pointerEvents: 'none'（不挡画布）；不做点击跳转（归 R2）
+ * - R0-2 原「零点击（pointerEvents none）」契约已被 R2-2 反转：注入 onOpen 后
+ *   条可点击（cursor pointer + 点击回调）→ 打开关系面板；缺省（未接线的
+ *   旧调用方）保持 pointerEvents none 向后兼容
  *
  * MindmapStage 接线冒烟：健康网关（无边）挂载后不出现诊断条（覆盖 stage 内
  * edgeHealthOf 的 useMemo 求值路径不抛错；出现分支由组件级用例覆盖——stage 无
  * 注入缝，边数据无法从外部种入内置 controller，与仓库「面板细粒度行为走组件
  * 测试」的分工一致）。
  */
-import { afterEach, describe, expect, it } from 'vitest';
-import { cleanup, render } from '@testing-library/react';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import { cleanup, fireEvent, render } from '@testing-library/react';
 import { makeEntityNode, makeTextNode, type EditableNode } from '@mindcanvas/kernel';
 import { EdgeHealthBar, edgeHealthOf } from '@mindcanvas/react';
 import MindmapStage from '../src/MindmapStage';
@@ -69,8 +71,20 @@ describe('EdgeHealthBar 组件', () => {
     expect(bar.textContent).toContain('关系线诊断：1 条（悬空 1 / 陈旧 0 / 失效 0）');
     expect(bar.textContent).toContain('node:根/不存在');
     expect(bar.textContent).toContain('悬空');
-    // 非阻塞：不挡画布
+    // 缺省（未接线 onOpen 的旧调用方）：保持非阻塞（向后兼容钉）
     expect((bar as HTMLElement).style.pointerEvents).toBe('none');
+  });
+
+  it('注入 onOpen → 条可点击（pointerEvents auto + cursor pointer），点击回调一次', () => {
+    const onOpen = vi.fn();
+    const { container } = render(
+      <EdgeHealthBar health={edgeHealthOf(danglingRoot())} bottom={178} onOpen={onOpen} />,
+    );
+    const bar = q('[data-edge-health-bar]', container) as HTMLElement;
+    expect(bar.style.pointerEvents).toBe('auto');
+    expect(bar.style.cursor).toBe('pointer');
+    fireEvent.click(bar);
+    expect(onOpen).toHaveBeenCalledTimes(1);
   });
 
   it('5 条坏边 → 明细最多 3 条 + 「其余 N 条略」', () => {

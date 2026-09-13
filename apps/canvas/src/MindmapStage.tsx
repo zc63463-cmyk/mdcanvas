@@ -1746,6 +1746,7 @@ function StageContent({
       <EdgeHealthBar
         health={edgeHealth}
         bottom={islandView.diagnostics.length > 0 ? 292 : 178}
+        onOpen={() => setPanel('relation')}
       />
 
       {/* B1 文档栏：名称 + 未保存标记 + 新建/打开/最近/保存/另存为（左上角玻璃条） */}

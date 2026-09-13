@@ -1,10 +1,13 @@
 /**
- * EdgeHealthBar（R0-2）：边健康度诊断条（R0「观测先行」的呈现端）。
+ * EdgeHealthBar（R0-2 → R2-2）：边健康度诊断条（R0「观测先行」的呈现端）。
  *
  * 消费 edgeHealthOf 的计数与病例明细：仅当 problems 非空时渲染；样式沿用
  * MindmapStage 中心诊断条的琥珀令牌（数据健康语义，按 R0-A1 不并入 allDiags
- * 的「解析失败」语义）；pointerEvents: 'none' 不挡画布；不做点击跳转（归 R2）。
- * 位置（bottom）由宿主传入——MindmapStage 在中心诊断条可见时抬升本条避让。
+ * 的「解析失败」语义）。位置（bottom）由宿主传入——MindmapStage 在中心诊断条
+ * 可见时抬升本条避让。
+ * R2-2 可发现性闭环：注入 onOpen 后条可点击（pointerEvents auto + cursor
+ * pointer，点击区域仅条体本身）→ 宿主打开关系面板；缺省（未接线的旧调用方）
+ * 保持 pointerEvents none 非阻塞。
  */
 import type { EdgeHealth, EdgeHealthItem } from '../render/edgeHealth.js';
 
@@ -20,11 +23,23 @@ function labelOf(p: EdgeHealthItem): string {
   return '正常';
 }
 
-export function EdgeHealthBar({ health, bottom }: { health: EdgeHealth; bottom: number }) {
+export function EdgeHealthBar({
+  health,
+  bottom,
+  onOpen,
+}: {
+  health: EdgeHealth;
+  bottom: number;
+  /** R2-2：点击打开关系面板（缺省 = 保持非阻塞，向后兼容） */
+  onOpen?: () => void;
+}) {
   if (health.problems.length === 0) return null;
+  const interactive = onOpen !== undefined;
   return (
     <div
       data-edge-health-bar
+      onClick={onOpen}
+      title={interactive ? '点击打开关系面板修复' : undefined}
       style={{
         position: 'absolute',
         left: 16,
@@ -38,7 +53,8 @@ export function EdgeHealthBar({ health, bottom }: { health: EdgeHealth; bottom: 
         fontFamily: 'inherit',
         fontSize: 12,
         lineHeight: 1.6,
-        pointerEvents: 'none',
+        pointerEvents: interactive ? 'auto' : 'none',
+        cursor: interactive ? 'pointer' : undefined,
         userSelect: 'none',
       }}
     >
