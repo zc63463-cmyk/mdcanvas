@@ -1,8 +1,10 @@
 /** 固定 note 笔记：节点向下生长后填充其布局预留区。 */
 import { useRef } from 'react';
+import type { EditableNode } from '@mindcanvas/kernel';
 import { CHROME } from '../theme/tokens.js';
 import type { TokenSet } from '../theme/types.js';
 import { QaEditor } from './QaEditor.js';
+import { TextLinkSpans } from './TextLinkSpans.js';
 
 const NOTE_HEADER_H = 24;
 const NOTE_REGION_H = 78;
@@ -31,6 +33,10 @@ export interface NoteGrowthPanelProps {
   onChangeSeq: (seq: string[]) => void;
   onChangeText: (text: string) => void;
   onClose: () => void;
+  /** L1：三态解析用树（缺省 → 链接只做语法渲染） */
+  root?: EditableNode;
+  /** L1：链接跳转回调（缺省 → 链接只渲染不可点） */
+  onJumpToAnchor?: (anchor: string) => void;
 }
 
 export function NoteGrowthPanel({
@@ -46,6 +52,8 @@ export function NoteGrowthPanel({
   onChangeSeq,
   onChangeText,
   onClose,
+  root,
+  onJumpToAnchor,
 }: NoteGrowthPanelProps) {
   const textRef = useRef<HTMLTextAreaElement | null>(null);
   const s = scale;
@@ -96,7 +104,11 @@ export function NoteGrowthPanel({
           <QaEditor items={seq} onChange={onChangeSeq} token={token} title="序列" placeholder="新增条目..." />
         ) : seq.length > 0 ? (
           <ol style={{ margin: 0, paddingLeft: 18 * s }}>
-            {seq.map((item, index) => <li key={`${index}:${item}`} style={{ lineHeight: 1.5 }}>{item}</li>)}
+            {seq.map((item, index) => (
+              <li key={`${index}:${item}`} style={{ lineHeight: 1.5 }}>
+                <TextLinkSpans text={item} root={root} onJumpToAnchor={onJumpToAnchor} token={token} />
+              </li>
+            ))}
           </ol>
         ) : <span style={{ color: CHROME.textMuted }}>无序列</span>}
       </div>
@@ -111,7 +123,15 @@ export function NoteGrowthPanel({
             onKeyDown={(e) => e.stopPropagation()}
             style={{ width: '100%', minHeight: 42 * s, boxSizing: 'border-box', border: `1px solid ${CHROME.panelBorder}`, background: 'transparent', color: CHROME.text, borderRadius: CHROME.radiusSmall, padding: `${3 * s}px ${5 * s}px`, fontSize: CHROME.fontSizeSmall * s, fontFamily: CHROME.fontFamily, resize: 'none', outline: 'none' }}
           />
-        ) : <div style={{ whiteSpace: 'pre-wrap', wordBreak: 'break-word', lineHeight: 1.5 }}>{text || <span style={{ color: CHROME.textMuted }}>无正文</span>}</div>}
+        ) : (
+          <div style={{ whiteSpace: 'pre-wrap', wordBreak: 'break-word', lineHeight: 1.5 }}>
+            {text === '' ? (
+              <span style={{ color: CHROME.textMuted }}>无正文</span>
+            ) : (
+              <TextLinkSpans text={text} root={root} onJumpToAnchor={onJumpToAnchor} token={token} />
+            )}
+          </div>
+        )}
       </div>
     </div>
   );

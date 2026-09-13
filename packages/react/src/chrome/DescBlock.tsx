@@ -13,8 +13,10 @@
  *      Shift+Enter 提交并返回主题、Esc 取消、blur 提交；空文本 = 删除描述。
  */
 import { useEffect, useRef, useState } from 'react';
+import type { EditableNode } from '@mindcanvas/kernel';
 import { CHROME } from '../theme/tokens.js';
 import type { TokenSet } from '../theme/types.js';
+import { TextLinkSpans } from './TextLinkSpans.js';
 
 export interface DescBlockProps {
   /** 描述文本（多行以 \n 分隔） */
@@ -56,6 +58,10 @@ export interface DescBlockProps {
   onCommit?: (text: string) => void;
   /** 取消编辑 */
   onCancel?: () => void;
+  /** L1：三态解析用树（缺省 → 链接只做语法渲染，data-link-state=unknown） */
+  root?: EditableNode;
+  /** L1：链接跳转回调（缺省 → 链接只渲染不可点） */
+  onJumpToAnchor?: (anchor: string) => void;
 }
 
 /** 描述区行高（世界 px，k=1）—— 不随层级差分（理由见 descFontSize 注释） */
@@ -193,6 +199,8 @@ export function DescBlock({
   onToggle,
   onCommit,
   onCancel,
+  root,
+  onJumpToAnchor,
 }: DescBlockProps) {
   const s = scale;
   const [draft, setDraft] = useState(text);
@@ -344,7 +352,8 @@ export function DescBlock({
             scrollbarColor: 'rgba(140,140,140,.5) transparent',
           }}
         >
-          {text}
+          {/* L1：只读态行内链接（编辑态 textarea 分支不动；无链接时直出原文） */}
+          <TextLinkSpans text={text} root={root} onJumpToAnchor={onJumpToAnchor} token={token} />
         </div>
       )}
     </div>

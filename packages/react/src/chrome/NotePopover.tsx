@@ -19,9 +19,11 @@
  * 焦点丢失 → 用户体验是"点击就消失"。
  */
 import { useEffect, useRef } from 'react';
+import type { EditableNode } from '@mindcanvas/kernel';
 import { CHROME } from '../theme/tokens.js';
 import type { TokenSet } from '../theme/types.js';
 import { QaEditor } from './QaEditor.js';
+import { TextLinkSpans } from './TextLinkSpans.js';
 
 /** 单个区域的最大高度（超出内部滚动，浮窗整体不被撑爆） */
 const REGION_MAX_H = 160;
@@ -117,6 +119,10 @@ export interface NotePopoverProps {
   onClose: () => void;
   /** 预览态点击浮窗后固定 */
   onPin?: () => void;
+  /** L1：三态解析用树（缺省 → 链接只做语法渲染） */
+  root?: EditableNode;
+  /** L1：链接跳转回调（缺省 → 链接只渲染不可点） */
+  onJumpToAnchor?: (anchor: string) => void;
 }
 
 /**
@@ -176,6 +182,8 @@ export function NotePopover({
   onChangeText,
   onClose,
   onPin,
+  root,
+  onJumpToAnchor,
 }: NotePopoverProps) {
   const taRef = useRef<HTMLTextAreaElement | null>(null);
   const rootRef = useRef<HTMLDivElement | null>(null);
@@ -401,7 +409,7 @@ export function NotePopover({
                     lineHeight: 1.6,
                   }}
                 >
-                  {item}
+                  <TextLinkSpans text={item} root={root} onJumpToAnchor={onJumpToAnchor} token={token} />
                 </li>
               ))}
             </ol>
@@ -457,7 +465,7 @@ export function NotePopover({
             {text === '' ? (
               <span style={{ color: CHROME.textMuted }}>（无正文）</span>
             ) : (
-              text
+              <TextLinkSpans text={text} root={root} onJumpToAnchor={onJumpToAnchor} token={token} />
             )}
           </div>
         )}

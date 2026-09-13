@@ -144,6 +144,9 @@ export type { NotePopoverProps } from './chrome/NotePopover.js';
 export { NotePopover } from './chrome/NotePopover.js';
 export type { NoteGrowthPanelProps } from './chrome/NoteGrowthPanel.js';
 export { estimateNoteAreaHeight, NoteGrowthPanel } from './chrome/NoteGrowthPanel.js';
+// L1：只读态行内链接渲染（TextLinkSpans —— DescBlock/NotePopover/NoteGrowthPanel 共用）
+export type { TextLinkSpansProps } from './chrome/TextLinkSpans.js';
+export { TextLinkSpans } from './chrome/TextLinkSpans.js';
 export type {
   RelationTypeConfig,
   SemanticGroup,
@@ -211,6 +214,9 @@ export {
   summarizeReferenceDiagnostics,
 } from './edit/cutAttach.js';
 export type { CutAttachErrorCode, CutAttachPlan } from './edit/cutAttach.js';
+// L1：文本区域链接（行内链接解析纯函数 + 实体锚 → 节点桥）
+export { applySpanReplace, findEntityNodeId, parseTextLinks } from './edit/textLinks.js';
+export type { SpanReplacement, TextSpan } from './edit/textLinks.js';
 export type { DocEntry } from './edit/docLibrary.js';
 
 export { DocLibrary, SOURCE_KEEP, UNTAGGED } from './edit/docLibrary.js';

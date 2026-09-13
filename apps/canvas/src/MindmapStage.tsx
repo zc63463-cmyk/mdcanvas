@@ -19,6 +19,8 @@ import {
   upsertSection,
 } from '@mindcanvas/kernel';
 import { findNode, getNode, LayoutCache, readLensMap, REGISTERED_KINDS, refKey } from '@mindcanvas/kernel';
+// L1：文本区域链接跳转（锚解析 + 三态）
+import { parseLinkAnchor, resolveLinkAnchor } from '@mindcanvas/kernel';
 import type {
   AssetHost,
   AssetItem,
@@ -71,6 +73,7 @@ import {
   layoutDemo,
   buildIslandView,
   collectCenters,
+  findEntityNodeId,
   ensureNodeCid,
   planPromoteCenter,
   resolveSections,
@@ -401,6 +404,20 @@ function StageContent({
       controller.setCollapsed(a, false);
     controller.select(id);
     apiRef.current?.focusNode(id);
+  };
+
+  // L1：文本区域链接跳转（T-A4）——锚解析 → 唯一命中 → 复用 focusNode（展开祖先 + 选中 + 定位）。
+  // 非 well-formed（dangling/stale）不动作：幽灵态在渲染层已不可点，这里是第二道闸；
+  // 实体锚（语法 well-formed 但无 nodeId）经 findEntityNodeId 落到树中节点；不自动打开 note 浮窗。
+  const jumpToAnchor = (anchorText: string): void => {
+    const anchor = parseLinkAnchor(anchorText);
+    if (!anchor) return;
+    const res = resolveLinkAnchor(controller.root, anchor);
+    if (res.state !== 'well-formed') return;
+    const id =
+      res.nodeId ?? (anchor.kind === 'entity' ? findEntityNodeId(controller.root, anchor.target) : null);
+    if (!id) return;
+    focusNode(id);
   };
 
   // 文档操作（打开/新建/保存/另存为）与导出已抽至 hooks/：
@@ -1666,6 +1683,8 @@ function StageContent({
           setDescEditingId(null);
         }}
         onDescCancel={() => setDescEditingId(null)}
+        // L1：文本区域链接跳转（desc/note/note_text 内链接点击 → 解析 + 展开 + 定位 + 选中）
+        onJumpToAnchor={jumpToAnchor}
       />
 
       <PerfPanel stats={stats} />

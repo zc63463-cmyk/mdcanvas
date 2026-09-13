@@ -10,7 +10,7 @@
  * 拆分性质：纯搬迁，逻辑未改写。
  */
 import type { ReactElement } from 'react';
-import type { LayoutResult } from '@mindcanvas/kernel';
+import type { EditableNode, LayoutResult } from '@mindcanvas/kernel';
 import { DescBlock, estimateDescHeight } from '../chrome/DescBlock.js';
 import { estimateCommentAreaHeight, GrowthCommentPanel } from '../chrome/GrowthCommentPanel.js';
 import { estimateNoteAreaHeight } from '../chrome/NoteGrowthPanel.js';
@@ -47,6 +47,8 @@ export function DescOverlays({
   onCancel,
   fixedNoteIds = new Set(),
   expandedId = null,
+  root,
+  onJumpToAnchor,
 }: {
   /** 视口裁剪后的节点（性能：不遍历全量 layout.nodes —— 10K 图会渲染上万个 div） */
   visible: readonly LayoutNodeLike[];
@@ -59,6 +61,10 @@ export function DescOverlays({
   fixedNoteIds?: ReadonlySet<string>;
   /** 快速注释也占用附属区，描述必须排在它之前。 */
   expandedId?: string | null;
+  /** L1：三态解析用树（缺省 → 链接只做语法渲染） */
+  root?: EditableNode;
+  /** L1：链接跳转回调（缺省 → 链接只渲染不可点） */
+  onJumpToAnchor?: (anchor: string) => void;
 }) {
   const { k, x, y } = viewport.transform;
   const out: ReactElement[] = [];
@@ -98,6 +104,8 @@ export function DescOverlays({
         depth={ln.depth}
         onCommit={(t) => onCommit?.(ln.node.id, t)}
         onCancel={() => onCancel?.()}
+        root={root}
+        onJumpToAnchor={onJumpToAnchor}
       />,
     );
   }

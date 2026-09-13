@@ -253,6 +253,8 @@ export interface MapViewProps {
   onDescCommit?: (id: string, text: string) => void;
   /** 取消描述编辑 */
   onDescCancel?: () => void;
+  /** L1：文本区域链接跳转（锚原文 → 宿主解析 + 展开祖先 + 定位 + 选中；缺省 → 链接只渲染不可点） */
+  onJumpToAnchor?: (anchor: string) => void;
   /** v1.3.0：主题文本编辑态按 Shift+Enter → 请求切到该节点描述编辑 */
   onDescEditRequest?: (id: string) => void;
 }
@@ -396,6 +398,7 @@ export function MapView({
   descEditingId = null,
   onDescCommit,
   onDescCancel,
+  onJumpToAnchor,
   onDescEditRequest,
 }: MapViewProps) {
   const { token } = useTheme();
@@ -622,6 +625,9 @@ export function MapView({
   onDescCancelRef.current = onDescCancel;
   const onDescEditRequestRef = useRef(onDescEditRequest);
   onDescEditRequestRef.current = onDescEditRequest;
+  // L1 文本区域链接跳转回调 ref（同款纪律）
+  const onJumpToAnchorRef = useRef(onJumpToAnchor);
+  onJumpToAnchorRef.current = onJumpToAnchor;
 
   // E6：连接手柄拖拽（图操作）——选中节点手柄按下 → 引导线跟随 + 悬停目标高亮 → 松手建边
   const [connectDrag, setConnectDrag] = useState<{
@@ -2105,6 +2111,8 @@ export function MapView({
           expandedId={expandedId}
           onCommit={(id, t) => onDescCommitRef.current?.(id, t)}
           onCancel={() => onDescCancelRef.current?.()}
+          root={rootNode}
+          onJumpToAnchor={(a) => onJumpToAnchorRef.current?.(a)}
         />
 
         {/* 悬停预览不影响布局；点击后转为节点内的固定 note 笔记。 */}
@@ -2129,6 +2137,8 @@ export function MapView({
             onChangeText={(text) => onNoteChangeText?.(noteTarget.id, text)}
             onClose={() => onNoteCloseRef.current?.(noteTarget.id)}
             onPin={() => onNotePin?.(noteTarget.id)}
+            root={rootNode}
+            onJumpToAnchor={(a) => onJumpToAnchorRef.current?.(a)}
           />
         ))}
         {fixedNotePanels.map((panel) => (
@@ -2151,6 +2161,8 @@ export function MapView({
             onChangeSeq={(seq) => onNoteChangeSeq?.(panel.id, seq)}
             onChangeText={(text) => onNoteChangeText?.(panel.id, text)}
             onClose={() => onNoteCloseRef.current?.(panel.id)}
+            root={rootNode}
+            onJumpToAnchor={(a) => onJumpToAnchorRef.current?.(a)}
           />
         ))}
       {/* FA2-T3：拖放落点预览 —— 松手前就能看到会被插成图标 / 插图 / 子分支 / 自由节点。
