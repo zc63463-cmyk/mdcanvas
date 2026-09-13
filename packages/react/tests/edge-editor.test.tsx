@@ -358,3 +358,92 @@ describe('全链路：updateNote(root) 写入 → 画布边可见 → 编辑 →
     expect(s2.text).toBe('先只读');
   });
 });
+
+describe('EdgeEditor 重挂入口（R2-1）', () => {
+  /** 缺元素即抛错（替代 `!` 断言——新增代码零 lint 告警纪律） */
+  function q(sel: string, root: ParentNode): Element {
+    const el = root.querySelector(sel);
+    if (el === null) throw new Error(`element not found: ${sel}`);
+    return el;
+  }
+  const baseEdge = {
+    key: 'e0',
+    index: 0,
+    rel: 'blocks',
+    dir: 'fwd' as const,
+    from: 'node:根/A',
+    to: 'node:根/B',
+  };
+  const choices = [
+    { id: 'n1', label: '任务', anchor: 'node:根/任务' },
+    { id: 'n2', label: '生活', anchor: 'node:根/生活' },
+  ];
+
+  it('注入 choices+onReattach → 出现 from/to 两个重挂入口', () => {
+    const { container } = render(
+      <ThemeProvider>
+        <EdgeEditor
+          edge={baseEdge}
+          x={10}
+          y={10}
+          onChange={vi.fn()}
+          onStyle={vi.fn()}
+          onInvalidate={vi.fn()}
+          onRestore={vi.fn()}
+          onDelete={() => undefined}
+          onClose={() => undefined}
+          choices={choices}
+          onReattach={vi.fn()}
+        />
+      </ThemeProvider>,
+    );
+    expect(q('[data-reattach-from]', container)).toBeDefined();
+    expect(q('[data-reattach-to]', container)).toBeDefined();
+  });
+
+  it('缺省（不注入）→ 无重挂入口（向后兼容钉死）', () => {
+    const { container } = render(
+      <ThemeProvider>
+        <EdgeEditor
+          edge={baseEdge}
+          x={10}
+          y={10}
+          onChange={vi.fn()}
+          onStyle={vi.fn()}
+          onInvalidate={vi.fn()}
+          onRestore={vi.fn()}
+          onDelete={() => undefined}
+          onClose={() => undefined}
+        />
+      </ThemeProvider>,
+    );
+    expect(container.querySelector('[data-reattach-from]')).toBeNull();
+    expect(container.querySelector('[data-reattach-to]')).toBeNull();
+  });
+
+  it('点 from 入口 → picker 打开 → 选题 → onReattach("from", anchor)', () => {
+    const onReattach = vi.fn();
+    const { container } = render(
+      <ThemeProvider>
+        <EdgeEditor
+          edge={baseEdge}
+          x={10}
+          y={10}
+          onChange={vi.fn()}
+          onStyle={vi.fn()}
+          onInvalidate={vi.fn()}
+          onRestore={vi.fn()}
+          onDelete={() => undefined}
+          onClose={() => undefined}
+          choices={choices}
+          onReattach={onReattach}
+        />
+      </ThemeProvider>,
+    );
+    fireEvent.click(q('[data-reattach-from]', container));
+    const option = q('[data-edge-anchor-option="node:根/生活"]', container); // picker 已打开
+    fireEvent.click(option);
+    expect(onReattach).toHaveBeenCalledTimes(1);
+    expect(onReattach).toHaveBeenCalledWith('from', 'node:根/生活');
+  });
+});

@@ -129,6 +129,10 @@ export function EdgeDraftLayer({
           x={edgeActions.edgeSel.x}
           y={edgeActions.edgeSel.y}
           currentD={edgeActions.selEdgeCurrentD}
+          choices={edgeActions.nodeChoices}
+          onReattach={(side, anchor) => {
+            edgeActions.reattachEdge(selEdgeOpen.index, side, anchor);
+          }}
           // Issue #3 / forceSide：routingSide 经 patch 写回（含 undefined = 恢复自动）
           onChange={(patch: Partial<DocEdge>) => {
             edgeActions.writeEdges(

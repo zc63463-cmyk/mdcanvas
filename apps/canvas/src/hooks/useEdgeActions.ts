@@ -55,6 +55,8 @@ export interface EdgeActions {
   setEdgeSel: (v: { key: string; x: number; y: number } | null) => void;
   /** 整体写回 note.edges（空数组 = 删除该字段） */
   writeEdges: (edges: DocEdge[]) => void;
+  /** R2-1：重挂指定边的指定端（唯一重挂写路径：writeEdges + patchEdgeAt；不动 invalidAt） */
+  reattachEdge: (index: number, side: 'from' | 'to', anchor: string) => void;
   /** 写入「人工锁定」几何；null = 清空锁定恢复自动 */
   writeEdgeManual: (index: number, manual: EdgeManual | null) => void;
   /** 建边；同 from+to+rel 已存在则直接选中打开编辑器（防重叠双线） */
@@ -105,6 +107,15 @@ export function useEdgeActions(controller: EditorController): EdgeActions {
     [controller],
   );
 
+  const reattachEdge = useCallback(
+    (index: number, side: 'from' | 'to', anchor: string): void => {
+      const cur = edgesOf(controller.root.note);
+      const patch: Partial<DocEdge> = side === 'from' ? { from: anchor } : { to: anchor };
+      writeEdges(patchEdgeAt(cur, index, patch));
+    },
+    [controller, writeEdges],
+  );
+
   const writeEdgeManual = useCallback(
     (index: number, manual: EdgeManual | null): void => {
       const cur = edgesOf(controller.root.note);
@@ -138,6 +149,7 @@ export function useEdgeActions(controller: EditorController): EdgeActions {
     setEdgeSel,
     writeEdges,
     writeEdgeManual,
+    reattachEdge,
     connectEdge,
     handleEdgeRoutes,
   };

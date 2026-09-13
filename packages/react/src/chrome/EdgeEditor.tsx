@@ -28,6 +28,7 @@ import {
   type TreeEdgeAnn,
 } from './edgeEditorShared.js';
 import { defaultRelationSchema } from './relationSchema.js';
+import { EdgeAnchorPicker, type EdgeAnchorChoice } from './EdgeAnchorPicker.js';
 
 export type { DocEdge, EdgeStyle } from '../render/freeEdges.js';
 export type { NodeChoice, TreeEdgeAnn } from './edgeEditorShared.js';
@@ -56,6 +57,8 @@ export function EdgeEditor({
   onRestore,
   onDelete,
   onClose,
+  choices,
+  onReattach,
 }: {
   edge: {
     key: string;
@@ -84,6 +87,10 @@ export function EdgeEditor({
   onInvalidate: () => void;
   onRestore: () => void;
   onClose: () => void;
+  /** R2-1：重挂候选（缺省不注入 = 不显示重挂入口，向后兼容） */
+  choices?: readonly EdgeAnchorChoice[];
+  /** R2-1：重挂回调——写路径归宿主（useEdgeActions.reattachEdge 唯一写路径） */
+  onReattach?: (side: 'from' | 'to', anchor: string) => void;
 }) {
   const { token } = useTheme();
   const invalidated = edge.invalidAt !== undefined;
@@ -99,6 +106,8 @@ export function EdgeEditor({
     const opp: 'left' | 'right' = inferred === 'right' ? 'left' : 'right';
     onChange({ routingSide: opp });
   };
+  // R2-1：重挂入口 → 候选选择器（嵌在浮窗内；选择结果交宿主唯一写路径）
+  const [reattachSide, setReattachSide] = useState<'from' | 'to' | null>(null);
   return (
     <div
       data-edge-editor
@@ -127,10 +136,41 @@ export function EdgeEditor({
         >
           {edge.from} → {edge.to}
         </span>
+        {onReattach !== undefined && (
+          <>
+            <span
+              data-reattach-from
+              title="重挂源锚"
+              onClick={() => setReattachSide('from')}
+              style={{ fontSize: 10.5, color: token.color.textMuted, cursor: 'pointer', flex: 'none' }}
+            >
+              重挂源
+            </span>
+            <span
+              data-reattach-to
+              title="重挂目标锚"
+              onClick={() => setReattachSide('to')}
+              style={{ fontSize: 10.5, color: token.color.textMuted, cursor: 'pointer', flex: 'none' }}
+            >
+              重挂靶
+            </span>
+          </>
+        )}
         <span data-edge-editor-close onClick={onClose} style={closeBtn}>
           ×
         </span>
       </div>
+      {reattachSide !== null && onReattach !== undefined && (
+        <EdgeAnchorPicker
+          choices={choices ?? []}
+          excludeAnchor={reattachSide === 'from' ? edge.to : edge.from}
+          onPick={(anchor) => {
+            onReattach(reattachSide, anchor);
+            setReattachSide(null);
+          }}
+          onClose={() => setReattachSide(null)}
+        />
+      )}
       <div style={{ display: 'flex', gap: 6, alignItems: 'center', marginBottom: 6 }}>
         <input
           data-edge-rel

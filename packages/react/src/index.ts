@@ -408,6 +408,9 @@ export {
 export type { EdgeHealth, EdgeHealthItem } from './render/edgeHealth.js';
 export { edgeHealthOf } from './render/edgeHealth.js';
 export { EdgeHealthBar } from './chrome/EdgeHealthBar.js';
+// R2-1：重挂锚点候选选择器
+export type { EdgeAnchorChoice } from './chrome/EdgeAnchorPicker.js';
+export { EdgeAnchorPicker } from './chrome/EdgeAnchorPicker.js';
 
 // G6′ 中心（升格节点）数据层：root.note.centers + 历史坐标 root.note.center_pos
 export {
