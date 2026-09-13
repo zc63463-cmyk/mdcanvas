@@ -118,7 +118,12 @@ export function EdgeDraftLayer({
               '';
             onCloseLinkDraft();
             if (!from) return;
-            edgeActions.connectEdge(from, edge.to, edge.rel, linkDraft.x, linkDraft.y);
+            const info = edgeActions.connectEdge(from, edge.to, edge.rel, linkDraft.x, linkDraft.y);
+            if (info.skippedInvalid > 0) {
+              onNotice?.(
+                `已存在 ${info.skippedInvalid} 条同名失效边——已新建，原失效边保留`,
+              );
+            }
             // 创建器携带的 dir/label/note/style 需落到（可能已存在的）边上
             const cur = edgesOf(controller.root.note);
             const idx = findDuplicateEdge(cur, { from, to: edge.to, rel: edge.rel });

@@ -302,3 +302,62 @@ describe('handleEdgeRoutes：forcedSideFallback 值比较（R3-4）', () => {
     expect(result.current.selEdgeForcedSideFallback).toBe(false);
   });
 });
+
+describe('connectEdge 去重口径（R4-3①）：失效边不吞新建', () => {
+  function buildInvalidDupController(): EditorController {
+    const built = astToEditable(makeTextNode('根', [makeTextNode('任务'), makeTextNode('生活')]));
+    if (built === null) throw new Error('fixture broken');
+    built.note = {
+      edges: [
+        {
+          from: 'node:根/任务',
+          to: 'node:根/生活',
+          rel: 'relates-to',
+          invalidAt: '2026-09-01T00:00:00.000Z',
+        },
+      ],
+    };
+    return new EditorController(built);
+  }
+
+  it('同名失效边在场 → 新建成功（并存）+ 返回 skippedInvalid=1 + undo 回滚', () => {
+    const controller = buildInvalidDupController();
+    const { result } = renderHook(() => useEdgeActions(controller));
+    let info: { created: boolean; skippedInvalid: number } | undefined;
+    act(() => {
+      info = result.current.connectEdge('node:根/任务', 'node:根/生活', 'relates-to', 0, 0);
+    });
+    const raw = controller.root.note?.edges;
+    expect(Array.isArray(raw)).toBe(true);
+    expect((raw as unknown[]).length).toBe(2);
+    const first = (raw as Array<Record<string, unknown>>)[0];
+    const second = (raw as Array<Record<string, unknown>>)[1];
+    expect(first?.invalidAt).toBe('2026-09-01T00:00:00.000Z'); // 原失效边保留
+    expect(second?.invalidAt).toBeUndefined(); // 新边有效
+    expect(info?.created).toBe(true);
+    expect(info?.skippedInvalid).toBe(1);
+    expect(controller.undo()).toBe(true);
+    const rawAfterUndo = controller.root.note?.edges;
+    expect(Array.isArray(rawAfterUndo) && rawAfterUndo.length === 1).toBe(true);
+  });
+
+  it('同名正常边在场 → 仍选中旧边不新建（回归钉）', () => {
+    // 专用夹具：同键边且未失效（buildController 的边带 invalidAt 且 from 不同）
+    const built = astToEditable(makeTextNode('根', [makeTextNode('任务'), makeTextNode('生活')]));
+    if (built === null) throw new Error('fixture broken');
+    built.note = {
+      edges: [{ from: 'node:根/任务', to: 'node:根/生活', rel: 'relates-to' }],
+    };
+    const controller = new EditorController(built);
+    const { result } = renderHook(() => useEdgeActions(controller));
+    let info: { created: boolean; skippedInvalid: number } | undefined;
+    act(() => {
+      info = result.current.connectEdge('node:根/任务', 'node:根/生活', 'relates-to', 0, 0);
+    });
+    const rawBefore = controller.root.note?.edges;
+    expect(Array.isArray(rawBefore) && rawBefore.length === 1).toBe(true);
+    expect(info?.created).toBe(false);
+    expect(info?.skippedInvalid).toBe(0);
+    expect(result.current.edgeSel?.key).toBe('e0');
+  });
+});

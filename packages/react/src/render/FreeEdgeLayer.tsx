@@ -332,7 +332,9 @@ export function FreeEdgeLayer({
         const selected = selectedKey === edge.key;
         const mId = markerIdOf(stroke);
         const both = edge.dir === 'both' && !eps.ghost;
-        const labelText = edge.label ?? edge.rel;
+        // R4-3③：label 空串也回落 rel（?? 只挡 undefined——空串 label 会丢失 rel 信息）；
+        // EdgeLabel 自带空文本守卫（text==='' → null），双保险不渲染空胶囊
+        const labelText = edge.label !== undefined && edge.label !== '' ? edge.label : edge.rel;
         const tip = [
           invalidated ? `已失效 ${edge.invalidAt?.slice(0, 10)}` : '',
           `${edge.rel}${edge.label ? ` · ${edge.label}` : ''}`,

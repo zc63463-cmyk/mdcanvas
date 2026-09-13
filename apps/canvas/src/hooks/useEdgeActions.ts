@@ -85,8 +85,17 @@ export interface EdgeActions {
   setEdgeDir: (index: number, dir: LinkDir) => void;
   /** 写入「人工锁定」几何；null = 清空锁定恢复自动 */
   writeEdgeManual: (index: number, manual: EdgeManual | null) => void;
-  /** 建边；同 from+to+rel 已存在则直接选中打开编辑器（防重叠双线） */
-  connectEdge: (from: string, to: string, rel: string, sx: number, sy: number) => void;
+  /**
+   * 建边（R4-3① 去重口径：只对**未失效**边查重——同名失效边不吞新建，并存保留）。
+   * 返回 created=是否新建；skippedInvalid=同键失效边条数（宿主提示用）。
+   */
+  connectEdge: (
+    from: string,
+    to: string,
+    rel: string,
+    sx: number,
+    sy: number,
+  ) => { created: boolean; skippedInvalid: number };
   /** 接收 FreeEdgeLayer 的实际路由结果（只存选中边的 d，见下） */
   handleEdgeRoutes: (routes: ReadonlyMap<string, EdgeRouteEntry>) => void;
 }
@@ -236,16 +245,24 @@ export function useEdgeActions(controller: EditorController): EdgeActions {
   );
 
   const connectEdge = useCallback(
-    (from: string, to: string, rel: string, sx: number, sy: number): void => {
+    (from: string, to: string, rel: string, sx: number, sy: number): { created: boolean; skippedInvalid: number } => {
       const cur = edgesOf(controller.root.note);
       const dup = findDuplicateEdge(cur, { from, to, rel });
-      if (dup >= 0) {
+      // R4-3①：命中未失效边 → 选中旧边（防重叠双线）；命中的是失效边 → 不吞新建（并存）
+      if (dup >= 0 && cur[dup]?.invalidAt === undefined) {
         setEdgeSel({ key: `e${dup}`, x: sx, y: sy });
-        return;
+        return { created: false, skippedInvalid: 0 };
       }
       const arr = appendEdge(cur, { from, to, rel, source: 'manual' });
       writeEdges(arr);
       setEdgeSel({ key: `e${arr.length - 1}`, x: sx, y: sy });
+      const skippedInvalid =
+        dup >= 0
+          ? cur.filter(
+              (e) => e.from === from && e.to === to && e.rel === rel && e.invalidAt !== undefined,
+            ).length
+          : 0;
+      return { created: true, skippedInvalid };
     },
     [controller, writeEdges],
   );
