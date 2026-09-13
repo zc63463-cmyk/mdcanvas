@@ -7,6 +7,20 @@
 > （09-05~09-06）与「图引擎适配 / 文件工作台」（09-10）等批次未单独标号，
 > 按完成时间归入对应段落末尾的「同批」小节。
 
+## [1.8.13] — 2026-09-14 · 升中心 Phase 2（写路径统一 / 守卫补齐 / 嵌套语义收口 / 可见性 / 缓存取证）
+
+**触发**：升中心方向已落地「协议/身份/布局/拖拽/菜单」全链，但留五处未收口——升格写路径双轨（菜单/环不分配 cid）、`planPromoteCenter` 与三个写动作无直测、嵌套跟随语义「设计确认中」、中心无任何视觉标记、森林布局无缓存且无实测数据。计划：`docs/dispatch/2026-09-13-centers-phase2-plan.md`。
+
+- **C1 升格写路径统一**（`e5420ad`）：`makeCenterActions.onPromote` 由「`upsertCenter + updateNote`」双轨改为 `planPromoteCenter + applyTransaction`（与「设为 Section」共用唯一写路径）——右键/环两条入口自动同源；升格开始分配/沿用**节点 `note.cid`**（只给被升格节点，不做全库迁移）、单批 ops 一次 undo、root 守卫与失败通道（`onAttachError`）随 plan 生效。**口径变更（列明）**：`at` 不可解析（如空文本节点）时不再静默不动作，改由 plan 兜底 `cid:` 锚继续升格。判别测试 `center-actions-promote.test.tsx` 5 例（红→绿）。
+- **C2 守卫补齐**（`96445e2`）：`planPromoteCenter` 直测 5 例（is-root / not-found / 无 cid 两 op+bump / 有 cid 一 op 不 bump / pos 落点写入）；写动作直测 4 例（`onDemote` 连键删+坐标进历史+cid 保留、多中心只删被降、非中心 no-op；`onToggleParentLink` show 写 / hide 删回读）。**顺带修复**：`onDemote` 未命中（非中心）不再写空 note/置脏（原实现会把 `root.note` 从 undefined 写成 `{}`，进 history 且弄脏 dirty）。**阴性对照**：改坏 `ensureNodeCid` 沿用分支 → 3 文件 3 用例全红（已恢复）。
+- **C3 嵌套跟随语义收口**（`a7c7511`）：走真实管线的判别测试 3 例（投影层 `membersByRoot` 互不含 + 拖 P 时 C 岛成员盒不动 + 拖 C 时 P 岛不动）；spec §6.3 补「嵌套岛移动语义」——子岛独立坐标身份（`x`/`y` 与 `center_pos`）、父岛拖动**不带动**子岛（C-A3 裁决；钉住型测试直接绿，现状与计划 §1.2 判断一致）。
+- **C4 中心可见性角标**（`b082438`）：节点**左上角**小圆点 + `data-center` + `<title>中心（doc#cid）</title>`（`pointerEvents:'none'` 不抢命中；右上=note 角标、右中=折叠钮，分侧不冲突）。渲染条件吃 `centerTitles`（collectCenters 真实中心事实）——**不用 `centerIds`**：后者含布局输出所需的「根岛根」，会把文档根误标为中心（真浏览器核对抓到）。**补漏**：`MindmapStage` 接线 `islandMembers`——A4「中心拖动整岛预览」的 `centerPreview` 自实现起**无任何调用方**，画布拖中心曾落「浮空克隆 + 置灰」的改结构表现（提交层一直正常）。`canvas-degrade.test.tsx` 追加 `data-center` 1→0（既有 1/1 与 0/0 断言未动）；`CANVAS_DEGRADE_NOTICE` 追加「中心标记」。真浏览器四态 verify `tools/verify-c4-center-badge.mjs`：普通/选中/拖拽中（整岛跟随 +107.6/+40.3 世界、非成员不动）/Canvas 降级（提示含中心标记）**全通过**；阴性对照禁用角标渲染 → 4 用例全红（已恢复）。截图 `verify-shots/c4-badge-{plain,selected,dragging,canvas}.png`。
+- **C5 森林布局耗时取证**（`634ef9b`，只测不实现）：A6 原样基准（1097 节点 4 中心：3.3 → 12.3ms，3.74x，未超 16ms）；新增矩阵 `scripts/bench-islands-matrix.mjs`（N∈{364,1093,3280} × 中心数∈{0,1,3,8}）：N≤1093 各格比值 2.4-5.8x 但绝对耗时 <16ms；**N≈3280 三格全部同时越过 1.5×+16ms 双阈值（33.2/27.8/31.0ms = 4.87-5.82x，复跑一致）→ 触发条款命中，数据支持立项缓存批**（实现另批）。N=0 对照 ≈ 单树（封装开销 ≤0.2ms）。
+
+**验收**：kernel **480** / react **1140**（+13）/ canvas **195**（+9）= **1815 全绿**（净增 +22；较计划预期 1804±2 多 +11——各任务判别测试均多写，无一条测试删除或放宽）；tsc ×3 / react dist 重建 / depcruise（421 模块 / 1181 deps，零违规）/ lint **1468 warnings + 46 infos**（持平原水位，新代码零告警）/ budget 全持平（bang 89/90、asCast 31/31、bigFiles 3/4；超 600 行：MapView 2193→2218 / MindmapStage 2254 / edgeRouting 1235）。**阴性对照 2 组 + TDD 红证据 3 组**（各自精确变红后恢复、`git diff` 空）：① `ensureNodeCid` 沿用分支改坏 → C1/C2 3 用例红（`expected 'c7' to be 'c3'` 等）；② C4 禁用角标渲染 → 4 用例红（`expected null not to be null`）；③ C1 双轨现状红（`centers 条目无 cid` / `expected [] to have a length of 1`）；④ C2 `onDemote` 修复前红（`expected {} to be undefined`）。
+
+**待跟进（范围外）**：森林布局缓存批（C5 数据支持立项——P2「中心局部布局缓存」）；jsdom 视口裁剪口径可测试性笔记（0×0 视口 + worldRect/isBoxInView 双重 margin → 有效可见 ≈ ±256，夹具需贴近原点并加防裁剪假绿断言；已在 `mapview-center-nested-drag.test.tsx` 注释记录）。
+
 ## [1.8.12] — 2026-09-13 · 边会话稳定性深度修复（跨文档换代检查 / 鼓向顶点化 / 路由事实门控）
 
 **触发**：R5 收口复核的独立探针复现两处缺陷——① 数据级：`stableByKeys` 跨文档误复用致**自由边整层不渲染**（R5 报告已记「范围外发现」，本轮独立复现并修）；② 行为级：R5-1 折线跳桥把「直线 + 跳线」的鼓向读成有侧（`inferBowSide` 形态漂移，`d05a043` commit message 已注明但未落测试）。修复中又收口同族第三处（选中边三项路由事实未按 key 门控）。报告：`outputs/2026-09-13-edge-stability-deepfix-report.md`。
