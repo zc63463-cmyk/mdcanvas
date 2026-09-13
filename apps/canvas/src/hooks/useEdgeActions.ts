@@ -15,6 +15,7 @@
  */
 import { useCallback, useMemo, useRef, useState } from 'react';
 import type { EditableNode, LinkDir } from '@mindcanvas/kernel';
+import { defaultRelationSchema } from '@mindcanvas/react';
 import type { EditorController, FreeEdge } from '@mindcanvas/react';
 import {
   anchorOfNode,
@@ -64,6 +65,12 @@ export interface EdgeActions {
   deleteEdge: (index: number) => void;
   /** R4-1：复制一条（同字段克隆追加；一次 undo 可回滚） */
   duplicateEdge: (index: number) => void;
+  /**
+   * R4-2：反向（数据层反转）——交换 from/to；rel 三态（成对反向换名 / 对称不变 /
+   * 未注册不变 + message）；渲染端保形（manual 交换 + routingSide 翻转，同 R3-3）；
+   * 与 dir 正交（不改 dir）。单补丁一次写一条 history。
+   */
+  reverseEdge: (index: number) => { relChanged: boolean; message?: string };
   /**
    * R4-1：标记失效 / 恢复（收敛 EdgeDraftLayer 的内联 patchEdgeAt——R4-4 在此
    * 升级为级联）。invalid=true 写当前时间戳；false 清除（undefined 键被清除）。
@@ -191,6 +198,35 @@ export function useEdgeActions(controller: EditorController): EdgeActions {
     [controller, writeEdges],
   );
 
+  const reverseEdge = useCallback(
+    (index: number): { relChanged: boolean; message?: string } => {
+      const cur = edgesOf(controller.root.note);
+      const item = cur[index];
+      if (!item) return { relChanged: false };
+      const cfg = defaultRelationSchema.getConfig(item.rel);
+      const reverse = defaultRelationSchema.reverseOf(item.rel);
+      const patch: Partial<DocEdge> = { from: item.to, to: item.from };
+      let relChanged = false;
+      let message: string | undefined;
+      if (reverse !== null && reverse !== item.rel) {
+        patch.rel = reverse;
+        relChanged = true;
+      } else if (cfg === undefined) {
+        // R4-A2：未注册/无反向 → rel 不变 + 一次提示（不静默、不阻断）
+        message = `关系「${item.rel}」未注册反向——已交换两端，关系名保持不变`;
+      }
+      if (item.manual !== undefined) {
+        patch.manual = { ...item.manual, from: item.manual.to, to: item.manual.from };
+      }
+      if (item.routingSide !== undefined) {
+        patch.routingSide = item.routingSide === 'left' ? 'right' : 'left';
+      }
+      writeEdges(patchEdgeAt(cur, index, patch));
+      return { relChanged, message };
+    },
+    [controller, writeEdges],
+  );
+
   const writeEdgeManual = useCallback(
     (index: number, manual: EdgeManual | null): void => {
       const cur = edgesOf(controller.root.note);
@@ -229,6 +265,7 @@ export function useEdgeActions(controller: EditorController): EdgeActions {
     deleteEdge,
     duplicateEdge,
     setEdgeInvalid,
+    reverseEdge,
     setEdgeDir,
     connectEdge,
     handleEdgeRoutes,

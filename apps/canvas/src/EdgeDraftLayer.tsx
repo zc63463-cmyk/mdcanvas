@@ -57,6 +57,8 @@ export interface EdgeDraftLayerProps {
   /** R4-1：边右键菜单状态（Stage 持有；null = 关闭） */
   edgeMenu?: EdgeContextMenuState | null;
   onCloseEdgeMenu?: () => void;
+  /** R4-2：提示通道（commandNotice）——反向未注册 rel 等一次可见提示 */
+  onNotice?: (message: string) => void;
 }
 
 export function EdgeDraftLayer({
@@ -69,6 +71,7 @@ export function EdgeDraftLayer({
   onCutTreeEdge,
   edgeMenu = null,
   onCloseEdgeMenu,
+  onNotice,
 }: EdgeDraftLayerProps) {
   // 取局部 const：TS 无法对 obj.prop 跨表达式收窄类型，不取局部变量守卫生效不了
   const selEdgeOpen = edgeActions.selEdge;
@@ -161,6 +164,10 @@ export function EdgeDraftLayer({
           onDirChange={(d) => {
             edgeActions.setEdgeDir(selEdgeOpen.index, d);
           }}
+          onReverse={() => {
+            const info = edgeActions.reverseEdge(selEdgeOpen.index);
+            if (info.message !== undefined) onNotice?.(info.message);
+          }}
           forcedSideFallback={edgeActions.selEdgeForcedSideFallback}
           // Issue #3 / forceSide：routingSide 经 patch 写回（含 undefined = 恢复自动）
           onChange={(patch: Partial<DocEdge>) => {
@@ -218,7 +225,11 @@ export function EdgeDraftLayer({
               setReattachTarget({ index, side });
               onCloseEdgeMenu?.();
             },
-            // R4-2 接线反向；R4-4 接线级联——未接线前禁用（数据层兼容路径）
+            onReverse: () => {
+              const info = edgeActions.reverseEdge(index);
+              if (info.message !== undefined) onNotice?.(info.message);
+              onCloseEdgeMenu?.();
+            },
             onDuplicate: () => {
               edgeActions.duplicateEdge(index);
               onCloseEdgeMenu?.();

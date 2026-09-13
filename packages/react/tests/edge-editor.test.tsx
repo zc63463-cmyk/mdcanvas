@@ -738,3 +738,57 @@ describe('EdgeEditor forcedSideFallback 提示（R3-4）', () => {
     expect(off.container.querySelector('[data-edge-fallback-hint]')).toBeNull();
   });
 });
+
+describe('EdgeEditor 反向按钮（R4-2）', () => {
+  const revEdge = {
+    key: 'e0',
+    index: 0,
+    rel: 'causes',
+    dir: 'fwd' as const,
+    from: 'node:根/A',
+    to: 'node:根/B',
+  };
+
+  it('注入 onReverse → 「反向」按钮出现且点击触发一次', () => {
+    const onReverse = vi.fn();
+    const { container } = render(
+      <ThemeProvider>
+        <EdgeEditor
+          edge={revEdge}
+          x={10}
+          y={10}
+          onChange={vi.fn()}
+          onStyle={vi.fn()}
+          onInvalidate={vi.fn()}
+          onRestore={vi.fn()}
+          onDelete={() => undefined}
+          onClose={() => undefined}
+          onReverse={onReverse}
+        />
+      </ThemeProvider>,
+    );
+    const btn = container.querySelector('[data-edge-reverse]');
+    if (btn === null) throw new Error('reverse button not found');
+    fireEvent.click(btn);
+    expect(onReverse).toHaveBeenCalledTimes(1);
+  });
+
+  it('缺省（不注入）→ 不渲染反向按钮（向后兼容钉）', () => {
+    const { container } = render(
+      <ThemeProvider>
+        <EdgeEditor
+          edge={revEdge}
+          x={10}
+          y={10}
+          onChange={vi.fn()}
+          onStyle={vi.fn()}
+          onInvalidate={vi.fn()}
+          onRestore={vi.fn()}
+          onDelete={() => undefined}
+          onClose={() => undefined}
+        />
+      </ThemeProvider>,
+    );
+    expect(container.querySelector('[data-edge-reverse]')).toBeNull();
+  });
+});

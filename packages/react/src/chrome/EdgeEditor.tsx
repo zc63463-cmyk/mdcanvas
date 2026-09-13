@@ -60,6 +60,7 @@ export function EdgeEditor({
   onReattach,
   onDirChange,
   forcedSideFallback,
+  onReverse,
 }: {
   edge: {
     key: string;
@@ -101,6 +102,8 @@ export function EdgeEditor({
   onDirChange?: (dir: LinkDir) => void;
   /** R3-4：指定侧无解 → 已回退直连（由宿主经 RouteResult.forcedSideFallback 透传） */
   forcedSideFallback?: boolean;
+  /** R4-2：反向（数据层反转；缺省不注入 = 不渲染按钮，向后兼容） */
+  onReverse?: () => void;
 }) {
   const { token } = useTheme();
   const invalidated = edge.invalidAt !== undefined;
@@ -217,6 +220,22 @@ export function EdgeEditor({
           disabled={manualLocked}
           disabledTitle={MANUAL_LOCKED_TITLE}
         />
+        {onReverse !== undefined && (
+          <button
+            data-edge-reverse
+            onClick={onReverse}
+            title="反向：交换两端（数据层反转，dir 不变）"
+            style={{
+              ...inputStyle,
+              cursor: 'pointer',
+              color: token.color.textMuted,
+              padding: '0 8px',
+              fontSize: 11,
+            }}
+          >
+            ⇄ 反向
+          </button>
+        )}
         <button
           data-edge-opp
           disabled={manualLocked}

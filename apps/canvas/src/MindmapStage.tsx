@@ -2079,6 +2079,7 @@ function StageContent({
         onCutTreeEdge={handleCutTreeEdge}
         edgeMenu={edgeMenu}
         onCloseEdgeMenu={() => setEdgeMenu(null)}
+        onNotice={setCommandNotice}
       />
 
       {/* 批次 2：? 快捷键帮助面板 */}
