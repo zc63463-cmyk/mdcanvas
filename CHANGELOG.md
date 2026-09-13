@@ -7,6 +7,17 @@
 > （09-05~09-06）与「图引擎适配 / 文件工作台」（09-10）等批次未单独标号，
 > 按完成时间归入对应段落末尾的「同批」小节。
 
+## [1.8.11] — 2026-09-13 · 渲染一致性 R5（跳线折线化 / 边标签层上提 / Canvas 降级提示）
+
+**触发**：R2/R3/R4 补齐边能力后，渲染层三项一致性欠账——跳线是「折线主体 + 贝塞尔弧」混合形态、边标签被节点遮挡（两处 `EdgeLabel` 渲染点都在节点层之下）、>5 万可见节点自动降级 Canvas 时用户零感知（全仓无降级提示）。计划：`docs/dispatch/2026-09-13-r5-render-consistency-plan.md`。
+
+- **R5-1 跳线折线化**（`d05a043`）：`pathWithJumps` 的 hop 由「L enter + C 拱弧」改为折线梯形桥四折点（enter → 法向抬起 r → 沿路径跨 2r → 落回 exit）——单几何形态贯穿路由 → 渲染 → 判定（`inferBowSide`）→ 导出；跳线点位置 / 上下判定 / 前后各留 r / 忽略规则 / 无交叉零拷贝 / `fastRouting` 门控 / R4-3② 失效边剔除路径 全不变。**断言口径变更 3 处**（均换语义等价折线判据、非放宽）：① `pathWithJumps` 用例「`toContain('C')`」→「不含 C + 全串写死（顶点 2+4=6、抬升=radius）」；② R3-2 夹具前置「`toContain('C')`」→「M/L/C 指令 ≥ 4」（`inferBowSide` 期望 left/right 不变）；③ 对角线用例 d0「`toMatch(/C /)`」→「不含 C + M/L 指令写死 7」、d1「`not.toMatch(/C /)`」（折线化后恒真、守卫静默失效）→「与输入直出折线逐字相等」。另核第 4 处 C 判据（`edge-invalid-routing:90`——探针实证其 C 来自短边自身贝塞尔形态，与跳线无关）。真浏览器 before/after：`tools/verify-r5-jump.mjs` → `verify-shots/r5-jump-{before,after}-{full,zoom}.png`（梯形桥清晰可辨、无断点感、与折线主体风格一致）。
+- **R5-2 边标签层上提 + 层序契约**（`859a930`）：新 `EdgeLabelLayer.tsx`（`FreeEdgeLabelStore` + `useSyncExternalStore`）——树线标注与自由边标签统一搬到节点层之上（ghost 之下）；`FreeEdgeLayer` 只收集（`onLabelsChange`；ghost 锚点 / stroke 三态 / 空文本口径逐项一致）+ layout effect 上报 + 卸载清空；**命中区留原层**（`data-free-edge-hit` 反例钉：仍在节点之下、不在标签层）。层序契约注释 + 各层 `data-layer`（sections/tree-links/free-edges/nodes/edge-labels/ghosts/drag）+ `mapview-layer-order.test.tsx` 4 例（先红后绿）+ `edge-label-guard.test.tsx` 改走真实 MapView 组合（四例语义不变）。**偏差**：最小文档上标签-节点最近约 1 世界 px 贴边不交叠（布局/路由天然保持净空），before/after 截图像素一致——层序主验收 = jsdom 契约，`tools/verify-r5-labels.mjs` 留作邻接态证据。
+- **R5-3 Canvas 降级提示**（`a4d9cc4`）：`MapStats.backend` 加法字段并**并入材料字段**（触发 dep = `useCanvas`；biome 中性已对照验证）；新 hook `useCanvasDegradeNotice`（同文档只提示一次 / 切文档重新允许）+ 命令告警条 + `PerfPanel` 后端行。**损失清单实测**（DoD）：同夹具 svg↔canvas diff = `data-tree-edge-label` 1→0、`data-note-badge` 1→0（占位跑原样捕获）→ 文案终稿：「已进入大图模式（Canvas）：为保住帧率，边标签与注释角标暂不渲染（可见节点超过 5 万自动切换）。折叠部分分支可回到完整渲染。」（判据吃折叠裁剪后的可见节点数——折叠跌回阈值自动恢复 SVG）。
+- **发现（范围外，未修，建议后续批次）**：`stableByKeys`（G-P1）仅按 key 序列判复用——文档切换后新边集 key 相同（如 e0/e1）而内容全新时，返回**旧解析树**的边 → `boxOf` 全落空 → 自由边整层不渲染（fiber 探针实测：feEdges id ≠ documentRoot id；触发条件：切换前后自由边数相同）。本批 verify 脚本以 3 边文档绕开（脚本注释有指向）；修复方向：稳定化需带来源换代检查（如 rootNode 身份）或内容判据。
+
+**验收**：kernel **480** / react **1120** / canvas **182** = **1782 全绿**（R5 批 +10：R5-1 +2 / R5-2 +4 / R5-3 +4）；tsc ×3 / react dist 重建 / depcruise（414 模块 / 1167 deps，+5 文件为新模块与新测试；零违规）/ lint **1468 warnings + 46 infos**（持平原水位——终检曾 +5（新测试夹具非空断言），修复提交 `0767992` 后复跑回 1468）/ budget 全持平（bang 89/90、asCast 31/31、bigFiles 3/4——超 600 行：MindmapStage 2249→2254 / edgeRouting 1213→1221 / MapView 2112→2182）。
+
 ## [1.8.10] — 2026-09-13 · 空白区交互裁决 + 快照新鲜度守卫
 
 **触发**：用户裁决两条"画布空白处"交互（双击 / 单击），并收口本轮「快照过期导致白跑一轮」的流程坑。
