@@ -29,7 +29,9 @@ function fixture(): EditableNode {
     makeTextNode('任务A', [makeTextNode('子1')]),
     makeTextNode('B'),
   ]);
-  root.children[0]!.children[0]!.note = { edge: { rel: 'blocks' } };
+  const z1 = root.children[0]?.children[0];
+  if (!z1) throw new Error('夹具构建失败：找不到 子1');
+  z1.note = { edge: { rel: 'blocks' } };
   root.note = {
     edges: [{ from: 'node:根/任务A/子1', to: 'node:根/B', rel: 'relates-to', label: '关系标签' }],
   };

@@ -23,8 +23,9 @@ const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms
 function buildFixture() {
   const root = astToEditable(
     makeTextNode('根', [makeTextNode('任务A', [makeTextNode('子1')]), makeTextNode('B')]),
-  )!;
-  const z1 = root.children[0]!.children[0]!;
+  );
+  const z1 = root?.children[0]?.children[0];
+  if (!root || !z1) throw new Error('夹具构建失败：找不到 子1');
   z1.note = { edge: { rel: 'blocks' }, note: ['一条注释'] };
   return layoutMindmap(root, createNodeMeasure(char, new Map()), new Set());
 }
