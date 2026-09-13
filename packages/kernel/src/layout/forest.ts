@@ -212,24 +212,45 @@ function shiftIsland(
   // 局部布局中「根节点中心」的位置 → 需要平移到 origin
   const dx = origin.x - (root.box.x + root.box.w / 2);
   const dy = origin.y - (root.box.y + root.box.h / 2);
-  const shiftedRoot = shiftTree(root, dx, dy);
-  // 前序收集（与 local.nodes 同序：同一棵树、同一遍历方式）
-  const nodes: LayoutNode[] = [];
-  const collect = (ln: LayoutNode): void => {
-    nodes.push(ln);
-    ln.children.forEach(collect);
-  };
-  collect(shiftedRoot);
-  return { nodes, links: islandLinks(shiftedRoot, dir, dirSink), bounds: layoutBounds(nodes) };
+  const entry = shiftTree(root, dx, dy);
+  const nodes = entry.preorder;
+  return { nodes, links: islandLinks(entry.shifted, dir, dirSink), bounds: layoutBounds(nodes) };
 }
 
-/** 平移副本树（全新对象；对源树零写入） */
-function shiftTree(ln: LayoutNode, dx: number, dy: number): LayoutNode {
-  return {
+/**
+ * 平移副本 memo（F4 优化）：local 子树 → 副本（+ 生成它的 delta + 子树前序）。
+ *
+ * 未变子树（对象身份）+ 同 delta（岛 origin 未变）→ 直接复用上次副本与前序段
+ * （O(变更路径) 而非 O(岛大小)）；delta 变化（岛被挤动）→ miss → 重建。
+ * 正确性：副本 = f(local, delta) 纯函数——同输入可复用（delta 用精确比较）。
+ */
+interface ShiftedMemoEntry {
+  dx: number;
+  dy: number;
+  shifted: LayoutNode;
+  /** 子树前序数组（与 shifted 同构；复用时直接并入输出） */
+  preorder: LayoutNode[];
+}
+
+const shiftedMemo = new WeakMap<LayoutNode, ShiftedMemoEntry>();
+
+/** 平移副本树 · memo 版（全新对象；对源树零写入） */
+function shiftTree(ln: LayoutNode, dx: number, dy: number): ShiftedMemoEntry {
+  const hit = shiftedMemo.get(ln);
+  if (hit && hit.dx === dx && hit.dy === dy) return hit;
+  const children = ln.children.map((c) => shiftTree(c, dx, dy));
+  const shifted: LayoutNode = {
     ...ln,
     box: { x: ln.box.x + dx, y: ln.box.y + dy, w: ln.box.w, h: ln.box.h },
-    children: ln.children.map((c) => shiftTree(c, dx, dy)),
+    children: children.map((c) => c.shifted),
   };
+  const preorder: LayoutNode[] = [shifted];
+  for (const c of children) {
+    for (const n of c.preorder) preorder.push(n);
+  }
+  const entry: ShiftedMemoEntry = { dx, dy, shifted, preorder };
+  shiftedMemo.set(ln, entry);
+  return entry;
 }
 
 /**

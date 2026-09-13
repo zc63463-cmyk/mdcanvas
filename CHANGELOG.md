@@ -21,6 +21,21 @@
 
 **偏差与记录**：① canvas 首轮全量 3 红（C 批 `center-actions-promote` 的 cid 断言）——单跑/复跑全绿 + 路径论证（该链路 op 全为 note patch，`isAnchorAffectingOp` 短路、不经迁移收集）+ 历史偶发先例 → 判**低频偶发、与本批无因果**（留观察）；② 右键菜单已无「编辑笔记」（v1.8.2 瘦身移出，环内二级有等价席位）——验证脚本走环路径；③ L2 后重建的 dist 含同树并行批次源码（同工作树纪律，报备）。
 
+## [1.8.15] — 2026-09-14 · 森林布局缓存（岛级 + 岛内增量 / 投影壳稳定化 / 基准收口）
+
+**触发**：C5 取证（`634ef9b`）N≈3280 多中心 21.7–33.3ms 同时越过 1.5×+16ms 双阈值 → 判定立项缓存批。计划：`docs/dispatch/2026-09-14-forest-layout-cache-plan.md`；报告：`outputs/2026-09-14-forest-layout-cache-report.md`。
+
+- **F1 缓存通道 + 逐位等价基线**（`e3d3fde`）：`layoutForest` / `layoutIslands` opts 增 `cache` / `measureKey`（kernel 加法），`layoutDemo` 森林分支透传；森林入口统一执行 `mindmap.ts:112-121` 同款失效契约（collapsedKey / measureKey **身份比较**，不用内容深比较）；每岛调用 `layoutMindmapBranched({ ..., cache, measureKey })` 通道就位。判别：C5 矩阵 k∈{1,3,8}×N∈{364,1093,3280}+自动排列混搭，缓存开/关 `nodes/links/bounds` **全字段逐位相同**（Object.is 口径）。
+- **F2 岛级缓存**（`5c472f9`）：`LayoutCache.forestIslands`（键 = 岛根身份 + dir）——未编辑岛零重算（零 measure）/ 引用复用；**非破坏式平移**（局部产物永不被平移污染；合并期产出平移副本 + placedAt 守卫）——幂等性（连续 3 次）与 20+8 步编辑序列逐步逐位等价钉死。**阴性对照**：岛键漏「岛根身份」（所有岛共享首岛键）→ 15 用例红（`expected 486 to be 364`）。
+- **F3 岛内分支布局接 LayoutCache**（`cc728ae`）：`layoutLogic` / `layoutOrg` 接增量原语（`buildSkeletonCached` 命中复用、`placeSubtreeIncremental` / `placeOrgIncremental` 放置戳、`collectCached` 收集复用——域隔离靠构建期 side：logic=±1 / org=0 / mindmap=分区）；`layoutMindmapBranched` 回退与基准均透传缓存。**未触发停止条款**（无放宽等价判据）；深编辑零 measure + `cache.nodes` 引用复用达成。**阴性对照**：measureKey 判定失效（透传键不反映度量语义）→ 3 用例红（`box.x 非逐位相等（-23 vs -24.5）`）。
+- **F4 投影壳稳定化 + 基准收口**（本提交）：`projectIslands` 对「与上次产出逐项同一」的节点复用壳（结构共享感知，不做深比较）+ 文档根跨对象特判（`lastRootShell`）——**修掉「升格剪枝导致根岛每次换壳」**（F4 基准暴露：k=1 根岛 2187 节点每次编辑全量重算 ≈19ms）；`shiftTree` 加 delta memo。**基准 `scripts/bench-layout-cache.mjs`**（C5 矩阵复测 + 编辑型前后对照）：单树 N=3280 编辑 5.0→0.09ms；**森林 k=1 28.9→6.9ms（4.2×）/ k=3 25.2→6.5ms / 无改动复跑 29.5→0.02ms**；F-A7 判定：**<16ms 达成（6.5–7.0ms）、<5ms 未达**（残余成本：岛内 place 重放 / links 重建 / 遍历的 O(n) 残余——后续优化点）。
+
+**验收**：kernel **508**（+25）/ react **1206**（+3）/ canvas **195** = **1909 全绿**；tsc ×3 / react dist 重建 / depcruise（431 模块 / 1220 deps，零违规）/ lint **1468 warnings + 46 infos**（持平原水位；mindmap.ts 新增注释压缩至 594 行）/ budget 全持平（bang 89/90、asCast 31/31、bigFiles 3/4）。**TDD 红证据 6 组 + 阴性对照 3 组**（各自精确变红后恢复、`git diff` 空）：① F1 通道 3 例红 + TS2353 ×7；② F2 引用复用红（`Compared values have no visual difference`）；③ F3 深编辑 355 节点重度量红；④ F4 根岛身份红（同上「无视觉差异」）；⑤ 岛键漏岛根身份 → 15 红；⑥ measureKey 判定失效 → 3 红。
+
+**偏差与记录**：① **F4 投影壳稳定化为计划外新增**（计划 F-A5「投影缓存不做」）——实测证明「升格剪枝每次换壳」令根岛**恒 miss**（k=1 编辑 24ms 不达标）；稳定化非「缓存投影计算」（walk 照跑），是「壳身份稳定化」——§1.4 岛根身份假设的补全；② **已知边界**：编辑「嵌套升格子岛」内时其祖先升格岛会误 miss（内容未变但重算——需「投影产出的层级对齐」，另批）；③ `<5ms` 争取档未达（6.5–7.0ms；硬目标 <16ms 达成）；④ 本批与 L 批（文本链接）并行：文件面零重叠，CHANGELOG 顺延至 [1.8.15]。
+
+**待跟进（范围外）**：islandLinks 子树级 memo / place 重放的 delta 平移 / 嵌套中层投影对齐（见本批边界②）。
+
 ## [1.8.13] — 2026-09-14 · 升中心 Phase 2（写路径统一 / 守卫补齐 / 嵌套语义收口 / 可见性 / 缓存取证）
 
 **触发**：升中心方向已落地「协议/身份/布局/拖拽/菜单」全链，但留五处未收口——升格写路径双轨（菜单/环不分配 cid）、`planPromoteCenter` 与三个写动作无直测、嵌套跟随语义「设计确认中」、中心无任何视觉标记、森林布局无缓存且无实测数据。计划：`docs/dispatch/2026-09-13-centers-phase2-plan.md`。

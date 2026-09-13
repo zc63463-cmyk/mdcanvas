@@ -14,8 +14,10 @@
  * 不是什么：
  * - 不做锚解析（`state` 三态由调用方 resolveLinkAnchor 得出，本模块只消费结果）
  * - 不做「是否回退单树布局」的判断（调用方依据有效中心数自行决定）
- * - 不修改源树任何节点：投影只新建副本（可复用未变节点壳，children 变更才浅拷贝）
- * - 不渲染 boundaryLinks（由渲染层画），也不接管 LayoutCache（森林路径不走缓存）
+ * - 不修改源树任何节点：投影只新建副本（可复用未变节点壳，children 变更才浅拷贝；
+ *   F4 起对"与上次产出逐项同一"的节点进一步复用上次壳——岛根身份跨编辑稳定，
+ *   是岛级缓存命中的前提）
+ * - 不渲染 boundaryLinks（由渲染层画）；LayoutCache 接线在 forest.ts（本模块只做投影/组装）
  */
 import type { AnchorResolutionState } from '../registry/note-anchor.js';
 import type { EditableNode } from '../tree/treeOps.js';
@@ -124,6 +126,34 @@ const DEFAULT_ROOT_DIR: GrowDir = 'right';
 const EMPTY_BOUNDS: Bounds = { minX: 0, minY: 0, maxX: 0, maxY: 0 };
 
 /**
+ * 投影壳稳定化映射（F4）：node 身份 → 上次产出的投影（壳或 node 本身）。
+ *
+ * 为什么需要：岛级缓存的键 = 岛根**对象身份**——若"升格剪枝"（changed=true）每次
+ * 投影都新建壳，含嵌套升格的岛**永远 miss**。判据见 below；文档根另有跨对象特判
+ * （根每次编辑必换壳——不可变树祖先链必经）。
+ */
+const lastProjected = new WeakMap<EditableNode, EditableNode>();
+
+/** 上次投影的「文档根产出」（跨对象根换取用判据；正确性由 sameShell 保证） */
+let lastRootShell: EditableNode | null = null;
+
+/**
+ * 投影壳「内容同一」判定（结构共享感知，不做深比较）：
+ * 非 children 字段引用相等（重建链 spread 保证未变字段同引用）+ children 逐项 ===。
+ * 成本 O(变更路径)：未变子树走首项 `a === b` 短路。
+ */
+function sameShell(a: EditableNode, b: EditableNode): boolean {
+  if (a === b) return true;
+  if (a.id !== b.id || a.type !== b.type || a.text !== b.text) return false;
+  if (a.url !== b.url || a.ref !== b.ref || a.note !== b.note) return false;
+  if (a.children.length !== b.children.length) return false;
+  for (let i = 0; i < a.children.length; i++) {
+    if (a.children[i] !== b.children[i]) return false;
+  }
+  return true;
+}
+
+/**
  * 递归布局岛投影。
  *
  * 语义（已批准 G1）：
@@ -213,8 +243,21 @@ export function projectIslands(
       projectedChildren.push(sub.projected);
       for (const m of sub.members) members.push(m);
     }
-    const projected: EditableNode = changed ? { ...node, children: projectedChildren } : node;
-    return { projected, members };
+    const naive: EditableNode = changed ? { ...node, children: projectedChildren } : node;
+    // 投影壳稳定化（F4）：与上次产出「逐项同一」→ 复用上次对象（岛根身份跨编辑稳定）
+    const prev = lastProjected.get(node);
+    if (prev !== undefined && sameShell(prev, naive)) {
+      return { projected: prev, members };
+    }
+    // 文档根特判：根每次编辑都换壳（祖先链必经），弱映射恒 miss——与「上次根产出」
+    // 跨对象比较（结构共享使成本 O(变更路径)）；等价 → 复用，根岛身份随之稳定。
+    if (node === documentRoot && lastRootShell !== null && sameShell(lastRootShell, naive)) {
+      lastProjected.set(node, lastRootShell);
+      return { projected: lastRootShell, members };
+    }
+    lastProjected.set(node, naive);
+    if (node === documentRoot) lastRootShell = naive;
+    return { projected: naive, members };
   };
 
   // 根岛：根自身可为中心（沿用其 dir/pos），children 中的升格后代照常剔除

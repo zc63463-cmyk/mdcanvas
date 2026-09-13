@@ -459,8 +459,7 @@ function offPathIds(island: EditableNode): Set<string> {
   return out;
 }
 
-describe('F3：岛内增量（编辑局部化；深层编辑不重算未受影响分支）', () => {
-  it('★ 编辑大岛深层叶子 → 未受影响分支零 measure + cache.nodes 引用复用 + 逐位等价', () => {
+describe('F3：岛内增量（编辑局部化；深层编辑不重算未受影响分支）', () => {  it('★ 编辑大岛深层叶子 → 未受影响分支零 measure + cache.nodes 引用复用 + 逐位等价', () => {
     const root = buildTree(6); // N=1093
     const first = specsOf(root, 1); // k=1：根岛 + 一个大岛
     const collapsed = new Set<string>();
@@ -514,5 +513,61 @@ describe('F3：岛内增量（编辑局部化；深层编辑不重算未受影�
       const full = layoutForest(specs, measure, collapsed);
       expectBitIdentical(inc, full, `deep step ${step}`);
     }
+  });
+});
+
+// ---------- F4：投影壳稳定化（岛根身份跨编辑稳定——岛级缓存命中的前提） ----------
+
+describe('F4：投影壳稳定化（根岛/嵌套升格岛的岛根身份不再每次换壳）', () => {
+  /** 岛投影根（带索引检查，测试内避免 `!`） */
+  const projectedRootOf = (p: ReturnType<typeof projectIslands>, i: number): EditableNode =>
+    req(p.islands[i], `islands[${i}]`).projectedRoot;
+
+  it('★ 编辑升格岛内的叶子 → 其它岛（含根岛）投影根身份稳定、编辑岛换壳', () => {
+    const root = buildTree(5);
+    const picks = pickCenters(root, 3);
+    const centers: ValidatedCenterSpec[] = picks.map((node, i) => ({
+      nodeId: node.id,
+      at: `node:${node.id}`,
+      dir: 'right',
+      pos: { x: i * 600, y: 0 },
+      state: 'well-formed',
+    }));
+
+    const p1 = projectIslands(root, centers);
+    const island3 = req(picks[2], '第 3 个中心');
+    const leaf = deepLeaf(island3);
+    const edited = updateNode(root, leaf.id, { text: `${leaf.text ?? ''}#编辑` });
+    const p2 = projectIslands(edited, centers);
+
+    // 根岛 + 未编辑升格岛：投影根身份稳定（升格剪枝不再导致每次换壳）
+    expect(projectedRootOf(p2, 0), '根岛投影根身份稳定').toBe(projectedRootOf(p1, 0));
+    expect(projectedRootOf(p2, 1), '升格岛 1 身份稳定').toBe(projectedRootOf(p1, 1));
+    expect(projectedRootOf(p2, 2), '升格岛 2 身份稳定').toBe(projectedRootOf(p1, 2));
+    // 编辑岛：换壳（miss → 重算）
+    expect(projectedRootOf(p2, 3), '编辑岛应换壳').not.toBe(projectedRootOf(p1, 3));
+  });
+
+  it('★ 编辑根岛成员 → 根岛投影根换壳（复用判据不过度）', () => {
+    const root = buildTree(5);
+    const picks = pickCenters(root, 1); // k=1：children[1]/[2] 留根岛
+    const centers: ValidatedCenterSpec[] = picks.map((node) => ({
+      nodeId: node.id,
+      at: `node:${node.id}`,
+      dir: 'right',
+      pos: null,
+      state: 'well-formed',
+    }));
+
+    const p1 = projectIslands(root, centers);
+    // 编辑根岛成员（children[1] 子树内的深层叶子）
+    const inRootIsland = req(root.children[1], '根岛成员');
+    const leaf = deepLeaf(inRootIsland);
+    const edited = updateNode(root, leaf.id, { text: `${leaf.text ?? ''}#根岛编辑` });
+    const p2 = projectIslands(edited, centers);
+
+    expect(projectedRootOf(p2, 0), '根岛内容已变 → 应换壳').not.toBe(projectedRootOf(p1, 0));
+    // 升格岛（编辑路径外）身份仍稳定
+    expect(projectedRootOf(p2, 1), '升格岛应稳定').toBe(projectedRootOf(p1, 1));
   });
 });
