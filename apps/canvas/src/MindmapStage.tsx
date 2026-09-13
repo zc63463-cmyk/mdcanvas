@@ -111,6 +111,7 @@ import {
 import gatewaySource from './demo/gateway.mm.md?raw';
 import { useAutoSave } from './hooks/useAutoSave.js';
 import { useDocumentActions } from './hooks/useDocumentActions.js';
+import { useDocumentSwitch } from './hooks/useDocumentSwitch.js';
 import { nodeById, useEdgeActions } from './hooks/useEdgeActions.js';
 import { EdgeDraftLayer, type EdgeContextMenuState } from './EdgeDraftLayer.js';
 import { FileManagerModal } from './FileManagerModal.js';
@@ -369,31 +370,28 @@ function StageContent({
   commandNotice,
   setCommandNotice,
 }: StageContentProps) {
-  // B1 文档切换：新 source → controller.reset（清 history/折叠/选中）+ 实体表重建 + 展开收起 + 适配视图
-  // 首挂跳过（controller 首次创建 + MapView 初始 fit 已处理；避免重复动画）
-  const firstDocEffectRef = useRef(true);
-  useEffect(() => {
-    if (!editable) return;
-    const isFirst = firstDocEffectRef.current;
-    firstDocEffectRef.current = false;
-    // N1：文档内实体引用登记进候选宿主（首挂与切换都登记 → 跨文档可复用）
-    entityHost.remember(
-      refs
-        .filter((r) => r.kind !== 'img' && r.kind !== 'draw')
-        .map((r) => ({
-          kind: r.kind,
-          id: r.id,
-          title: entities.get(`${r.kind}:${r.id}`)?.title ?? null,
-        })),
-      doc.name,
-    );
-    if (isFirst) return;
-    controllerRef.current?.reset(editable);
-    setEntities(buildEntities(refs, GATEWAY_TITLES));
-    setExpandedQaId(null);
-    apiRef.current?.fit();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [doc.source]);
+  // M1 实体 picker：候选宿主 —— 为 useDocumentSwitch 首挂登记提前声明（原「实体候选」区仅剩使用）
+  const entityHostRef = useRef<LocalEntityStore | null>(null);
+  if (entityHostRef.current === null) entityHostRef.current = new LocalEntityStore();
+  const entityHost = entityHostRef.current;
+  // 展开态节点 id（单一展开；点击有 qa 节点展开，再点/其他节点收起）——为 useDocumentSwitch 提前声明
+  const [expandedQaId, setExpandedQaId] = useState<string | null>(null);
+
+  // B1 文档切换（迁至 hooks/useDocumentSwitch；纯搬迁：动作顺序 / deps / 首挂跳过逐字保留）。
+  // 调用点留在原位 —— 保证 useDocumentSwitch 的 effect 注册在 useAutoSave 之前
+  // （切换时 reset 先执行，autosave 随后读到 dirty=false 早退）。
+  useDocumentSwitch({
+    doc,
+    editable,
+    refs,
+    entities,
+    entityHost,
+    gatewayTitles: GATEWAY_TITLES,
+    controllerRef,
+    setEntities,
+    setExpandedQaId,
+    apiRef,
+  });
 
   // GH-T2：折叠定位自动展开（F1 边界）——定位前展开目标祖先折叠，避免 focusNode no-op
   const focusNode = (id: string): void => {
@@ -466,10 +464,7 @@ function StageContent({
     current: { kind: string; id: string } | null;
   } | null>(null);
   // 候选：当前文档实体（优先，文档内最新为准）+ 历史候选（N1 store，跨文档复用）；
-  // 资产类走图库，不进 picker
-  const entityHostRef = useRef<LocalEntityStore | null>(null);
-  if (entityHostRef.current === null) entityHostRef.current = new LocalEntityStore();
-  const entityHost = entityHostRef.current;
+  // 资产类走图库，不进 picker（entityHost 已于上方声明）
   const entityCandidates = useMemo(() => {
     const merged = new Map<string, { kind: string; id: string; title: string }>();
     for (const e of entities.values()) {
@@ -495,9 +490,6 @@ function StageContent({
   });
 
   const pickKinds = useMemo(() => REGISTERED_KINDS.filter((k) => k !== 'img' && k !== 'draw'), []);
-
-  // 展开态节点 id（快速注释"生长"：单一展开；点击有 qa 节点展开，再点/×/其他节点收起）
-  const [expandedQaId, setExpandedQaId] = useState<string | null>(null);
 
   // 批次 2：? 快捷键帮助面板 + 节点右键菜单（{ 节点, 屏幕坐标 }；null = 关闭）
   const [helpOpen, setHelpOpen] = useState(false);
