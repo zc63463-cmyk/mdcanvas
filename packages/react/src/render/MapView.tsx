@@ -286,6 +286,12 @@ export interface MapStats {
   visibleNodes: number;
   visibleLinks: number;
   lod: LodLevel;
+  /**
+   * R5-3：当前渲染后端。'canvas' = 大图自动降级（>5 万可见节点；纯树文档）——
+   * 树线标签与 note 角标不渲染（实测损失清单见 canvas-degrade.test.tsx），
+   * 宿主据此给一次「已进入大图模式」提示。**材料字段**：后端变化必然触发一次上报。
+   */
+  backend: 'svg' | 'canvas';
   viewMs: number;
 }
 
@@ -1130,6 +1136,7 @@ export function MapView({
     visibleNodes: 0,
     visibleLinks: 0,
     lod: 'full',
+    backend: 'svg',
     viewMs: 0,
   });
   statsRef.current = {
@@ -1138,12 +1145,13 @@ export function MapView({
     visibleNodes: visibleNodes.length,
     visibleLinks: visibleLinks.length,
     lod,
+    backend: useCanvas ? 'canvas' : 'svg',
     viewMs,
   };
   /**
    * B-P3：对外上报**节流**（≥200ms 且材料字段变化才回调）——
    * 原先每 epoch（每帧）回调新对象 → 父壳（PerfPanel 常显，2000+ 行）每帧重渲。
-   * 材料字段 = totalNodes / visibleNodes / visibleLinks / lod；
+   * 材料字段 = totalNodes / visibleNodes / visibleLinks / lod / **backend（R5-3）**；
    * `viewMs` 每帧都变（渲染计时噪声）故**不**作触发条件，仅作 payload 携带（面板诊断用）。
    */
   const lastStatsAtRef = useRef(0);
@@ -1156,7 +1164,8 @@ export function MapView({
       a.totalNodes !== b.totalNodes ||
       a.visibleNodes !== b.visibleNodes ||
       a.visibleLinks !== b.visibleLinks ||
-      a.lod !== b.lod;
+      a.lod !== b.lod ||
+      a.backend !== b.backend;
     const emit = (payload: MapStats): void => {
       lastStatsAtRef.current = performance.now();
       lastStatsRef.current = payload;
@@ -1181,7 +1190,9 @@ export function MapView({
         statsTimerRef.current = null;
       }
     };
-  }, [epoch, layout, lod]);
+    // R5-3：useCanvas 是显式触发 dep——后端切换（svg↔canvas）不在 epoch/layout/lod 之中，
+    // 加它让「后端变化必然补报一次」（材料字段语义，见 differs 的 backend 项）。
+  }, [epoch, layout, lod, useCanvas]);
 
   // 外部 API（fit / zoomBy / resetZoom / focusNode——M5-T3 全部平滑动画）
   useEffect(() => {

@@ -32,6 +32,7 @@ export function PerfPanel({ stats }: { stats: MapStats | null }) {
           <Row k="节点" v={`${stats.visibleNodes} / ${stats.totalNodes}`} />
           <Row k="连线" v={String(stats.visibleLinks)} />
           <Row k="LOD" v={stats.lod} />
+          <Row k="后端" v={stats.backend} />
           <Row k="裁剪计算" v={`${stats.viewMs.toFixed(2)} ms`} />
           <div style={{ marginTop: 6, color: CHROME.neon }}>
             ● 调度：dirty-flag 单帧（空闲零 rAF）

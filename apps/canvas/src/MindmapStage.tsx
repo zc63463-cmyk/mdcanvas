@@ -110,6 +110,7 @@ import {
 } from 'react';
 import gatewaySource from './demo/gateway.mm.md?raw';
 import { useAutoSave } from './hooks/useAutoSave.js';
+import { useCanvasDegradeNotice } from './hooks/useCanvasDegradeNotice.js';
 import { useDocumentActions } from './hooks/useDocumentActions.js';
 import { useDocumentSwitch } from './hooks/useDocumentSwitch.js';
 import { nodeById, useEdgeActions } from './hooks/useEdgeActions.js';
@@ -948,6 +949,10 @@ function StageContent({
     const timer = setTimeout(() => setCommandNotice(null), 4000);
     return () => clearTimeout(timer);
   }, [commandNotice]);
+
+  // R5-3：Canvas 自动降级提示——stats.backend 由 MapView 上报（已并入材料字段：
+  // 后端变化必然触发一次上报，节流窗口内补报）。同一文档只提示一次；切文档后重新允许。
+  useCanvasDegradeNotice({ backend: stats?.backend, docId: doc.id, notify: setCommandNotice });
 
   /**
    * v1.5.0 Section 写入管线（T4）。
