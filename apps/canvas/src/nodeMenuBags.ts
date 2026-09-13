@@ -8,12 +8,17 @@
  * 依赖菜单坐标的袋（实体 picker、连线、生长方向的「自定义长度气泡」）留在 `NodeContextMenu`。
  *
  * 事实读取与行为与抽取前**逐行一致**（纯搬运，无改写）。
+ *
+ * C1（2026-09-13）：中心袋的 `onPromote` 由「upsertCenter + updateNote」双轨统一到
+ * `planPromoteCenter + applyTransaction`（与「设为 Section」共用唯一写路径）——
+ * 升格开始分配/沿用 cid、单批 ops 一次 undo、root 守卫与失败通道随 plan 生效。
  */
 import { pathOfNode } from '@mindcanvas/kernel';
 import {
   anchorOfNode,
   collectCenters,
   planAttachIsland,
+  planPromoteCenter,
   removeCenter,
   summarizeReferenceDiagnostics,
   upsertCenter,
@@ -87,11 +92,17 @@ export function makeCenterActions(
       const result = controller.applyTransaction(plan.ops);
       if (!result.ok) host.onAttachError?.(result.error.message);
     },
+    // C1：升格写路径统一——菜单/环同一入口，与「设为 Section」共用 planPromoteCenter
+    // （分配/沿用 cid、坐标历史吸附、单批 ops 一次 undo、失败经 onAttachError 上报）。
+    // 口径变更：at 不可解析（如空文本节点）时由 plan 兜底 `cid:` 锚继续升格，不再静默不动作。
     onPromote: (id, dir) => {
-      const at = anchorOfNode(controller.root, id);
-      if (!at) return;
-      const next = upsertCenter(controller.root.note, at, { dir });
-      controller.updateNote(controller.root.id, { centers: next.centers ?? undefined });
+      const plan = planPromoteCenter(controller.root, id, { dir });
+      if (!plan.ok) {
+        host.onAttachError?.(plan.error.message);
+        return;
+      }
+      const result = controller.applyTransaction(plan.ops);
+      if (!result.ok) host.onAttachError?.(result.error.message);
     },
     onDemote: (id) => {
       const at = anchorOfNode(controller.root, id);
