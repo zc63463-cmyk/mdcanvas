@@ -111,7 +111,7 @@ import {
 import gatewaySource from './demo/gateway.mm.md?raw';
 import { useDocumentActions } from './hooks/useDocumentActions.js';
 import { nodeById, useEdgeActions } from './hooks/useEdgeActions.js';
-import { EdgeDraftLayer } from './EdgeDraftLayer.js';
+import { EdgeDraftLayer, type EdgeContextMenuState } from './EdgeDraftLayer.js';
 import { FileManagerModal } from './FileManagerModal.js';
 import { NodeContextMenu } from './NodeContextMenu.js';
 import { RecentDocMenu } from './RecentDocMenu.js';
@@ -653,6 +653,8 @@ function StageContent({
   // E8：关系模式（模式隔离）——浏览态只呈现关系，关系态才暴露连线入口
   // （连接手柄 / Shift+点两节点 / 树边右键编辑 / 边点击编辑 / 右键「连线到…」）
   const [relationMode, setRelationMode] = useState(false);
+  // R4-1：边右键菜单状态（渲染在 EdgeDraftLayer）
+  const [edgeMenu, setEdgeMenu] = useState<EdgeContextMenuState | null>(null);
 
   // E5：画布级标注边——连线创建器（右键「连线到…」）+ 边编辑浮窗（点击边弹出）
   // 边存 root note.edges（文档级，非节点属性）；锚存路径，会话内解析
@@ -1584,6 +1586,10 @@ function StageContent({
         onQaChange={(id, qa) => controller.updateNote(id, { qa })}
         selectedEdgeKey={edgeActions.edgeSel?.key ?? null}
         onEdgeClick={(edge, sx, sy) => edgeActions.setEdgeSel({ key: edge.key, x: sx, y: sy })}
+        onEdgeContext={(edge, sx, sy) => {
+          edgeActions.setEdgeSel({ key: edge.key, x: sx, y: sy });
+          setEdgeMenu({ edge, x: sx, y: sy });
+        }}
         // Issue #3：手动覆盖 —— 拖拽端点 / bend 后写入 manual，恢复自动优化传 null
         onEdgeManualChange={(edge, manual) => edgeActions.writeEdgeManual(edge.index, manual)}
         onEdgeRoutes={edgeActions.handleEdgeRoutes}
@@ -2071,6 +2077,8 @@ function StageContent({
         onCloseTreeEdge={() => setTreeEdgeEdit(null)}
         onCloseLinkDraft={() => setLinkDraft(null)}
         onCutTreeEdge={handleCutTreeEdge}
+        edgeMenu={edgeMenu}
+        onCloseEdgeMenu={() => setEdgeMenu(null)}
       />
 
       {/* 批次 2：? 快捷键帮助面板 */}

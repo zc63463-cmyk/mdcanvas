@@ -10,6 +10,7 @@
  *
  * 不是什么：不含边的图形路由与渲染（`FreeEdgeLayer`），那些在 `packages/react`。
  */
+import { useState } from 'react';
 import type { EditorController } from '@mindcanvas/react';
 import {
   anchorOfNode,
@@ -25,8 +26,22 @@ import {
   type EdgeStyle,
   type TreeEdgeAnn,
 } from '@mindcanvas/react';
+import {
+  ContextMenu,
+  defaultRelationSchema,
+  EdgeAnchorPicker,
+  edgeContextItems,
+  type FreeEdge,
+} from '@mindcanvas/react';
 import type { EdgeActions } from './hooks/useEdgeActions.js';
 import { nodeById } from './hooks/useEdgeActions.js';
+
+/** R4-1：边右键菜单状态（edge + 指针屏幕坐标；由 Stage 持有并经 props 传入） */
+export interface EdgeContextMenuState {
+  edge: FreeEdge;
+  x: number;
+  y: number;
+}
 
 export interface EdgeDraftLayerProps {
   controller: EditorController;
@@ -39,6 +54,9 @@ export interface EdgeDraftLayerProps {
   onCloseLinkDraft: () => void;
   /** A5（G2）：切断并独立（子端 id）——命令编排由 Stage 负责 */
   onCutTreeEdge?: (childId: string) => void;
+  /** R4-1：边右键菜单状态（Stage 持有；null = 关闭） */
+  edgeMenu?: EdgeContextMenuState | null;
+  onCloseEdgeMenu?: () => void;
 }
 
 export function EdgeDraftLayer({
@@ -49,9 +67,15 @@ export function EdgeDraftLayer({
   onCloseTreeEdge,
   onCloseLinkDraft,
   onCutTreeEdge,
+  edgeMenu = null,
+  onCloseEdgeMenu,
 }: EdgeDraftLayerProps) {
   // 取局部 const：TS 无法对 obj.prop 跨表达式收窄类型，不取局部变量守卫生效不了
   const selEdgeOpen = edgeActions.selEdge;
+  // R4-1：重挂的临时目标（菜单项触发 → EdgeAnchorPicker 选锚 → reattachEdge）
+  const [reattachTarget, setReattachTarget] = useState<{ index: number; side: 'from' | 'to' } | null>(
+    null,
+  );
 
   return (
     <>
@@ -168,6 +192,57 @@ export function EdgeDraftLayer({
             edgeActions.setEdgeSel(null);
           }}
           onClose={() => edgeActions.setEdgeSel(null)}
+        />
+      )}
+      {/* R4-1：边右键菜单（数据 edgeContextItems；动作走 useEdgeActions 唯一写路径） */}
+      {edgeMenu !== null && (() => {
+        const index = Number(edgeMenu.edge.key.slice(1));
+        const cfg = defaultRelationSchema.getConfig(edgeMenu.edge.rel);
+        const items = edgeContextItems(
+          {
+            key: edgeMenu.edge.key,
+            rel: edgeMenu.edge.rel,
+            dir: edgeMenu.edge.dir,
+            ...(edgeMenu.edge.invalidAt !== undefined
+              ? { invalidAt: edgeMenu.edge.invalidAt }
+              : {}),
+            hasManual: edgeMenu.edge.manual !== undefined,
+            sourceResolved: edgeMenu.edge.sourceId !== null,
+            targetResolved: edgeMenu.edge.targetId !== null,
+            relRegistered: cfg !== undefined,
+            relSymmetric: cfg?.isSymmetric === true,
+          },
+          {
+            onEdit: onCloseEdgeMenu,
+            onReattach: (side) => {
+              setReattachTarget({ index, side });
+              onCloseEdgeMenu?.();
+            },
+            // R4-2 接线反向；R4-4 接线级联——未接线前禁用（数据层兼容路径）
+            onDuplicate: () => {
+              edgeActions.duplicateEdge(index);
+              onCloseEdgeMenu?.();
+            },
+            onToggleInvalid: () => {
+              edgeActions.setEdgeInvalid(index, edgeMenu.edge.invalidAt === undefined);
+              onCloseEdgeMenu?.();
+            },
+            onDelete: () => {
+              edgeActions.deleteEdge(index);
+              onCloseEdgeMenu?.();
+            },
+          },
+        );
+        return <ContextMenu x={edgeMenu.x} y={edgeMenu.y} items={items} onClose={() => onCloseEdgeMenu?.()} />;
+      })()}
+      {reattachTarget !== null && (
+        <EdgeAnchorPicker
+          choices={edgeActions.nodeChoices}
+          onPick={(anchor) => {
+            edgeActions.reattachEdge(reattachTarget.index, reattachTarget.side, anchor);
+            setReattachTarget(null);
+          }}
+          onClose={() => setReattachTarget(null)}
         />
       )}
     </>

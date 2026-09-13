@@ -62,6 +62,13 @@ export interface EdgeActions {
   reattachEdge: (index: number, side: 'from' | 'to', anchor: string) => void;
   /** R2-3：删除指定边（同一写路径：writeEdges + removeEdgeAt） */
   deleteEdge: (index: number) => void;
+  /** R4-1：复制一条（同字段克隆追加；一次 undo 可回滚） */
+  duplicateEdge: (index: number) => void;
+  /**
+   * R4-1：标记失效 / 恢复（收敛 EdgeDraftLayer 的内联 patchEdgeAt——R4-4 在此
+   * 升级为级联）。invalid=true 写当前时间戳；false 清除（undefined 键被清除）。
+   */
+  setEdgeInvalid: (index: number, invalid: boolean) => void;
   /**
    * R3-3：切换方向（渲染端语义契约，R3-A3）——fwd ↔ back 时同一补丁内交换
    * manual.from/to 并翻转 routingSide（两端锚点与其侧向保位，手工把手不跳）；
@@ -164,6 +171,26 @@ export function useEdgeActions(controller: EditorController): EdgeActions {
     [controller, writeEdges],
   );
 
+  const duplicateEdge = useCallback(
+    (index: number): void => {
+      const cur = edgesOf(controller.root.note);
+      const item = cur[index];
+      if (!item) return;
+      writeEdges(appendEdge(cur, { ...item }));
+    },
+    [controller, writeEdges],
+  );
+
+  const setEdgeInvalid = useCallback(
+    (index: number, invalid: boolean): void => {
+      const cur = edgesOf(controller.root.note);
+      writeEdges(
+        patchEdgeAt(cur, index, invalid ? { invalidAt: new Date().toISOString() } : { invalidAt: undefined }),
+      );
+    },
+    [controller, writeEdges],
+  );
+
   const writeEdgeManual = useCallback(
     (index: number, manual: EdgeManual | null): void => {
       const cur = edgesOf(controller.root.note);
@@ -200,6 +227,8 @@ export function useEdgeActions(controller: EditorController): EdgeActions {
     writeEdgeManual,
     reattachEdge,
     deleteEdge,
+    duplicateEdge,
+    setEdgeInvalid,
     setEdgeDir,
     connectEdge,
     handleEdgeRoutes,

@@ -195,6 +195,12 @@ export {
 } from './edit/contextMenuItems.js';
 export type { EditorControllerOptions } from './edit/controller.js';
 export { EditorController } from './edit/controller.js';
+// R4-1：边右键菜单项数据（渲染在宿主 EdgeDraftLayer）
+export type {
+  EdgeContextFacts,
+  EdgeContextMenuActions,
+} from './edit/edgeContextItems.js';
+export { edgeContextItems } from './edit/edgeContextItems.js';
 export {
   applyAnchorUpdateToNote,
   collectReferenceAnchors,

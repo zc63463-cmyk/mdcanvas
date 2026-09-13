@@ -210,6 +210,8 @@ export interface MapViewProps {
   selectedEdgeKey?: string | null;
   /** 点击自由边（E2 选中回调；带屏幕坐标供浮窗锚定） */
   onEdgeClick?: (edge: FreeEdge, sx: number, sy: number) => void;
+  /** R4-1：右键自由边（关系模式；同 onEdgeClick 同族加法） */
+  onEdgeContext?: (edge: FreeEdge, sx: number, sy: number) => void;
   /**
    * Issue #3：手动调整连线（拖端点 / bend 控制点）→ 回写 manual。
    * manual = null 表示「恢复自动优化」（清空人工锁定）。
@@ -351,6 +353,7 @@ export function MapView({
   onAssetDrop,
   selectedEdgeKey,
   onEdgeClick,
+  onEdgeContext,
   onEdgeManualChange,
   onEdgeRoutes,
   onTreeEdgeEdit,
@@ -1625,6 +1628,7 @@ export function MapView({
                   token={token}
                   selectedKey={selectedEdgeKey}
                   onSelect={(edge, sx, sy) => onEdgeClickRef.current?.(edge, sx, sy)}
+                  onEdgeContext={onEdgeContext}
                   interactive={relationMode}
                   // E8：避障路由（低 LOD 时为空数组 → 自动退化为原贝塞尔）
                   obstacles={edgeObstacles}
