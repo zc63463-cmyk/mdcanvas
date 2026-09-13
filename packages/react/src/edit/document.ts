@@ -24,8 +24,16 @@ export interface MindDoc {
   id: string;
   /** 文件名（显示用） */
   name: string;
-  /** mm 源码 */
+  /** mm 源码 —— 「本次会话打开/新建时的内容」（解析输入）。保存路径不得改写它。 */
   source: string;
+  /**
+   * 最近一次成功保存的内容快照（自动保存 / 手动保存的写回目标）。
+   *
+   * 与 `source` 分离的原因：`source` 是解析输入，改写它会误触发「保存 → 文档重建」
+   * 回读环（保存 300ms 后 reset + fit，「页面回正刷新」的根因）。
+   * 新建文档在首次保存前没有本字段；消费方一律用 `savedSource ?? source`。
+   */
+  savedSource?: string;
   /** FS 句柄（打开文档复用写回；新建/导入为 null → 保存时弹框或下载） */
   handle?: FsFileHandle;
   /** 是否已持久化（新建未保存 = false → 显示 ● 未保存标记） */

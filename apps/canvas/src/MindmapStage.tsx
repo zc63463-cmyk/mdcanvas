@@ -109,6 +109,7 @@ import {
   useState,
 } from 'react';
 import gatewaySource from './demo/gateway.mm.md?raw';
+import { useAutoSave } from './hooks/useAutoSave.js';
 import { useDocumentActions } from './hooks/useDocumentActions.js';
 import { nodeById, useEdgeActions } from './hooks/useEdgeActions.js';
 import { EdgeDraftLayer, type EdgeContextMenuState } from './EdgeDraftLayer.js';
@@ -442,33 +443,9 @@ function StageContent({
     confirmDiscard,
   });
 
-  useEffect(() => {
-    if (!controller.dirty || !doc.saved || !doc.handle) return;
-    if (autoSaveTimer.current) clearTimeout(autoSaveTimer.current);
-      autoSaveTimer.current = setTimeout(() => {
-        autoSaveTimer.current = null;
-        const source = controller.serialize();
-        setSaving(true);
-        void docHost
-          .save({ ...doc, source })
-          .then((outcome) => {
-            if (outcome.result !== 'cancelled') {
-              setDoc((d) => ({
-                ...d,
-                source,
-                handle: outcome.handle ?? d.handle,
-                ts: Date.now(),
-              }));
-              controller.markSaved();
-            }
-          })
-          .finally(() => setSaving(false));
-      }, 300);
-    return () => {
-      if (autoSaveTimer.current) clearTimeout(autoSaveTimer.current);
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [controller.dirty, doc.saved, doc.id]);
+  // GH-T3：自动保存 —— 逻辑已抽至 hooks/useAutoSave（debounce 300ms；仅已落盘文档；
+  // 手动 Ctrl+S 取消 pending；失败静默由手动保存兜底；口径：写回 savedSource，不碰 doc.source）
+  useAutoSave({ controller, docHost, doc, setDoc, autoSaveTimer, onSavingChange: setSaving });
 
   // 选中节点：单一来源 = controller.selectedId + 从当前树取节点（编辑后引用自动刷新，
   // 避免点选时的快照引用陈旧导致 QaEditor/QuickCommentPanel 读不到新 note）
