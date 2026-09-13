@@ -15,6 +15,7 @@ import type { EditableNode } from '../tree/treeOps.js';
 import {
   layoutBounds,
   type GrowDir,
+  type LayoutCache,
   type LayoutResult,
   type LayoutNode,
   type LinkGeometry,
@@ -70,16 +71,34 @@ function emptyResult(): LayoutResult {
  * @param measure      节点度量
  * @param collapsedIds 折叠集合（所有中心共享）
  * @param opts.gap     自动排列时相邻中心的间距（世界坐标 px）
+ * @param opts.cache   增量缓存（F 批通道）：契约与 layoutMindmap 同款——
+ *                     collapsedKey / measureKey **身份比较**不匹配 → reset() 全量
+ *                     （不用内容深比较替代）。对象归属由宿主单点持有（复用同一实例）。
+ * @param opts.measureKey 度量语义键（字体/实体/展开态变化 → 换键强制全量）
  */
 export function layoutForest(
   centers: readonly CenterSpec[],
   measure: MeasureFn,
   collapsedIds: Set<string>,
-  opts: { gap?: number } = {},
+  opts: { gap?: number; cache?: LayoutCache; measureKey?: string } = {},
 ): LayoutResult {
   if (centers.length === 0) return emptyResult();
 
   const gap = opts.gap ?? 160;
+  const cache = opts.cache;
+  // 缓存失效契约（与 layoutMindmap 的 mindmap.ts:112-121 逐字同款）：
+  // collapsedIds / measureKey 均**身份比较**，不匹配即 reset() + 全量。
+  // 本检查先于任何岛内布局执行——分支路径当前忽略缓存命中，但通道的键位在此统一管理，
+  // 防止两套失效纪律漂移（岛级/岛内缓存复用同一实例，见 F2/F3）。
+  const cacheValid =
+    cache !== undefined &&
+    cache.collapsedKey === collapsedIds &&
+    cache.measureKey === (opts.measureKey ?? null);
+  if (cache && !cacheValid) {
+    cache.reset();
+    cache.collapsedKey = collapsedIds;
+    cache.measureKey = opts.measureKey ?? null;
+  }
 
   // ① 局部布局 + 记录每棵子树的局部包围盒（自动排列用真实 bounds，不再只用宽度）
   //    D2′ 接线：岛内也要支持「思想分叉」——走分支布局（注入 islandDir=岛方向）；
@@ -92,6 +111,10 @@ export function layoutForest(
       // 回退沿用岛内原四向布局（整棵朝该方向），保证无 note.dir 时零行为变更
       fallback: LAYOUT_BY_DIR[spec.dir],
       dirSink,
+      // F 批通道：cache / measureKey 透传到岛内布局调用面（分支路径暂不消费——
+      // 岛内缓存的消费点随 F2/F3 接入；此透传保证通道单一来源，不在调用侧散落）。
+      cache,
+      measureKey: opts.measureKey,
     });
     return {
       spec,

@@ -20,7 +20,7 @@
 import type { AnchorResolutionState } from '../registry/note-anchor.js';
 import type { EditableNode } from '../tree/treeOps.js';
 import { layoutForest, type CenterSpec, type GrowDir } from './forest.js';
-import type { LayoutNode, LinkGeometry, MeasureFn } from './mindmap.js';
+import type { LayoutCache, LayoutNode, LinkGeometry, MeasureFn } from './mindmap.js';
 
 /** 调用方传入的已校验中心：锚解析已完成，本模块只消费解析结果 */
 export interface ValidatedCenterSpec {
@@ -103,6 +103,10 @@ export interface Bounds {
 export interface IslandLayoutOptions {
   /** 无 pos 岛相邻间距（世界坐标 px），同 layoutForest.gap */
   gap?: number;
+  /** 增量缓存（F 批通道）：透传 layoutForest——森林路径此前不接管 LayoutCache */
+  cache?: LayoutCache;
+  /** 度量语义键（透传） */
+  measureKey?: string;
 }
 
 /** layoutIslands 结果 */
@@ -282,7 +286,11 @@ export function layoutIslands(
     // pos 仅按 null 判断缺省：{x:0,y:0} 必须原样透传（0 是合法坐标）
     ...(island.position !== null ? { pos: island.position } : {}),
   }));
-  const result = layoutForest(centers, measure, collapsedIds, { gap: opts.gap });
+  const result = layoutForest(centers, measure, collapsedIds, {
+    gap: opts.gap,
+    cache: opts.cache,
+    measureKey: opts.measureKey,
+  });
 
   // 按 owner 映射归组每岛包围盒（owner 覆盖全树，布局节点必有所属岛）
   const acc = new Map<string, Bounds>();

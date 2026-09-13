@@ -181,8 +181,8 @@ export function layoutDemo(
    * G6′ 中心清单。非空 → 走 layoutForest（多中心各自布局后按坐标合并）；
    * 空 → 沿用 layoutMindmap（既有行为，含 LayoutCache 增量）。
    *
-   * ⚠️ 森林路径**不走 LayoutCache**：layoutLogic / layoutOrg 不支持缓存，
-   * 故多中心模式每次全量重算。先做对，性能待实测后再优化。
+   * F 批（森林布局缓存）：cache / measureKey 已透传至森林路径（通道就位，
+   * 键位在 layoutForest 入口统一管理）——岛级 / 岛内缓存消费随 F2/F3 接入。
    */
   centers: readonly CenterSpec[] | null = null,
 ): DemoLayout {
@@ -197,7 +197,12 @@ export function layoutDemo(
   const useForest = centers !== null && centers !== undefined && centers.length > 0;
   return {
     layout: useForest
-      ? layoutForest(centers!, measure, collapsedIds)
+      ? layoutForest(
+          centers!,
+          measure,
+          collapsedIds,
+          cache ? { cache, measureKey: measureKey ?? undefined } : undefined,
+        )
       // D2′ 接线：无 note.dir 声明时内部逐像素回退 layoutMindmap（旧文件零变更），
       // 有声明则按子节点各自 dir 分组挂不同侧（思想分叉）。
       : layoutMindmapBranched(
