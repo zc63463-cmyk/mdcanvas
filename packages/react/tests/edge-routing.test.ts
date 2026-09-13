@@ -640,3 +640,38 @@ describe('inferBowSide：跳线/折线路径（R3-2）', () => {
     expect(inferBowSide('not a path')).toBe('auto');
   });
 });
+
+describe('RouteResult.forcedSideFallback（R3-4：指定侧无解的显式反馈）', () => {
+  it('forceSide + 全穿障 → 直穿降级时置位（routed 仍为 false）', () => {
+    const a = box(0, 0);
+    const b = box(400, 0);
+    const wall = box(-300, -300, 1200, 900); // 巨型墙：任何曲率都绕不开
+    const r = routeAesthetic(a, b, [wall], [], { forceSide: 'left' });
+    expect(r.routed).toBe(false);
+    expect(r.forcedSideFallback).toBe(true);
+  });
+
+  it('无 forceSide 的同款全穿障降级 → 标志不得置位（关键区分钉：防全量误报）', () => {
+    const a = box(0, 0);
+    const b = box(400, 0);
+    const wall = box(-300, -300, 1200, 900);
+    const r = routeAesthetic(a, b, [wall]);
+    expect(r.routed).toBe(false);
+    expect(r.forcedSideFallback).toBeUndefined();
+  });
+
+  it('空旷直连 → 不置位', () => {
+    const r = routeAesthetic(box(0, 100), box(400, 100), []);
+    expect(r.routed).toBe(false);
+    expect(r.forcedSideFallback).toBeUndefined();
+  });
+
+  it('正常绕行 → 不置位', () => {
+    const a = box(0, 100);
+    const b = box(400, 100);
+    const wall = box(180, -80, 40, 400);
+    const r = routeAesthetic(a, b, [wall]);
+    expect(r.routed).toBe(true);
+    expect(r.forcedSideFallback).toBeUndefined();
+  });
+});

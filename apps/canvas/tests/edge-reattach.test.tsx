@@ -19,6 +19,7 @@ import {
   MapView,
 } from '@mindcanvas/react';
 import { useEdgeActions } from '../src/hooks/useEdgeActions.js';
+import type { EdgeRouteEntry } from '@mindcanvas/react';
 import { createCharMeasure, createNodeMeasure } from '@mindcanvas/react';
 import { layoutMindmap } from '@mindcanvas/kernel';
 
@@ -250,5 +251,54 @@ describe('setEdgeDir：dir 切换保形（R3-3）', () => {
     expect(e?.invalidAt).toBe('2026-09-01T00:00:00.000Z');
     expect('manual' in (e ?? {})).toBe(false);
     expect('routingSide' in (e ?? {})).toBe(false);
+  });
+});
+
+describe('handleEdgeRoutes：forcedSideFallback 值比较（R3-4）', () => {
+  function routeEntry(fb: boolean): EdgeRouteEntry {
+    const box0 = { x: 0, y: 0, w: 10, h: 10 };
+    return {
+      eps: {
+        fromId: 'a',
+        toId: 'b',
+        from: box0,
+        to: box0,
+        ghost: false,
+        renderable: true,
+      },
+      route: {
+        d: 'M 0 0 L 1 1',
+        points: [],
+        routed: false,
+        mid: { x: 0, y: 0 },
+        nx: 0,
+        ny: 0,
+        ...(fb ? { forcedSideFallback: true as const } : {}),
+      },
+    };
+  }
+
+  it('标志变化 → 新值；同值重复 → 保持（值比较，防重渲链）', () => {
+    const controller = buildController();
+    const { result } = renderHook(() => useEdgeActions(controller));
+    expect(result.current.selEdgeForcedSideFallback).toBe(false); // 未选中 → false
+
+    act(() => {
+      result.current.setEdgeSel({ key: 'e0', x: 0, y: 0 });
+    });
+    act(() => {
+      result.current.handleEdgeRoutes(new Map([['e0', routeEntry(true)]]));
+    });
+    expect(result.current.selEdgeForcedSideFallback).toBe(true);
+    // 同值重复：状态保持（值比较短路——与 selEdgeD 先例同款纪律）
+    act(() => {
+      result.current.handleEdgeRoutes(new Map([['e0', routeEntry(true)]]));
+    });
+    expect(result.current.selEdgeForcedSideFallback).toBe(true);
+    // 变化 → 翻转
+    act(() => {
+      result.current.handleEdgeRoutes(new Map([['e0', routeEntry(false)]]));
+    });
+    expect(result.current.selEdgeForcedSideFallback).toBe(false);
   });
 });

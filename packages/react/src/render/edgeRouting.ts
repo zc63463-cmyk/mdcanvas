@@ -34,6 +34,12 @@ export interface RouteResult {
   points: readonly { x: number; y: number }[];
   /** true = 靠"弯曲"真的绕了行；false = 直连（空旷/通畅）或降级直穿 */
   routed: boolean;
+  /**
+   * R3-4：仅在「forceSide 指定了侧 且 走到直穿降级（本文件尾部 fallback）」时置位
+   * ——routed:false 的两种含义（空旷直连 / 降级直穿）不可区分（语义被大量测试
+   * 依赖，R3-A4 不动），本标志让「用户指定侧无解被静默降级」变得可见。
+   */
+  forcedSideFallback?: boolean;
   /** 路径中点（标签锚点） */
   mid: { x: number; y: number };
   /** 中点处单位法向（标签生长方向） */
@@ -1195,5 +1201,8 @@ export function routeAesthetic(
     mid,
     nx,
     ny,
+    // R3-4：仅在用户指定了侧时，这次降级才是「指定侧无解」——需要显式反馈；
+    // 无 forceSide 的普通降级/空旷直连不置位（防全量误报）
+    ...(opts.forceSide !== undefined ? { forcedSideFallback: true as const } : {}),
   };
 }

@@ -667,3 +667,74 @@ describe('EdgeEditor onDirChange（R3-3）', () => {
     expect(onChange).toHaveBeenCalledWith({ dir: 'both' });
   });
 });
+
+describe('EdgeEditor forcedSideFallback 提示（R3-4）', () => {
+  const fbEdge = {
+    key: 'e0',
+    index: 0,
+    rel: 'blocks',
+    dir: 'fwd' as const,
+    from: 'node:根/A',
+    to: 'node:根/B',
+  };
+
+  it('注入 forcedSideFallback → 行内提示出现（指定侧不可行：已回退直连）', () => {
+    const { container } = render(
+      <ThemeProvider>
+        <EdgeEditor
+          edge={fbEdge}
+          x={10}
+          y={10}
+          onChange={vi.fn()}
+          onStyle={vi.fn()}
+          onInvalidate={vi.fn()}
+          onRestore={vi.fn()}
+          onDelete={() => undefined}
+          onClose={() => undefined}
+          forcedSideFallback
+        />
+      </ThemeProvider>,
+    );
+    const hint = container.querySelector('[data-edge-fallback-hint]');
+    if (hint === null) throw new Error('fallback hint not found');
+    expect(hint.textContent).toContain('指定侧不可行');
+    expect(hint.textContent).toContain('直连');
+  });
+
+  it('不注入 / 为 false → 提示不出现（向后兼容）', () => {
+    const without = render(
+      <ThemeProvider>
+        <EdgeEditor
+          edge={fbEdge}
+          x={10}
+          y={10}
+          onChange={vi.fn()}
+          onStyle={vi.fn()}
+          onInvalidate={vi.fn()}
+          onRestore={vi.fn()}
+          onDelete={() => undefined}
+          onClose={() => undefined}
+        />
+      </ThemeProvider>,
+    );
+    expect(without.container.querySelector('[data-edge-fallback-hint]')).toBeNull();
+    without.unmount();
+    const off = render(
+      <ThemeProvider>
+        <EdgeEditor
+          edge={fbEdge}
+          x={10}
+          y={10}
+          onChange={vi.fn()}
+          onStyle={vi.fn()}
+          onInvalidate={vi.fn()}
+          onRestore={vi.fn()}
+          onDelete={() => undefined}
+          onClose={() => undefined}
+          forcedSideFallback={false}
+        />
+      </ThemeProvider>,
+    );
+    expect(off.container.querySelector('[data-edge-fallback-hint]')).toBeNull();
+  });
+});

@@ -137,6 +137,7 @@ export function EdgeDraftLayer({
           onDirChange={(d) => {
             edgeActions.setEdgeDir(selEdgeOpen.index, d);
           }}
+          forcedSideFallback={edgeActions.selEdgeForcedSideFallback}
           // Issue #3 / forceSide：routingSide 经 patch 写回（含 undefined = 恢复自动）
           onChange={(patch: Partial<DocEdge>) => {
             edgeActions.writeEdges(

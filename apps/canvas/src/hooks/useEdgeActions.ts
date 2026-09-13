@@ -51,6 +51,8 @@ export interface EdgeActions {
   selEdge: (FreeEdge & { index: number }) | null;
   /** 选中边当前的实际路径 d（供 EdgeEditor 推断 auto 模式的鼓向） */
   selEdgeCurrentD: string | undefined;
+  /** R3-4：选中边是否处于「指定侧无解 → 直穿降级」（值比较，同值不触发） */
+  selEdgeForcedSideFallback: boolean;
   /** 选中态本身（key + 屏幕坐标） */
   edgeSel: { key: string; x: number; y: number } | null;
   setEdgeSel: (v: { key: string; x: number; y: number } | null) => void;
@@ -100,12 +102,18 @@ export function useEdgeActions(controller: EditorController): EdgeActions {
   const [selEdgeD, setSelEdgeD] = useState<string | undefined>(undefined);
   const selEdgeKeyRef = useRef<string | null>(null);
   selEdgeKeyRef.current = selEdge?.key ?? null;
+  const [selEdgeFallback, setSelEdgeFallback] = useState(false);
   const handleEdgeRoutes = useCallback((routes: ReadonlyMap<string, EdgeRouteEntry>) => {
     const key = selEdgeKeyRef.current;
-    const d = key ? routes.get(key)?.route.d : undefined;
+    const entry = key ? routes.get(key) : undefined;
+    const d = entry?.route.d;
     setSelEdgeD((prev) => (prev === d ? prev : d));
+    // R3-4：与 selEdgeD 同款值比较——同值不 setState，掐断重渲死循环
+    const fb = entry?.route.forcedSideFallback === true;
+    setSelEdgeFallback((prev) => (prev === fb ? prev : fb));
   }, []);
   const selEdgeCurrentD = selEdge ? selEdgeD : undefined;
+  const selEdgeForcedSideFallback = selEdge !== null ? selEdgeFallback : false;
 
   const writeEdges = useCallback(
     (edges: DocEdge[]): void => {
@@ -185,6 +193,7 @@ export function useEdgeActions(controller: EditorController): EdgeActions {
     anchorById,
     selEdge,
     selEdgeCurrentD,
+    selEdgeForcedSideFallback,
     edgeSel,
     setEdgeSel,
     writeEdges,

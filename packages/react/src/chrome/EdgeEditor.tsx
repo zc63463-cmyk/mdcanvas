@@ -60,6 +60,7 @@ export function EdgeEditor({
   choices,
   onReattach,
   onDirChange,
+  forcedSideFallback,
 }: {
   edge: {
     key: string;
@@ -99,6 +100,8 @@ export function EdgeEditor({
    * 缺省回落 onChange({dir})，向后兼容。
    */
   onDirChange?: (dir: LinkDir) => void;
+  /** R3-4：指定侧无解 → 已回退直连（由宿主经 RouteResult.forcedSideFallback 透传） */
+  forcedSideFallback?: boolean;
 }) {
   const { token } = useTheme();
   const invalidated = edge.invalidAt !== undefined;
@@ -125,6 +128,7 @@ export function EdgeEditor({
   const [reattachSide, setReattachSide] = useState<'from' | 'to' | null>(null);
   // R3-2：Opp 的 'auto' 兜底提示（当前路径无法判向时显示）
   const [autoHint, setAutoHint] = useState(false);
+  const showFallbackHint = forcedSideFallback === true;
   return (
     <div
       data-edge-editor
@@ -242,6 +246,18 @@ export function EdgeEditor({
           style={{ fontSize: 10.5, color: token.color.textMuted, marginBottom: 6 }}
         >
           无法从当前路径判断鼓向——已按「右」处理
+        </div>
+      )}
+      {showFallbackHint && (
+        <div
+          data-edge-fallback-hint
+          style={{
+            fontSize: 10.5,
+            color: 'var(--mc-warning, #BA7517)',
+            marginBottom: 6,
+          }}
+        >
+          指定侧不可行：已回退直连（可试另一侧）
         </div>
       )}
       <datalist id="rel-templates">
