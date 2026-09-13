@@ -824,6 +824,19 @@ function StageContent({
     return s;
   }, [centerSpecs]);
 
+  /** C4：中心角标标题（nodeId → 「中心（doc#cid）」；无 cid 旧数据只写「中心」）。
+   *  依赖 controller.root（不可变引用）：升格/降格/改名后 root 换代 → 标题重算。
+   *  本表**即角标渲染条件**（真实中心事实；不用 centerIds——它含布局输出所需的根岛根）；
+   *  仅 well-formed 中心进入（与布局/拖拽同源纪律：布局忽略的中心不标角标）。 */
+  const centerTitles = useMemo(() => {
+    const m = new Map<string, string>();
+    for (const c of collectCenters(controller.root)) {
+      if (c.nodeId === null || c.state !== 'well-formed') continue;
+      m.set(c.nodeId, c.cid ? `中心（${doc.name}#${c.cid}）` : '中心');
+    }
+    return m;
+  }, [controller.root, doc.name]);
+
   const layout = useMemo(
     () =>
       layoutDemo(
@@ -1540,6 +1553,13 @@ function StageContent({
         }}
         // G6′：中心拖拽 = 移动坐标（带动整棵子树），其余节点仍是改树结构
         centerIds={centerIds}
+        centerTitles={centerTitles}
+        // C4 批次补漏：岛成员映射接线——A4「中心拖动整岛预览」（MapView.centerPreview）
+        // 消费 islandMembers 做成员盒平移，但此前**无任何调用方传入**：画布上拖中心
+        // 会落到「浮空克隆 + 原位置灰」的改结构拖拽表现（A4 明确要排除的），
+        // 且 C3「子岛不随父岛动」/C4「角标随拖动平移」在画布上均无从成立。
+        // 提交层一直正常（isCenter → onCenterMove 写坐标），本次只补视觉层数据源。
+        islandMembers={islandView.membersByRoot}
         onCenterMove={handleCenterMove}
         // v1.5.0 Section 幽灵态（dangling）一键清理——从根 note.sections 移除该条目（数据无损前提下的显式动作）
         onRemoveSection={(sectionId) => {

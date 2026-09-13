@@ -95,26 +95,45 @@ describe('R5-3 · MapStats.backend 契约', () => {
 });
 
 describe('R5-3 · 损失清单实测（DoD：不许只写「我认为」）', () => {
-  it('同夹具两侧渲染 diff：svg → 树线标注 1 / note 角标 1；canvas → 0 / 0', () => {
+  it('同夹具两侧渲染 diff：svg → 树线标注 1 / note 角标 1 / 中心角标 1；canvas → 0 / 0 / 0', () => {
     const layout = buildFixture();
+    // C4 追加：中心角标（data-center）损失项——「任务A」作中心身份
+    // （渲染条件吃 centerTitles = collectCenters 的真实中心事实，见 mapview-center-badge.test.tsx）
+    const centerNode = layout.nodes.find((n) => n.node.text === '任务A');
+    if (centerNode === undefined) throw new Error('夹具构建失败：找不到 任务A');
+    const centerTitles = new Map([[centerNode.node.id, '中心']]);
 
     const svgView = render(
       <ThemeProvider>
-        <MapView layout={layout} entities={new Map()} char={char} forceBackend="svg" />
+        <MapView
+          layout={layout}
+          entities={new Map()}
+          char={char}
+          forceBackend="svg"
+          centerTitles={centerTitles}
+        />
       </ThemeProvider>,
     );
     // 实测（2026-09-13 占位跑捕获，原样）：svg 侧 tree-edge-label=1 / note-badge=1；
     // canvas 侧 = +0 / +0。与 §1.3 损失清单一致（树线标注 chip + note 角标丢失）。
     expect(svgView.container.querySelectorAll('[data-tree-edge-label]').length).toBe(1);
     expect(svgView.container.querySelectorAll('[data-note-badge]').length).toBe(1);
+    expect(svgView.container.querySelectorAll('[data-center]').length).toBe(1);
 
     const canvasView = render(
       <ThemeProvider>
-        <MapView layout={layout} entities={new Map()} char={char} forceBackend="canvas" />
+        <MapView
+          layout={layout}
+          entities={new Map()}
+          char={char}
+          forceBackend="canvas"
+          centerTitles={centerTitles}
+        />
       </ThemeProvider>,
     );
     expect(canvasView.container.querySelector('canvas')).not.toBeNull();
     expect(canvasView.container.querySelectorAll('[data-tree-edge-label]').length).toBe(0);
     expect(canvasView.container.querySelectorAll('[data-note-badge]').length).toBe(0);
+    expect(canvasView.container.querySelectorAll('[data-center]').length).toBe(0);
   });
 });

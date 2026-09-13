@@ -175,6 +175,12 @@ export interface MapViewProps {
   onEditTabGrow?: (id: string, text: string) => void;
   /** G6′：中心节点 id 集合（这些节点拖拽 = 移动坐标而非改树结构） */
   centerIds?: ReadonlySet<string>;
+  /**
+   * C4：中心角标标题（nodeId → title 文本，如「中心（doc#cid）」；数据源 = collectCenters）。
+   * **渲染条件即「本表含该 id」**——不用 centerIds（它含布局输出所需的「根岛根」，
+   * 会误标文档根）。不传 → 不渲染任何角标（向后兼容）。
+   */
+  centerTitles?: ReadonlyMap<string, string>;
   /** G6′：中心拖拽结束 —— (id, 世界 dx, 世界 dy) */
   onCenterMove?: (id: string, worldDx: number, worldDy: number) => void;
   /** v1.7.0：拖共享梁松手 —— 提交该方向组层距（写 lens[dir]，单条 undo；拖拽中不落盘） */
@@ -362,6 +368,7 @@ export function MapView({
   onEditCancel,
   onEditTabGrow,
   centerIds,
+  centerTitles,
   onCenterMove,
   onBeamLensChange,
   collapsedIds,
@@ -1815,6 +1822,24 @@ export function MapView({
                         r={3}
                         fill={token.color.annotationAccent ?? '#BA7517'}
                       />
+                    )}
+                    {/* C4：中心角标（左上角小圆点）——升格后「看得见」（此前除菜单/拖拽行为外
+                        无任何指示）。落点分侧：右上=note 角标、右中=折叠钮，本件占左上。
+                        渲染条件吃 centerTitles（= collectCenters 的真实中心事实）——**不能用
+                        centerIds**：它含布局输出所需的「根岛根」，会把文档根误标为中心。
+                        pointerEvents: 'none' 不参与命中（不抢节点点击/拖拽）；
+                        title 携带 doc#cid（跨文件引用寻址的同一身份）。
+                        画在 SVG 节点层 → Canvas 大图模式不渲染（损失清单见 canvas-degrade.test.tsx）。 */}
+                    {centerTitles?.has(ln.node.id) && (
+                      <g data-center={ln.node.id} pointerEvents="none">
+                        <circle
+                          cx={ln.box.x + 5}
+                          cy={ln.box.y + 5}
+                          r={3}
+                          fill={token.color.selection ?? '#534ab7'}
+                        />
+                        <title>{centerTitles.get(ln.node.id)}</title>
+                      </g>
                     )}
                     </Fragment>
                   );

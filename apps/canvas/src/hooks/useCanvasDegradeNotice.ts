@@ -14,12 +14,13 @@ import { useEffect, useRef } from 'react';
 
 /**
  * 降级提示文案。损失项以实测为准（packages/react/tests/canvas-degrade.test.tsx：
- * 同夹具 svg→canvas diff，`data-tree-edge-label` 1→0、`data-note-badge` 1→0）。
+ * 同夹具 svg→canvas diff，`data-tree-edge-label` 1→0、`data-note-badge` 1→0、
+ * `data-center` 1→0（C4 追加））。
  * 「折叠部分分支可回到完整渲染」= 判据吃的是**折叠裁剪后的可见节点数**（layout.nodes.length），
  * 折回阈值以下自动恢复 SVG。
  */
 export const CANVAS_DEGRADE_NOTICE =
-  '已进入大图模式（Canvas）：为保住帧率，边标签与注释角标暂不渲染（可见节点超过 5 万自动切换）。折叠部分分支可回到完整渲染。';
+  '已进入大图模式（Canvas）：为保住帧率，边标签、注释角标与中心标记暂不渲染（可见节点超过 5 万自动切换）。折叠部分分支可回到完整渲染。';
 
 export function useCanvasDegradeNotice(opts: {
   /** 当前渲染后端（MapStats.backend；stats 未就绪 → undefined） */
