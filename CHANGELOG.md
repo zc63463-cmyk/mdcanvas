@@ -7,6 +7,17 @@
 > （09-05~09-06）与「图引擎适配 / 文件工作台」（09-10）等批次未单独标号，
 > 按完成时间归入对应段落末尾的「同批」小节。
 
+## [1.8.12] — 2026-09-13 · 边会话稳定性深度修复（跨文档换代检查 / 鼓向顶点化 / 路由事实门控）
+
+**触发**：R5 收口复核的独立探针复现两处缺陷——① 数据级：`stableByKeys` 跨文档误复用致**自由边整层不渲染**（R5 报告已记「范围外发现」，本轮独立复现并修）；② 行为级：R5-1 折线跳桥把「直线 + 跳线」的鼓向读成有侧（`inferBowSide` 形态漂移，`d05a043` commit message 已注明但未落测试）。修复中又收口同族第三处（选中边三项路由事实未按 key 门控）。报告：`outputs/2026-09-13-edge-stability-deepfix-report.md`。
+
+- **① 自由边稳定化带来源换代检查**（`77c5c3b`）：`FreeEdge.key = e${index}` 是**位置键**——换文档后「边数相同且非零」时 key 序列逐项相等，`stableByKeys`（只比 key）返回**旧文档的边对象**（sourceId/targetId 已不指向本代次节点 → 端点盒全落空 → `renderable=false`）→ 自由边整层不渲染（含标签/命中区/手柄）。实测：文档 A 1 条边 → 切文档 B 1 条边 → `[data-free-edge]` 1 → 0。修法：稳定化 ref 改存 `{ source, arr }`，代次标识 = `rootNode`（`collectFreeEdges` 的输入；平移/缩放不换代 → G-P1/G-P9 零重算保证不受影响；打开/切换文档必然换代）；`stableArray.ts` 头部补**调用方契约**（key 相同 ≠ 成员内容相同，跨代次必须先换代）。回归钉：`freeedge-crossdoc.test.tsx`（+2）。
+- **② Opp 鼓向改由路由折线顶点推断**（`84fe718`）：新 `inferBowSideFromPoints(points)`（约定与 `inferBowSide` 分支② 逐位一致；分支② 改为**委托**它、删重复实现——C 形态历史/人工路径仍经 `onPathPointsOf` 落此分支）；`useEdgeActions` 由 `entry.route.points` 算鼓向 → `EdgeDraftLayer` → `EdgeEditor.currentBowSide`（**首选**；缺省回落 `currentD` 字符串解析，旧调用方行为不变）。判定依据：`applyLineJumps` 只改写 d、不改 points → 跳线桥天然不进判向；「直线 + 跳线」恢复判 `auto`（Opp 落 right 兜底），不再按跳线抬升方向翻转。导出：`inferBowSideFromPoints` 登记进 `src/index.ts` 具名清单（包入口非 `export *`；canvas 侧消费 dist——实测踩到 `is not a function`，重建后通过）。判别测试：`edge-routing.test.ts` +3（含「桥 d 报 right / 顶点报 auto」两法差异记录）、`edge-editor.test.tsx` +2（判别 + 缺省回落兼容钉）、新 `edge-bow-side.test.tsx`。
+- **③ 选中边三项路由事实统一按 key 门控**（`43c20ae`）：`d` / 鼓向 / `forcedSideFallback` 合并为单个 `selEdgeRoute`（含 key），出口 `selEdgeRouteHit` 统一门控——**换到尚未收到路由的边时三项一律回落默认**，不再把上一条边的 d 当作本边的（旧实现会让 Opp 的回落解析据上一条边的 d 翻转）。对外 API 名称/类型不变；值比较短路沿用 R3-4 纪律。判别测试：`edge-bow-side.test.tsx`「换边门控」用例。
+- **边界（记录）**：`inferBowSide` **字符串 API** 对含桥的 d 仍报侧（兼容/历史路径；已在 `edge-routing.test.ts` 作为「两法差异」钉住）——产品路径已全部走顶点，仅 d-only 调用方可见。
+
+**验收**：kernel **480** / react **1127**（+7）/ canvas **186**（+4）= **1793 全绿**；tsc ×3 / react dist 重建 / depcruise（416 模块 / 1170 deps，零违规）/ lint **1468 warnings + 46 infos**（持平，新代码零告警）/ budget 持平（bang 89/90、asCast 31/31、bigFiles 3/4；超 600 行：edgeRouting 1221→1235 / MapView 2182→2193 / MindmapStage 2254 不变）。**阴性对照 4 组**（各自精确变红后恢复、`git diff` 空）：① 去掉换代检查 → `expected +0 to be 1`；② EdgeEditor 忽略 `currentBowSide` → 直线+跳线落 `left`；③ 宿主丢弃顶点 → 弓形 `expected 'auto' to be 'left'`；④ 去掉 key 门控 → 换边门控 `expected 'M 0 100 C 50 0, 150 0, 200 100' to be undefined`。
+
 ## [1.8.11] — 2026-09-13 · 渲染一致性 R5（跳线折线化 / 边标签层上提 / Canvas 降级提示）
 
 **触发**：R2/R3/R4 补齐边能力后，渲染层三项一致性欠账——跳线是「折线主体 + 贝塞尔弧」混合形态、边标签被节点遮挡（两处 `EdgeLabel` 渲染点都在节点层之下）、>5 万可见节点自动降级 Canvas 时用户零感知（全仓无降级提示）。计划：`docs/dispatch/2026-09-13-r5-render-consistency-plan.md`。
