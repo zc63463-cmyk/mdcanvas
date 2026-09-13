@@ -419,3 +419,66 @@ describe('R1-3 契约分层：数据层旧锚 vs 管线编辑（dangling 语义�
     expect(edgeHealthOf(controller.root).byState.dangling).toBe(0);
   });
 });
+
+describe('R2-0：remove-node 入白名单（tolerateMissingTargets 条件式启用）', () => {
+  /** 夹具：同名实体 @issue:8 出现两次，边锚用 #2 精确指到第二个出现 */
+  function makeDupEntityTree(): { controller: EditorController; first: string; second: string } {
+    const root = ast(
+      makeTextNode('根', [
+        makeTextNode('任务', [makeEntityNode({ kind: 'issue', id: '8' })]),
+        makeTextNode('生活', [makeEntityNode({ kind: 'issue', id: '8' })]),
+      ]),
+    );
+    const first = root.children[0]?.children[0]?.id;
+    const second = root.children[1]?.children[0]?.id;
+    if (first === undefined || second === undefined) throw new Error('fixture broken');
+    // 两条边：#2 指向幸存出现（漂移修复对象）；#1 指向将被删除的出现
+    //（无 tolerate 时该引用 target-lost → 整批拒绝 → 阴性对照可观测）
+    root.note = {
+      edges: [
+        { from: 'node:根/任务', to: '@issue:8#2', rel: 'relates-to' },
+        { from: 'node:根/任务', to: '@issue:8#1', rel: 'relates-to' },
+      ],
+    };
+    return { controller: makeController(root), first, second };
+  }
+
+  it('删重复实体的一个出现 → 其余实体的边锚迁移为裸锚、仍 well-formed（不再漂移）', () => {
+    const { controller, first } = makeDupEntityTree();
+    expect(edgeTexts(controller.root)[0]?.to).toBe('@issue:8#2');
+    expect(collectFreeEdges(controller.root)[0]?.state).toBe('well-formed');
+
+    controller.removeNode(first);
+
+    expect(controller.canUndo).toBe(true); // 删除不被阻断
+    // 唯一出现 → 规范锚回裸锚；#2 越界会被重写（R1 时代此处静默漂移为 stale）
+    expect(edgeTexts(controller.root)[0]?.to).toBe('@issue:8');
+    expect(collectFreeEdges(controller.root)[0]?.state).toBe('well-formed');
+    // 指向被删出现的边：降级保留原锚文本（不阻断、不写坏）；
+    // 解析层会把 #1 重解析到幸存出现（既有 #N 定位语义，非迁移改写）
+    expect(edgeTexts(controller.root)[1]?.to).toBe('@issue:8#1');
+    // 整体：无 stale 漂移
+    expect(edgeHealthOf(controller.root).byState.stale).toBe(0);
+  });
+
+  it('删被边引用的普通节点 → 删除不被阻断 + 该边悬空 + target-lost-kept 诊断可见（R0-4 通道）', () => {
+    const onMigrationDiagnostics = vi.fn();
+    const controller = makeController(makeTree(), { onMigrationDiagnostics });
+    const k3 = idOf(controller.root, 'K3');
+    const before = controller.root;
+
+    controller.removeNode(k3);
+
+    expect(controller.root).not.toBe(before); // 删除未阻断
+    expect(controller.canUndo).toBe(true); // history 前进
+    expect(controller.root.children[0]?.children.some((n) => n.id === k3)).toBe(false);
+    // 被引用的边：锚原样保留 → 数据层悬空（R0 口径），target-lost-kept 诊断经通知通道上报
+    expect(edgeTexts(controller.root)[0]).toEqual({
+      from: 'node:根/任务',
+      to: 'node:根/任务/K3',
+    });
+    expect(collectFreeEdges(controller.root)[0]?.state).toBe('dangling');
+    expect(onMigrationDiagnostics).toHaveBeenCalledTimes(1);
+    expect(String(onMigrationDiagnostics.mock.calls[0]?.[0])).toContain('target-lost-kept');
+  });
+});

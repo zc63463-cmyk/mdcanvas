@@ -7,9 +7,9 @@
  * - R1-1：锚引用迁移收敛到管线（R1-A1）——白名单 op 在 apply/applyTransaction 一处
  *   统一触发 planReferenceMigration：结构编辑后既有锚引用被重写（改名/缩进/反缩进/
  *   重排不再断开关系线）；冲突整批拒绝（R1-A2「宁可不写也不错写」）。
- *   remove-node 不参与迁移（偏差，见 CHANGELOG）：迁移对「目标被删」只能产出
- *   target-lost 冲突 → 会阻断一切「删除被边引用的节点」这一合法主流程；
- *   删除维持既有语义（边悬空 → R0 健康度可见 → R2 重挂修复）。
+ *   remove-node 条件式参与（R2-0 契约更新）：仅当触发 op/批次含 remove-node 时
+ *   以 tolerateMissingTargets 计划迁移——目标被删的引用降级为 target-lost-kept
+ *   诊断（保留原锚），删除不阻断、重复实体的 #N 漂移一并根治。
  */
 import {
   applyOp,
@@ -33,6 +33,7 @@ import {
   buildMigrationOps,
   collectReferenceAnchors,
   formatReferenceConflict,
+  summarizeReferenceDiagnostics,
 } from './cutAttach.js';
 import { FrameScheduler } from '../render/scheduler.js';
 
@@ -50,18 +51,31 @@ export interface EditorControllerOptions {
    * applyTransaction 的冲突走返回值（ok:false + code=reference-conflict），不经此回调。
    */
   onAnchorConflict?: (message: string) => void;
+  /**
+   * R2-0：管线迁移的非阻断诊断汇总回调（R0-4 同款文案通道；apply 与
+   * applyTransaction 都经此上报）。诊断随迁移自然产生（如 target-lost-kept）。
+   */
+  onMigrationDiagnostics?: (message: string) => void;
 }
 
 /**
  * R1-A4 op 白名单：仅「路径锚可能受影响」的 op 触发迁移，其余短路（零开销）。
  * - move-node / add-child：结构变化 → 路径/实体锚重算
+ * - remove-node（R2-0 条件式启用）：删除使引用目标丢失（target-lost）+ 实体 #N
+ *   重排——仅在容忍降级下计划迁移（见 apply/applyTransaction 的 tolerate 判定）
  * - update-node：仅 text patch（改名）——note/style 等高频 patch 直接短路。
  *   已知缺口：setEntityRef（转实体/转回）不改锚（kernel anchor-migrate 不支持
  *   路径锚→实体锚的重建+回验，强行迁移会被 migration-verify-failed 整批拒绝）
  *   → 转换后旧路径锚悬空（R0 健康度可见），留待后续批次。
  */
 function isAnchorAffectingOp(op: TreeOp): boolean {
-  if (op.type === 'move-node' || op.type === 'add-child') return true;
+  if (
+    op.type === 'move-node' ||
+    op.type === 'add-child' ||
+    op.type === 'remove-node'
+  ) {
+    return true;
+  }
   if (op.type === 'update-node') return op.patch.text !== undefined;
   return false;
 }
@@ -83,6 +97,7 @@ export class EditorController {
   private newText: string;
   private storage: EditorControllerOptions['storage'];
   private onAnchorConflict: ((message: string) => void) | undefined;
+  private onMigrationDiagnostics: ((message: string) => void) | undefined;
 
   constructor(initial: EditableNode, opts: EditorControllerOptions = {}, frame?: FrameScheduler) {
     this.history = new OpHistory(initial);
@@ -90,6 +105,7 @@ export class EditorController {
     this.frame = frame ?? new FrameScheduler();
     this.storage = opts.storage;
     this.onAnchorConflict = opts.onAnchorConflict;
+    this.onMigrationDiagnostics = opts.onMigrationDiagnostics;
     // 折叠持久化：构造时按路径恢复（节点 id 每次解析重生成，路径在结构未变时稳定）
     const saved = this.storage?.load();
     if (saved && saved.length > 0) {
@@ -138,11 +154,18 @@ export class EditorController {
       // op 未产生变化（非法/被拒/零位移）→ 原路径，保留既有语义
       return this.history.apply(op);
     }
-    const plan = planReferenceMigration(before, simulated, collectReferenceAnchors(before));
+    // R2-A4：仅 remove-node 场景容忍目标丢失（降级为诊断），其余保持严格
+    const tolerate = op.type === 'remove-node';
+    const plan = planReferenceMigration(before, simulated, collectReferenceAnchors(before), {
+      tolerateMissingTargets: tolerate,
+    });
     if (!plan.ok) {
       const c = plan.conflicts[0];
       this.onAnchorConflict?.(c ? formatReferenceConflict(c) : MIGRATION_CONFLICT_FALLBACK);
       return before; // 整批拒绝：不写 history、不改 root（R1-A2）
+    }
+    if (plan.diagnostics.length > 0) {
+      this.onMigrationDiagnostics?.(summarizeReferenceDiagnostics(plan.diagnostics) ?? '');
     }
     const mig = buildMigrationOps(simulated, plan.updates);
     const result = this.history.applyTransaction([op, ...mig.ops]);
@@ -165,7 +188,11 @@ export class EditorController {
       let staged = before;
       for (const op of ops) staged = applyOp(staged, op);
       if (staged !== before) {
-        const plan = planReferenceMigration(before, staged, collectReferenceAnchors(before));
+        // R2-A4：批次含 remove-node 才容忍目标丢失（其余保持严格）
+        const tolerate = ops.some((o) => o.type === 'remove-node');
+        const plan = planReferenceMigration(before, staged, collectReferenceAnchors(before), {
+          tolerateMissingTargets: tolerate,
+        });
         if (!plan.ok) {
           const c = plan.conflicts[0];
           return {
@@ -176,6 +203,9 @@ export class EditorController {
               message: c ? formatReferenceConflict(c) : MIGRATION_CONFLICT_FALLBACK,
             },
           };
+        }
+        if (plan.diagnostics.length > 0) {
+          this.onMigrationDiagnostics?.(summarizeReferenceDiagnostics(plan.diagnostics) ?? '');
         }
         const mig = buildMigrationOps(staged, plan.updates);
         if (mig.ops.length > 0) {

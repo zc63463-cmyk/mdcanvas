@@ -329,3 +329,76 @@ describe('T17-s · sections[].root 锚迁移（v1.5.0 Phase 1）', () => {
     expect(plan.diagnostics.filter((d) => d.field === 'sections[1].root')).toEqual([]);
   });
 });
+
+describe('R2-0：tolerateMissingTargets（目标被删 → 降级诊断而非冲突）', () => {
+  /** 夹具：三个注定丢失的引用（cid / 路径锚 / 实体锚）+ 一个正常迁移引用 */
+  function makeDoomedTree(): EditableNode {
+    return {
+      id: 'root',
+      type: 'text',
+      text: '总览',
+      note: {
+        centers: [{ at: 'node:总览/宿命', x: 1, y: 2 }],
+        edges: [
+          { from: 'node:总览/工作', to: 'node:总览/宿命', rel: 'relates-to' }, // 路径锚 → 目标被删
+          { from: 'node:总览/工作', to: '@issue:8', rel: 'relates-to' }, // 实体锚 → 目标被删
+          { from: 'node:总览/工作', to: 'node:总览/生活', rel: 'relates-to' }, // 正常：无变化
+        ],
+      },
+      children: [
+        { id: 'p', type: 'text', text: '工作', children: [] },
+        { id: 'q', type: 'text', text: '生活', children: [] },
+        { id: 'x', type: 'text', text: '宿命', note: { cid: 'cid-x' }, children: [] },
+        { id: 'e', type: 'entity', ref: { kind: 'issue', id: '8' }, children: [] },
+      ],
+    };
+  }
+
+  function makeAfter(): EditableNode {
+    let after = applyOp(makeDoomedTree(), { type: 'remove-node', id: 'x' });
+    after = applyOp(after, { type: 'remove-node', id: 'e' });
+    after = applyOp(after, { type: 'update-node', id: 'p', patch: { text: '工作2' } });
+    return after;
+  }
+
+  function doomedRefs(): AnchorRef[] {
+    return [
+      { noteKey: 'root', field: 'centers[0].at', anchor: 'node:总览/宿命', cid: 'cid-x' },
+      { noteKey: 'root', field: 'edges[0].to', anchor: 'node:总览/宿命' },
+      { noteKey: 'root', field: 'edges[1].to', anchor: '@issue:8' },
+      { noteKey: 'root', field: 'edges[0].from', anchor: 'node:总览/工作' },
+      { noteKey: 'root', field: 'edges[2].to', anchor: 'node:总览/生活' },
+    ];
+  }
+
+  it('tolerate:true → ok:true，三个丢失引用产 target-lost-kept 诊断、其余照常迁移', () => {
+    const plan = planReferenceMigration(makeDoomedTree(), makeAfter(), doomedRefs(), {
+      tolerateMissingTargets: true,
+    });
+    expect(plan.ok).toBe(true);
+    if (!plan.ok) return;
+    // 三个被删目标的引用 → target-lost-kept 诊断（cid/路径/实体三个分支都覆盖）
+    const kept = plan.diagnostics.filter((d) => d.code === 'target-lost-kept');
+    expect(kept).toHaveLength(3);
+    expect(kept.map((d) => d.field).sort()).toEqual([
+      'centers[0].at',
+      'edges[0].to',
+      'edges[1].to',
+    ]);
+    // 保留原值 → 无对应 updates
+    expect(plan.updates.find((u) => u.field === 'edges[0].to')).toBeUndefined();
+    expect(plan.updates.find((u) => u.field === 'edges[1].to')).toBeUndefined();
+    expect(plan.updates.find((u) => u.field === 'centers[0].at')).toBeUndefined();
+    // 其余引用照常迁移：工作 → 工作2
+    expect(plan.updates).toEqual([
+      { noteKey: 'root', field: 'edges[0].from', from: 'node:总览/工作', to: 'node:总览/工作2' },
+    ]);
+  });
+
+  it('缺省（不带选项）→ ok:false + target-lost 冲突（默认语义逐位不变）', () => {
+    const plan = planReferenceMigration(makeDoomedTree(), makeAfter(), doomedRefs());
+    expect(plan.ok).toBe(false);
+    if (plan.ok) return;
+    expect(plan.conflicts.map((c) => c.code)).toEqual(['target-lost', 'target-lost', 'target-lost']);
+  });
+});

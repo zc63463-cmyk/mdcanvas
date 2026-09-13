@@ -70,9 +70,9 @@ export interface ReferenceConflict {
   message?: string;
 }
 
-/** 非阻断诊断：保留原值，仅告警（旧 dangling / 旧歧义 / 不可解析） */
+/** 非阻断诊断：保留原值，仅告警（旧 dangling / 旧歧义 / 不可解析 / 目标被删降级） */
 export interface ReferenceDiagnostic {
-  code: 'dangling-kept' | 'pre-existing-ambiguous' | 'unparsable-anchor';
+  code: 'dangling-kept' | 'pre-existing-ambiguous' | 'unparsable-anchor' | 'target-lost-kept';
   noteKey: string;
   field: string;
   anchor: string;
@@ -235,6 +235,32 @@ function pushConflict(
 }
 
 /**
+ * buildAnchorFor 冲突的统一出口（R2-0）：三个调用点（cid / 路径锚 / 实体锚）共用。
+ * tolerateMissingTargets 开启且冲突为 target-lost（引用目标在 after 上被删）→
+ * 降级为 target-lost-kept 诊断（保留原锚），其余引用照常迁移——删除被引用节点
+ * 不再阻断整批（R2-A4：仅 remove-node 场景开启，防掩盖其他 kernel bug）。
+ */
+function handleBuildConflict(
+  conflicts: ReferenceConflict[],
+  diagnostics: ReferenceDiagnostic[],
+  ref: AnchorRef,
+  built: { conflict: ReferenceConflict['code']; message: string },
+  nodeId: string | undefined,
+  tolerateMissingTargets: boolean,
+): void {
+  if (tolerateMissingTargets && built.conflict === 'target-lost') {
+    keepWithDiagnostic(
+      diagnostics,
+      'target-lost-kept',
+      ref,
+      `引用目标在迁移后树上丢失，保留原值（${built.message}）`,
+    );
+    return;
+  }
+  pushConflict(conflicts, ref, built.conflict, nodeId, built.message);
+}
+
+/**
  * 锚引用迁移计划（design §5 冻结算法）。
  *
  * @param before 迁移前树
@@ -248,10 +274,13 @@ export function planReferenceMigration(
   before: EditableNode,
   after: EditableNode,
   refs: readonly AnchorRef[],
+  opts?: { tolerateMissingTargets?: boolean },
 ): ReferenceMigrationPlan {
   const updates: AnchorUpdate[] = [];
   const conflicts: ReferenceConflict[] = [];
   const diagnostics: ReferenceDiagnostic[] = [];
+  // R2-A4：缺省 false = 现行语义逐位不变；仅 remove-node 场景由 controller 传 true
+  const tolerateMissingTargets = opts?.tolerateMissingTargets === true;
   for (const ref of refs) {
     const parsed = parseLinkAnchor(ref.anchor);
     if (!parsed) {
@@ -275,7 +304,7 @@ export function planReferenceMigration(
       }
       const built = buildAnchorFor(after, nodeId);
       if ('conflict' in built) {
-        pushConflict(conflicts, ref, built.conflict, nodeId, built.message);
+        handleBuildConflict(conflicts, diagnostics, ref, built, nodeId, tolerateMissingTargets);
         continue;
       }
       const verify = resolveLinkAnchor(after, {
@@ -316,7 +345,7 @@ export function planReferenceMigration(
       const nodeId = res.nodeId;
       const built = buildAnchorFor(after, nodeId);
       if ('conflict' in built) {
-        pushConflict(conflicts, ref, built.conflict, nodeId, built.message);
+        handleBuildConflict(conflicts, diagnostics, ref, built, nodeId, tolerateMissingTargets);
         continue;
       }
       // 回解析验证：新锚在 after 上必须 well-formed 且指向同一 nodeId
@@ -356,7 +385,7 @@ export function planReferenceMigration(
       const nodeId = resolved;
       const built = buildAnchorFor(after, nodeId);
       if ('conflict' in built) {
-        pushConflict(conflicts, ref, built.conflict, nodeId, built.message);
+        handleBuildConflict(conflicts, diagnostics, ref, built, nodeId, tolerateMissingTargets);
         continue;
       }
       // 回解析验证：#N 感知解析必须指回同一 nodeId
