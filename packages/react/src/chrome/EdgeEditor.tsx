@@ -59,6 +59,7 @@ export function EdgeEditor({
   onClose,
   choices,
   onReattach,
+  onDirChange,
 }: {
   edge: {
     key: string;
@@ -93,6 +94,11 @@ export function EdgeEditor({
   choices?: readonly EdgeAnchorChoice[];
   /** R2-1：重挂回调——写路径归宿主（useEdgeActions.reattachEdge 唯一写路径） */
   onReattach?: (side: 'from' | 'to', anchor: string) => void;
+  /**
+   * R3-3：方向切换回调（宿主 setEdgeDir——manual/routingSide 保形交换/翻转）。
+   * 缺省回落 onChange({dir})，向后兼容。
+   */
+  onDirChange?: (dir: LinkDir) => void;
 }) {
   const { token } = useTheme();
   const invalidated = edge.invalidAt !== undefined;
@@ -192,7 +198,13 @@ export function EdgeEditor({
           onChange={(e) => onChange({ rel: e.target.value })}
           style={inputStyle}
         />
-        <DirToggle value={edge.dir} onChange={(d) => onChange({ dir: d })} />
+        <DirToggle
+          value={edge.dir}
+          onChange={(d) => {
+            if (onDirChange !== undefined) onDirChange(d);
+            else onChange({ dir: d });
+          }}
+        />
         <RoutingSideToggle
           value={edge.routingSide}
           onChange={(v) => {

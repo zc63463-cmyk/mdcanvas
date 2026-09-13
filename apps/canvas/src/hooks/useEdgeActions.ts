@@ -14,7 +14,7 @@
  * 那些在 `packages/react`；本 hook 只管**文档级边标注数据与选中态**。
  */
 import { useCallback, useMemo, useRef, useState } from 'react';
-import type { EditableNode } from '@mindcanvas/kernel';
+import type { EditableNode, LinkDir } from '@mindcanvas/kernel';
 import type { EditorController, FreeEdge } from '@mindcanvas/react';
 import {
   anchorOfNode,
@@ -60,6 +60,13 @@ export interface EdgeActions {
   reattachEdge: (index: number, side: 'from' | 'to', anchor: string) => void;
   /** R2-3：删除指定边（同一写路径：writeEdges + removeEdgeAt） */
   deleteEdge: (index: number) => void;
+  /**
+   * R3-3：切换方向（渲染端语义契约，R3-A3）——fwd ↔ back 时同一补丁内交换
+   * manual.from/to 并翻转 routingSide（两端锚点与其侧向保位，手工把手不跳）；
+   * both 与 fwd 同向（freeEdges.ts:433 的 forward 判据）→ 仅写 dir 不交换。
+   * 单个补丁、一次写、一条 history（一次 undo 全回滚）。
+   */
+  setEdgeDir: (index: number, dir: LinkDir) => void;
   /** 写入「人工锁定」几何；null = 清空锁定恢复自动 */
   writeEdgeManual: (index: number, manual: EdgeManual | null) => void;
   /** 建边；同 from+to+rel 已存在则直接选中打开编辑器（防重叠双线） */
@@ -126,6 +133,29 @@ export function useEdgeActions(controller: EditorController): EdgeActions {
     [controller, writeEdges],
   );
 
+  const setEdgeDir = useCallback(
+    (index: number, dir: LinkDir): void => {
+      const cur = edgesOf(controller.root.note);
+      const item = cur[index];
+      if (!item) return;
+      const forwardBefore = item.dir !== 'back';
+      const forwardAfter = dir !== 'back';
+      if (forwardBefore === forwardAfter) {
+        writeEdges(patchEdgeAt(cur, index, { dir }));
+        return;
+      }
+      const patch: Partial<DocEdge> = { dir };
+      if (item.manual !== undefined) {
+        patch.manual = { ...item.manual, from: item.manual.to, to: item.manual.from };
+      }
+      if (item.routingSide !== undefined) {
+        patch.routingSide = item.routingSide === 'left' ? 'right' : 'left';
+      }
+      writeEdges(patchEdgeAt(cur, index, patch));
+    },
+    [controller, writeEdges],
+  );
+
   const writeEdgeManual = useCallback(
     (index: number, manual: EdgeManual | null): void => {
       const cur = edgesOf(controller.root.note);
@@ -161,6 +191,7 @@ export function useEdgeActions(controller: EditorController): EdgeActions {
     writeEdgeManual,
     reattachEdge,
     deleteEdge,
+    setEdgeDir,
     connectEdge,
     handleEdgeRoutes,
   };

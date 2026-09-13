@@ -115,3 +115,140 @@ describe('重挂后画布可见性（应用层闭环）', () => {
     expect(edgeHealthOf(controller.root).renderable).toBe(1);
   });
 });
+
+describe('setEdgeDir：dir 切换保形（R3-3）', () => {
+  /** 缺元素即抛错（新增代码零 `!` lint 告警纪律） */
+  function qq<T extends Element = Element>(sel: string, root: ParentNode): T {
+    const el = root.querySelector(sel);
+    if (el === null) throw new Error(`element not found: ${sel}`);
+    return el as T;
+  }
+
+  function buildDirController(): EditorController {
+    const built = astToEditable(makeTextNode('根', [makeTextNode('任务'), makeTextNode('生活')]));
+    if (built === null) throw new Error('fixture broken');
+    built.note = {
+      edges: [
+        {
+          from: 'node:根/任务',
+          to: 'node:根/生活',
+          rel: 'relates-to',
+          dir: 'fwd',
+          manual: { from: { x: 1, y: 0.5 }, to: { x: 0, y: 0.5 }, curvature: 0.25 },
+          routingSide: 'left',
+        },
+      ],
+    };
+    return new EditorController(built);
+  }
+
+  function rawEdge(controller: EditorController): Record<string, unknown> {
+    const raw = controller.root.note?.edges;
+    if (!Array.isArray(raw)) throw new Error('fixture broken: no edges');
+    const e = raw[0];
+    if (typeof e !== 'object' || e === null) throw new Error('fixture broken: edge');
+    return e as Record<string, unknown>;
+  }
+
+  /** 从渲染 d 提取起点/终点坐标（M 后两个数 / 末尾两个数） */
+  function dEnds(d: string): { start: string; end: string } {
+    const nums = d.match(/-?[\d.]+/g) ?? [];
+    if (nums.length < 4) throw new Error(`bad d: ${d}`);
+    return { start: `${nums[0]} ${nums[1]}`, end: `${nums[nums.length - 2]} ${nums[nums.length - 1]}` };
+  }
+
+  function renderedEnds(controller: EditorController): { start: string; end: string } {
+    const char = createCharMeasure({ family: 'sans-serif', size: 11 }, null);
+    const layout = layoutMindmap(controller.root, createNodeMeasure(char, new Map()), new Set());
+    const screen = render(
+      <ThemeProvider>
+        <MapView layout={layout} documentRoot={controller.root} entities={new Map()} char={char} />
+      </ThemeProvider>,
+    );
+    const g = qq('[data-free-edge]', screen.container);
+    const paths = [...g.querySelectorAll('path')];
+    const visible = paths.find((p) => p.getAttribute('stroke') !== 'transparent');
+    if (visible === undefined) throw new Error('visible edge path not found');
+    const ends = dEnds(visible.getAttribute('d') ?? '');
+    screen.unmount();
+    return ends;
+  }
+
+  it('manual 边 fwd→back：两端锚点保位（d 起终点互换）+ manual 交换 + routingSide 翻转', () => {
+    const controller = buildDirController();
+    const before = renderedEnds(controller);
+
+    const { result } = renderHook(() => useEdgeActions(controller));
+    act(() => {
+      result.current.setEdgeDir(0, 'back');
+    });
+    const after = renderedEnds(controller);
+
+    // 端点保位：新 d 起于原终点、终于原起点（手工把手不跳——原修复目标）
+    expect(after.start).toBe(before.end);
+    expect(after.end).toBe(before.start);
+    // 存储侧：manual.from/to 交换、routingSide 翻转、curvature 不动（同一补丁）
+    const e = rawEdge(controller);
+    expect(e.dir).toBe('back');
+    expect(e.manual).toEqual({ from: { x: 0, y: 0.5 }, to: { x: 1, y: 0.5 }, curvature: 0.25 });
+    expect(e.routingSide).toBe('right');
+    // 一次 undo 全回滚
+    expect(controller.undo()).toBe(true);
+    const restored = rawEdge(controller);
+    expect(restored.dir).toBe('fwd');
+    expect(restored.manual).toEqual({ from: { x: 1, y: 0.5 }, to: { x: 0, y: 0.5 }, curvature: 0.25 });
+    expect(restored.routingSide).toBe('left');
+  });
+
+  it('back→fwd 反向同样保形（交换回去）', () => {
+    const controller = buildDirController();
+    const { result } = renderHook(() => useEdgeActions(controller));
+    act(() => {
+      result.current.setEdgeDir(0, 'back');
+    });
+    const mid = renderedEnds(controller);
+    act(() => {
+      result.current.setEdgeDir(0, 'fwd');
+    });
+    const back = renderedEnds(controller);
+    expect(back.start).toBe(mid.end);
+    expect(back.end).toBe(mid.start);
+    expect(rawEdge(controller).manual).toEqual({
+      from: { x: 1, y: 0.5 },
+      to: { x: 0, y: 0.5 },
+      curvature: 0.25,
+    });
+    expect(rawEdge(controller).routingSide).toBe('left');
+  });
+
+  it('fwd→both 不交换（both 与 fwd 同向——三态边界钉）', () => {
+    const controller = buildDirController();
+    const { result } = renderHook(() => useEdgeActions(controller));
+    act(() => {
+      result.current.setEdgeDir(0, 'both');
+    });
+    const e = rawEdge(controller);
+    expect(e.dir).toBe('both');
+    expect(e.manual).toEqual({ from: { x: 1, y: 0.5 }, to: { x: 0, y: 0.5 }, curvature: 0.25 });
+    expect(e.routingSide).toBe('left');
+  });
+
+  it('无 manual / 无 routingSide → 仅 dir 变化（回归钉）', () => {
+    const controller = buildController(); // 复用本文件的悬空边夹具（无 manual/routingSide）
+    const { result } = renderHook(() => useEdgeActions(controller));
+    act(() => {
+      result.current.reattachEdge(0, 'from', 'node:根/任务'); // 先修成 well-formed
+    });
+    act(() => {
+      result.current.setEdgeDir(0, 'back');
+    });
+    const raw = controller.root.note?.edges;
+    const e = Array.isArray(raw) ? (raw[0] as Record<string, unknown>) : undefined;
+    expect(e?.dir).toBe('back');
+    expect(e?.from).toBe('node:根/任务');
+    expect(e?.to).toBe('node:根/生活');
+    expect(e?.invalidAt).toBe('2026-09-01T00:00:00.000Z');
+    expect('manual' in (e ?? {})).toBe(false);
+    expect('routingSide' in (e ?? {})).toBe(false);
+  });
+});

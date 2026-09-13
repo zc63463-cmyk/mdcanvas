@@ -604,3 +604,66 @@ describe('EdgeEditor Opp：跳线判定与 auto 兜底提示（R3-2）', () => {
     expect(container.querySelector('[data-edge-auto-hint]')).not.toBeNull();
   });
 });
+
+describe('EdgeEditor onDirChange（R3-3）', () => {
+  /** 缺元素即抛错（替代 `!` 断言——新增代码零 lint 告警纪律） */
+  function q5(sel: string, root: ParentNode): Element {
+    const el = root.querySelector(sel);
+    if (el === null) throw new Error(`element not found: ${sel}`);
+    return el;
+  }
+  const dirEdge = {
+    key: 'e0',
+    index: 0,
+    rel: 'blocks',
+    dir: 'fwd' as const,
+    from: 'node:根/A',
+    to: 'node:根/B',
+  };
+
+  it('注入 onDirChange → DirToggle 点击走 onDirChange 且不经 onChange', () => {
+    const onChange = vi.fn();
+    const onDirChange = vi.fn();
+    const { container } = render(
+      <ThemeProvider>
+        <EdgeEditor
+          edge={dirEdge}
+          x={10}
+          y={10}
+          onChange={onChange}
+          onStyle={vi.fn()}
+          onInvalidate={vi.fn()}
+          onRestore={vi.fn()}
+          onDelete={() => undefined}
+          onClose={() => undefined}
+          onDirChange={onDirChange}
+        />
+      </ThemeProvider>,
+    );
+    fireEvent.click(q5('[data-dir-opt="back"]', container));
+    expect(onDirChange).toHaveBeenCalledTimes(1);
+    expect(onDirChange).toHaveBeenCalledWith('back');
+    expect(onChange).not.toHaveBeenCalled();
+  });
+
+  it('缺省（不注入）→ 回落 onChange({dir})（向后兼容钉）', () => {
+    const onChange = vi.fn();
+    const { container } = render(
+      <ThemeProvider>
+        <EdgeEditor
+          edge={dirEdge}
+          x={10}
+          y={10}
+          onChange={onChange}
+          onStyle={vi.fn()}
+          onInvalidate={vi.fn()}
+          onRestore={vi.fn()}
+          onDelete={() => undefined}
+          onClose={() => undefined}
+        />
+      </ThemeProvider>,
+    );
+    fireEvent.click(q5('[data-dir-opt="both"]', container));
+    expect(onChange).toHaveBeenCalledWith({ dir: 'both' });
+  });
+});
