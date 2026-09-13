@@ -99,13 +99,14 @@ node scripts/analyze-export-classification.mjs
 
 | 文件 | 行数 | 备注 |
 |---|---|---|
-| `apps/canvas/src/MindmapStage.tsx` | 2,066 | `StageContent` 1,637 行，管着 10 个面板（已抽 4 个 hook + 5 个浮层组件，持续拆分中） |
-| `packages/react/src/render/MapView.tsx` | 1,880 | `MapView` 1,562 行、Hooks 密集；手势层已抽 useMapGestures / beamDrag |
-| `packages/react/src/render/edgeRouting.ts` | 1,152 | 33 函数均 35 行，**函数粒度健康，暂不拆** |
-| `packages/react/src/chrome/EdgeEditor.tsx` | 809 | 20 函数均 40 行，**同上** |
+| `apps/canvas/src/MindmapStage.tsx` | 2,241 | `StageContent` 1,781 行（全仓最长函数，:351-2131）、管着 10 个面板；文件 14 函数均长 160（已抽 7 个 hook 至 `hooks/`，持续拆分中） |
+| `packages/react/src/render/MapView.tsx` | 2,088 | `MapView` 1,745 行、Hooks 密集（24 函数均长 87）；手势层已抽 useMapGestures / beamDrag |
+| `packages/react/src/render/edgeRouting.ts` | 1,213 | 35 函数均 35 行，**函数粒度健康，暂不拆** |
+
+> `EdgeEditor.tsx` 已拆出 `edgeEditorShared.tsx`（2026-09-12 债务腾挪批次）、现 491 行 < 600 —— **已退出本表**。
 
 > 判断是否该拆，看**函数均长**而不是文件行数。
-> `edgeRouting` / `EdgeEditor` 均长 35–40 行，属"大而清晰"；
+> `edgeRouting` 均长 35 行，属"大而清晰"；
 > `StageContent` / `MapView` 是单个函数上千行，才需要拆。
 
 **序列化格式契约**：`.mm.md` 的 canonical 输出在分支（heading）之间保留一个空行

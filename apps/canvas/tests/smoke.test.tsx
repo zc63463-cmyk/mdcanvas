@@ -2,7 +2,7 @@
  * 应用层冒烟测试（apps/canvas 首个测试文件）
  *
  * 背景：测试此前全在 packages，**apps 层零测试**。
- * 而 `StageContent` 单函数 1,637 行是全项目最大的组件 —— 没有任何回归保护。
+ * 而 `StageContent` 单函数 1,781 行（MindmapStage.tsx:351-2131）是全项目最大的组件 —— 没有任何回归保护。
  *
  * 本文件先建立「环境可用 + 模块可加载」的地板，后续拆分 StageContent 时逐步加行为断言。
  */

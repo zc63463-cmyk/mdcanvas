@@ -1,12 +1,12 @@
 /**
  * useDocumentActions 行为测试
  *
- * 为什么测它：`StageContent` 有 1,637 行、管着 10 个面板，是全项目最大的组件，
- * 且 apps 层此前零测试。抽出 hook 后，这部分逻辑终于可测。
+ * 为什么测它：`StageContent` 有 1,781 行（MindmapStage.tsx:351-2131）、管着 10 个面板，
+ * 是全项目最大的组件，且 apps 层此前零测试。抽出 hook 后，这部分逻辑终于可测。
  * 本文件锁住的行为，就是后续继续拆分 StageContent 时的回归基线。
  *
  * 不测什么：不测导出（见 useExportActions，依赖 Blob/URL/alert）；
- * 不测自动保存（那是 StageContent 内的 effect）。
+ * 不测自动保存（已抽为 hooks/useAutoSave，见 useAutoSave.test.tsx）。
  */
 import { act, cleanup, fireEvent, render, renderHook } from '@testing-library/react';
 import type { RefObject } from 'react';
