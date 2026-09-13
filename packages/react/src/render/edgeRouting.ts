@@ -508,22 +508,70 @@ export function manualBezier(
  * 视觉上是「右侧」（绕到右边）；负曲率为「左侧」。
  */
 export function inferBowSide(d: string): 'left' | 'right' | 'auto' {
+  // ① 严格单 C 段（主路径 d）——既有行为逐位不变（回归钉）
   const m = d.match(
     /^M (-?[\d.]+) (-?[\d.]+) C (-?[\d.]+) (-?[\d.]+), (-?[\d.]+) (-?[\d.]+), (-?[\d.]+) (-?[\d.]+)$/,
   );
-  if (!m) return 'auto';
-  const v = m.slice(1).map(Number) as number[];
-  const x0 = v[0]!;
-  const y0 = v[1]!;
-  const c1x = v[2]!;
-  const c1y = v[3]!;
-  const x3 = v[6]!;
-  const y3 = v[7]!;
-  if (Math.hypot(x3 - x0, y3 - y0) < 1e-6) return 'auto';
-  // 控制点相对弦法向 (-dy, dx) 的偏移分量
-  const nOffset = (c1x - x0) * -(y3 - y0) + (c1y - y0) * (x3 - x0);
-  if (Math.abs(nOffset) < 1e-6) return 'auto';
-  return nOffset > 0 ? 'right' : 'left';
+  if (m) {
+    const v = m.slice(1).map(Number) as number[];
+    const x0 = v[0]!;
+    const y0 = v[1]!;
+    const c1x = v[2]!;
+    const c1y = v[3]!;
+    const x3 = v[6]!;
+    const y3 = v[7]!;
+    if (Math.hypot(x3 - x0, y3 - y0) < 1e-6) return 'auto';
+    // 控制点相对弦法向 (-dy, dx) 的偏移分量
+    const nOffset = (c1x - x0) * -(y3 - y0) + (c1y - y0) * (x3 - x0);
+    if (Math.abs(nOffset) < 1e-6) return 'auto';
+    return nOffset > 0 ? 'right' : 'left';
+  }
+  // ② R3-2：多段路径（跳线 d = M…L…C 拱弧…L…）——主体是 L 折线，C 段只是
+  //    过障小弧（其法向是「跳」的方向，不代表连线整体鼓向），故取【离首末弦
+  //    最远的路径顶点】的偏移符号判定：弓形主体顶点（路由中点）必然主导，
+  //    跳线弧端点落在主体折线上、偏移不超主体（对 plan A2「最长 C 段」的修正：
+  //    pathWithJumps 产出的主体是 L 段而非 C 段，见该函数实现）。
+  //    纯折线（无 C）同样落此分支；三点共线 / 顶点不足 → 'auto'。
+  const pathPoints = onPathPointsOf(d);
+  if (pathPoints.length < 3) return 'auto';
+  const first = pathPoints[0];
+  const last = pathPoints[pathPoints.length - 1];
+  if (first === undefined || last === undefined) return 'auto';
+  const dx = last.x - first.x;
+  const dy = last.y - first.y;
+  if (Math.hypot(dx, dy) < 1e-6) return 'auto';
+  let best = 0;
+  for (let i = 1; i + 1 < pathPoints.length; i++) {
+    const p = pathPoints[i];
+    if (p === undefined) continue;
+    // 与 ① 同一款法向偏移符号约定：cross(弦, 顶点偏移) > 0 → right
+    const nOffset = (p.x - first.x) * -dy + (p.y - first.y) * dx;
+    if (Math.abs(nOffset) > Math.abs(best)) best = nOffset;
+  }
+  if (Math.abs(best) < 1e-6) return 'auto';
+  return best > 0 ? 'right' : 'left';
+}
+
+/** 从 path d 提取全部「在路径上」的点（M 起点 + L 端点 + C 端点；控制点不在路径上，剔除）。
+ *  坐标对之间容忍逗号（pathWithJumps 产出 `C x y, x y, x y` 形态）。 */
+function onPathPointsOf(d: string): Array<{ x: number; y: number }> {
+  const out: Array<{ x: number; y: number }> = [];
+  const re = /([MLC])((?:\s*,?\s*-?[\d.]+)+)/g;
+  let mt: RegExpExecArray | null = re.exec(d);
+  while (mt !== null) {
+    const cmd = mt[1];
+    const raw = mt[2];
+    if (cmd === undefined || raw === undefined) return [];
+    const nums = raw.match(/-?[\d.]+/g)?.map(Number) ?? [];
+    // M/L 在路径上的点是唯一一对；C 是第三对（前两对是控制点）
+    const idx = cmd === 'C' ? 2 : 0;
+    const x = nums[idx * 2];
+    const y = nums[idx * 2 + 1];
+    if (x === undefined || y === undefined || Number.isNaN(x) || Number.isNaN(y)) return [];
+    out.push({ x, y });
+    mt = re.exec(d);
+  }
+  return out;
 }
 
 /** 线段是否跨越（用于交叉计数；共线/重合不计） */

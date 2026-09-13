@@ -20,6 +20,7 @@ import {
   findDuplicateEdge,
 } from '../src/chrome/EdgeEditor.js';
 import { contextMenuItemsFor } from '../src/edit/contextMenuItems.js';
+import { pathWithJumps } from '../src/render/edgeRouting.js';
 import { EditorController } from '../src/edit/controller.js';
 import { FrameScheduler } from '../src/render/scheduler.js';
 import { anchorOfNode, collectFreeEdges } from '../src/render/freeEdges.js';
@@ -524,5 +525,82 @@ describe('EdgeEditor manual 边禁用 routingSide/Opp（R3-1）', () => {
     toggle.querySelectorAll('button').forEach((b) => {
       expect(b.getAttribute('title')).toContain('双击 bend 恢复自动');
     });
+  });
+});
+
+describe('EdgeEditor Opp：跳线判定与 auto 兜底提示（R3-2）', () => {
+  /** 缺元素即抛错（替代 `!` 断言——新增代码零 lint 告警纪律） */
+  function q4(sel: string, root: ParentNode): Element {
+    const el = root.querySelector(sel);
+    if (el === null) throw new Error(`element not found: ${sel}`);
+    return el;
+  }
+  const oppEdge = {
+    key: 'e0',
+    index: 0,
+    rel: 'blocks',
+    dir: 'fwd' as const,
+    from: 'node:根/A',
+    to: 'node:根/B',
+  };
+  /** 弓向上的跳线 d（pathWithJumps 真实输出）→ inferBowSide 应判 left */
+  const jumpedLeftD = pathWithJumps(
+    [
+      { x: 0, y: 100 },
+      { x: 100, y: 60 },
+      { x: 200, y: 100 },
+    ],
+    [{ x: 50, y: 80 }],
+  );
+
+  function mountOpp(currentD: string, onChange: (p: unknown) => void) {
+    return render(
+      <ThemeProvider>
+        <EdgeEditor
+          edge={oppEdge}
+          x={10}
+          y={10}
+          currentD={currentD}
+          onChange={onChange}
+          onStyle={vi.fn()}
+          onInvalidate={vi.fn()}
+          onRestore={vi.fn()}
+          onDelete={() => undefined}
+          onClose={() => undefined}
+        />
+      </ThemeProvider>,
+    );
+  }
+
+  it('跳线边点 Opp → routingSide 翻到另一侧（今天：恒落 right）', () => {
+    const onChange = vi.fn();
+    const { container } = mountOpp(jumpedLeftD, onChange);
+    fireEvent.click(q4('[data-edge-opp]', container));
+    // 当前鼓向 = left → Opp 应置 right（旧实现 inferBowSide='auto' 恒落 right，恰好同值；
+    // 弓向下的跳线用例才是判别性的，见下一用例）
+    expect(onChange).toHaveBeenCalledWith({ routingSide: 'right' });
+  });
+
+  it('弓向下的跳线边点 Opp → 翻到 left（判别性用例：旧实现恒落 right 必红）', () => {
+    const jumpedRightD = pathWithJumps(
+      [
+        { x: 0, y: 100 },
+        { x: 100, y: 140 },
+        { x: 200, y: 100 },
+      ],
+      [{ x: 50, y: 120 }],
+    );
+    const onChange = vi.fn();
+    const { container } = mountOpp(jumpedRightD, onChange);
+    fireEvent.click(q4('[data-edge-opp]', container));
+    expect(onChange).toHaveBeenCalledWith({ routingSide: 'left' });
+  });
+
+  it("inferBowSide 'auto' 兜底：仍落 right 但行内提示出现（不再静默）", () => {
+    const onChange = vi.fn();
+    const { container } = mountOpp('M 0 0 L 100 0', onChange);
+    fireEvent.click(q4('[data-edge-opp]', container));
+    expect(onChange).toHaveBeenCalledWith({ routingSide: 'right' });
+    expect(container.querySelector('[data-edge-auto-hint]')).not.toBeNull();
   });
 });

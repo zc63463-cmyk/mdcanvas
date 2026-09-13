@@ -110,11 +110,15 @@ export function EdgeEditor({
   const flipSide = () => {
     if (manualLocked) return;
     const inferred = edge.routingSide ?? (currentD ? inferBowSide(currentD) : 'auto');
+    // R3-2：'auto' 兜底仍落 right，但给行内提示（不再静默）
+    setAutoHint(inferred === 'auto');
     const opp: 'left' | 'right' = inferred === 'right' ? 'left' : 'right';
     onChange({ routingSide: opp });
   };
   // R2-1：重挂入口 → 候选选择器（嵌在浮窗内；选择结果交宿主唯一写路径）
   const [reattachSide, setReattachSide] = useState<'from' | 'to' | null>(null);
+  // R3-2：Opp 的 'auto' 兜底提示（当前路径无法判向时显示）
+  const [autoHint, setAutoHint] = useState(false);
   return (
     <div
       data-edge-editor
@@ -220,6 +224,14 @@ export function EdgeEditor({
           ⇆ Opp
         </button>
       </div>
+      {autoHint && (
+        <div
+          data-edge-auto-hint
+          style={{ fontSize: 10.5, color: token.color.textMuted, marginBottom: 6 }}
+        >
+          无法从当前路径判断鼓向——已按「右」处理
+        </div>
+      )}
       <datalist id="rel-templates">
         {REL_TEMPLATES.map((r) => (
           <option key={r} value={r} />

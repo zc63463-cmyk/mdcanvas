@@ -593,3 +593,50 @@ describe('inferBowSide：从路径 d 推断当前鼓向（Opp 的前置）', () 
     expect(flipped.d).not.toBe(auto.d);
   });
 });
+
+describe('inferBowSide：跳线/折线路径（R3-2）', () => {
+  it('跳线 d（pathWithJumps 真实输出）→ 按主体折线的鼓向判定（今天恒 auto）', () => {
+    // 主体弓向上（mid 高于首末弦）→ left；跳线弧只是过障小弧，不代表整体鼓向
+    const bowUp = pathWithJumps(
+      [
+        { x: 0, y: 100 },
+        { x: 100, y: 60 },
+        { x: 200, y: 100 },
+      ],
+      [{ x: 50, y: 80 }],
+    );
+    expect(bowUp).toContain('C'); // 夹具确有跳线弧（多段路径）
+    expect(inferBowSide(bowUp)).toBe('left');
+
+    const bowDown = pathWithJumps(
+      [
+        { x: 0, y: 100 },
+        { x: 100, y: 140 },
+        { x: 200, y: 100 },
+      ],
+      [{ x: 50, y: 120 }],
+    );
+    expect(inferBowSide(bowDown)).toBe('right');
+  });
+
+  it('单 C 段路径行为逐位不变（回归钉）', () => {
+    expect(inferBowSide(bezierFromAnchors({ x: 0, y: 100 }, { x: 200, y: 100 }, 0.7).d)).toBe(
+      'right',
+    );
+    expect(inferBowSide(bezierFromAnchors({ x: 0, y: 100 }, { x: 200, y: 100 }, -0.7).d)).toBe(
+      'left',
+    );
+  });
+
+  it('纯折线（无跳线弧）→ 中点相对首末弦判定', () => {
+    expect(inferBowSide('M 0 100 L 100 60 L 200 100')).toBe('left');
+    expect(inferBowSide('M 0 100 L 100 140 L 200 100')).toBe('right');
+  });
+
+  it('直线/退化 → auto（不鼓或不可判）', () => {
+    expect(inferBowSide('M 0 0 L 100 0')).toBe('auto');
+    expect(inferBowSide('M 0 0 L 50 0 L 100 0')).toBe('auto'); // 三点共线
+    expect(inferBowSide('')).toBe('auto');
+    expect(inferBowSide('not a path')).toBe('auto');
+  });
+});
