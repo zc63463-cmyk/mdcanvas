@@ -84,6 +84,7 @@ import {
   prefersReducedMotion,
   VIEWPORT_ANIM_MS,
 } from './motion.js';
+import { nextNodeInDirection, revealTargetInViewport, type NavDir } from './navigateDirection.js';
 import { NodeG } from './NodeG.js';
 import { nodeAuxiliaryRegions } from './nodeAuxiliary.js';
 import { SectionLayer } from './SectionLayer.js';
@@ -252,6 +253,18 @@ export interface MapViewApi {
   resetZoom(): void;
   /** 定位节点：保持当前 k，将节点中心平移到视口中心 */
   focusNode(id: string): void;
+  /**
+   * 几何导航（A 档）：按**视觉方向**取最近的可见节点。
+   *
+   * 与 `EditorController.navigate`（可见前序线性导航）的分工：后者保留给大纲式场景，
+   * 键盘方向键走本方法——↕ 不再钻子树（旧语义要穿完整棵子树才换到下一个兄弟）、
+   * ↔ 不再与 ↕ 同义；左右双翼下方向语义恒定（几何方向，与树层级无关）。
+   * 目标不在视口内时做**最小推入**（只挪到刚可见；不居中、不改 k）。
+   * 本方法**不写选中态**（只算目标 + 必要时推视口）——选中由宿主 `controller.select` 写入。
+   *
+   * @returns 目标节点 id；无候选（方向尽头 / 过斜 / 源不可见）→ null
+   */
+  navigateFrom(id: string, dir: NavDir): string | null;
   /** 节点盒右上角的**客户端坐标**（v1.8.0：环形菜单锚点；节点不存在 → null） */
   nodeCorner(id: string): { x: number; y: number } | null;
   /**
@@ -1173,6 +1186,18 @@ export function MapView({
           { k, x: viewport.viewW / 2 - cx * k, y: viewport.viewH / 2 - cy * k },
           VIEWPORT_ANIM_MS,
         );
+      },
+      // 几何导航（A 档）：目标由纯函数算出（navigateDirection，独立单测），
+      // 这里只做「算目标 + 必要时最小推入视口」；选中态由宿主写入（本层不碰 controller）。
+      navigateFrom: (id, dir) => {
+        const target = nextNodeInDirection(layout.nodes, id, dir);
+        if (target === null) return null;
+        const ln = layout.nodes.find((n) => n.node.id === target);
+        if (ln) {
+          const reveal = revealTargetInViewport(viewport, ln.box);
+          if (reveal !== null) viewport.animateTo(reveal, VIEWPORT_ANIM_MS);
+        }
+        return target;
       },
       nodeCorner: (id) => {
         const ln = layout.nodes.find((n) => n.node.id === id);

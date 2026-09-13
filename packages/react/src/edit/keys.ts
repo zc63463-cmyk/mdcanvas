@@ -64,7 +64,7 @@ export const EDITOR_KEY_BINDINGS: ReadonlyArray<{
   { key: 'Space', label: '折叠/展开', action: 'collapse' },
   { key: 'Ctrl+[', label: '折叠选中', action: 'fold' },
   { key: 'Ctrl+]', label: '展开选中', action: 'unfold' },
-  { key: '↑↓←→', label: '节点导航', action: 'navigate' },
+  { key: '↑↓←→', label: '方向导航（就近节点）', action: 'navigate' },
   { key: 'Ctrl+Z', label: '撤销', action: 'undo' },
   { key: 'Ctrl+Shift+Z / Ctrl+Y', label: '重做', action: 'redo' },
   { key: 'Ctrl+S', label: '保存', action: 'save' },

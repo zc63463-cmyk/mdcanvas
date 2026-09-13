@@ -1165,11 +1165,15 @@ function StageContent({
           e.preventDefault();
           controller.outdent(sel);
           return;
-        case 'navigate':
+        case 'navigate': {
           if (!sel) return;
           e.preventDefault();
-          controller.navigate(act.dir);
+          // 几何导航（A 档）：按视觉方向取最近可见节点——↕ 不再穿子树、↔ 不再与 ↕ 同义；
+          // 目标不可见时由 MapView 内部最小推入视口（不居中、不改 k）。选中态在此写入。
+          const target = apiRef.current?.navigateFrom(sel, act.dir) ?? null;
+          if (target !== null) controller.select(target);
           return;
+        }
         case 'fold':
           if (!sel) return;
           e.preventDefault();
@@ -2231,6 +2235,8 @@ type MapViewApi = {
   zoomBy(f: number): void;
   resetZoom(): void;
   focusNode(id: string): void;
+  /** 几何导航：视觉方向就近可见节点（无候选 → null；目标不可见时内部最小推入视口） */
+  navigateFrom(id: string, dir: 'up' | 'down' | 'left' | 'right'): string | null;
   /** v1.8.0：节点盒右上角客户端坐标（环形菜单锚点） */
   nodeCorner(id: string): { x: number; y: number } | null;
   /** v1.8.0 Phase 3：节点盒客户端矩形 + 缩放 k（幽灵预览） */

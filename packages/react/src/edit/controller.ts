@@ -376,9 +376,14 @@ export class EditorController {
   // ---------- 方向键导航（↑↓←→；尊重折叠：折叠节点子节点不可达） ----------
 
   /**
-   * 方向键移动选中：返回新选中 id（无变化 → null）。
+   * **大纲式线性导航**（可见前序）：返回新选中 id（无变化 → null）。
    * down/up：可见前序下一/上一节点；right：子节点优先（钻入）否则下一可见；
    * left：父节点优先（返回）否则上一可见。
+   *
+   * ⚠️ 画布键盘方向键**不再走这里**（v1.8.9 A 档）：线性语义在二维画布上会「穿子树」
+   * （↓ 先钻入自己的子树、要穿完整棵才换到下一个兄弟），且 ↓ 与 → 实现同义；
+   * 画布改用几何导航 `MapViewApi.navigateFrom`（见 render/navigateDirection.ts）。
+   * 本方法保留给列表/大纲式场景，语义不变（既有测试即该语义的契约）。
    */
   navigate(dir: 'up' | 'down' | 'left' | 'right'): string | null {
     const id = this.selectedId;
