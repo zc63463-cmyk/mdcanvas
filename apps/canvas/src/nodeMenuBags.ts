@@ -107,7 +107,11 @@ export function makeCenterActions(
     onDemote: (id) => {
       const at = anchorOfNode(controller.root, id);
       if (!at) return;
-      const next = removeCenter(controller.root.note, at);
+      const before = controller.root.note;
+      const next = removeCenter(before, at);
+      // C2：未命中（非中心 / 无此 at 条目）→ 真 no-op——不写空 note、不置脏
+      // （removeCenter 未命中时 centers 引用原样返回，与传入相同即证明没删到东西）
+      if (next.centers === before?.centers) return;
       const centers = next.centers as unknown[] | undefined;
       const history = next.center_pos as unknown[] | undefined;
       controller.updateNote(controller.root.id, {
