@@ -973,7 +973,15 @@ export function MapView({
   // G-P2：裁剪窗口再量化到 CULL_QUANT 网格（外扩超集）—— 窗口只在跨网格线时变化，
   // 配合 G-P1 后重算频率从「每帧可能」降到「每 256px 至多一次」（计划 G-P2；可独立回退）。
   const freeView = quantizeRect(view, CULL_QUANT);
-  const freeEdgesStableRef = useRef<readonly FreeEdge[] | null>(null);
+  // R5 修复（跨文档整层消失）：稳定化必须带**来源换代检查**——`FreeEdge.key` 是位置键
+  // （`e${index}`），换文档后「边数相同且非零」时 key 序列逐项相等，stableByKeys 会返回
+  // **旧文档的边对象**（sourceId/targetId 已不指向本代次节点 → 端点盒全落空 → 整层不渲染）。
+  // 代次标识取 `rootNode` —— 它正是 collectFreeEdges 的输入（见 :634-635 的自由边数据）：
+  // 平移/缩放不换 rootNode（G-P1/G-P9 的零重算保证不受影响），打开/切换文档必然换代。
+  const freeEdgesStableRef = useRef<{
+    source: EditableNode | undefined;
+    arr: readonly FreeEdge[];
+  } | null>(null);
   const visibleFreeEdges = useMemo(() => {
     if (freeEdges.length === 0) return freeEdges;
     const next = freeEdges.filter((e) => {
@@ -989,9 +997,12 @@ export function MapView({
       // 仅一端有盒（ghost 靶点）：按该端点判定
       return inView(sb ?? tb!);
     });
-    freeEdgesStableRef.current = stableByKeys(freeEdgesStableRef.current, next, (e) => e.key);
-    return freeEdgesStableRef.current;
-  }, [freeEdges, derived, freeView.x, freeView.y, freeView.w, freeView.h]);
+    const prev = freeEdgesStableRef.current;
+    const sameSource = prev !== null && prev.source === rootNode;
+    const arr = sameSource ? stableByKeys(prev.arr, next, (e) => e.key) : next;
+    freeEdgesStableRef.current = { source: rootNode, arr };
+    return arr;
+  }, [freeEdges, rootNode, derived, freeView.x, freeView.y, freeView.w, freeView.h]);
 
   // C2：Canvas 模式（强制 或 >CANVAS_AUTO_NODES 自动降级）——场景树构建（世界坐标）
   // A6/T23 门禁在 resolveBackend：显式 forceBackend='svg' 压过自动降级（不静默丢岛/边）。

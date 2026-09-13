@@ -8,6 +8,12 @@
  *
  * 语义守护：只有「长度一致 && 逐项 key 一致」才复用 prev —— 成员/顺序变了必须换引用，
  * 否则消费方会渲染陈旧成员。比较仅读 key（O(n)，不做深比较）。
+ *
+ * **调用方契约（R5 补·实事故）**：key 相同 **不代表成员内容相同** —— 位置型 key
+ * （如 `e0`）在「换了数据源但成员数相同」时逐项相等；若 prev 来自旧数据源，复用即让
+ * 消费方渲染**陈旧成员**（MapView 自由边曾因此跨文档整层不渲染：端点在新树解析全落空）。
+ * 跨代次（换文档 / 换 root）必须先换代：把 prev 置 null，或调用方自持
+ * `{ source, arr }` 先比对 source（MapView 采用后者，见其 freeEdgesStableRef）。
  */
 export function stableByKeys<T>(
   prev: readonly T[] | null,
