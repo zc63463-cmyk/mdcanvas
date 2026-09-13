@@ -186,18 +186,12 @@ export function EdgeDraftLayer({
             );
           }}
           onInvalidate={() => {
-            edgeActions.writeEdges(
-              patchEdgeAt(edgesOf(controller.root.note), selEdgeOpen.index, {
-                invalidAt: new Date().toISOString(),
-              }),
-            );
+            const info = edgeActions.setEdgeInvalid(selEdgeOpen.index, true);
+            if (info.cascaded > 0) onNotice?.(`已同步 ${info.cascaded} 条反向关系`);
           }}
           onRestore={() => {
-            edgeActions.writeEdges(
-              patchEdgeAt(edgesOf(controller.root.note), selEdgeOpen.index, {
-                invalidAt: undefined,
-              }),
-            );
+            const info = edgeActions.setEdgeInvalid(selEdgeOpen.index, false);
+            if (info.cascaded > 0) onNotice?.(`已同步 ${info.cascaded} 条反向关系`);
           }}
           onDelete={() => {
             edgeActions.writeEdges(removeEdgeAt(edgesOf(controller.root.note), selEdgeOpen.index));
@@ -240,7 +234,11 @@ export function EdgeDraftLayer({
               onCloseEdgeMenu?.();
             },
             onToggleInvalid: () => {
-              edgeActions.setEdgeInvalid(index, edgeMenu.edge.invalidAt === undefined);
+              const info = edgeActions.setEdgeInvalid(
+                index,
+                edgeMenu.edge.invalidAt === undefined,
+              );
+              if (info.cascaded > 0) onNotice?.(`已同步 ${info.cascaded} 条反向关系`);
               onCloseEdgeMenu?.();
             },
             onDelete: () => {

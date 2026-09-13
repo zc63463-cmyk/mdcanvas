@@ -30,7 +30,7 @@ function edgeOf(
 ): FreeEdge {
   const find = (t: string): EditableNode => {
     for (const c of root.children) if (c.text === t) return c;
-    throw new Error('not found ' + t);
+    throw new Error(`not found ${t}`);
   };
   return {
     key: `e${index}`,

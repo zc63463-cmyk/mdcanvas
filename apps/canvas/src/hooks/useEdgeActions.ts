@@ -72,10 +72,12 @@ export interface EdgeActions {
    */
   reverseEdge: (index: number) => { relChanged: boolean; message?: string };
   /**
-   * R4-1：标记失效 / 恢复（收敛 EdgeDraftLayer 的内联 patchEdgeAt——R4-4 在此
-   * 升级为级联）。invalid=true 写当前时间戳；false 清除（undefined 键被清除）。
+   * R4-1：标记失效 / 恢复；R4-4 升级为级联（限定语义）——同一对节点间存在
+   * reverseOf(rel) 的成对反向边（rel 非对称、已注册）→ 同一 invalidAt 时间戳
+   * 同步标记 / 同步清除（已失效不覆盖原戳、已有效恢复为 no-op）。
+   * 返回 cascaded = 联动条数（宿主提示「已同步 N 条反向关系」）。
    */
-  setEdgeInvalid: (index: number, invalid: boolean) => void;
+  setEdgeInvalid: (index: number, invalid: boolean) => { cascaded: number };
   /**
    * R3-3：切换方向（渲染端语义契约，R3-A3）——fwd ↔ back 时同一补丁内交换
    * manual.from/to 并翻转 routingSide（两端锚点与其侧向保位，手工把手不跳）；
@@ -198,11 +200,38 @@ export function useEdgeActions(controller: EditorController): EdgeActions {
   );
 
   const setEdgeInvalid = useCallback(
-    (index: number, invalid: boolean): void => {
+    (index: number, invalid: boolean): { cascaded: number } => {
       const cur = edgesOf(controller.root.note);
-      writeEdges(
-        patchEdgeAt(cur, index, invalid ? { invalidAt: new Date().toISOString() } : { invalidAt: undefined }),
-      );
+      const item = cur[index];
+      if (!item) return { cascaded: 0 };
+      const cfg = defaultRelationSchema.getConfig(item.rel);
+      const reverseId = defaultRelationSchema.reverseOf(item.rel);
+      // R4-A4 级联边界：仅成对反向（非对称、已注册、reverse ≠ 自身）联动
+      const cascades =
+        cfg !== undefined && cfg.isSymmetric !== true && reverseId !== null && reverseId !== item.rel;
+      const patch: Partial<DocEdge> = invalid
+        ? { invalidAt: new Date().toISOString() }
+        : { invalidAt: undefined };
+      let next = patchEdgeAt(cur, index, patch);
+      let cascaded = 0;
+      if (cascades && reverseId !== null) {
+        const source = next[index];
+        if (!source) return { cascaded: 0 };
+        const ts = source.invalidAt;
+        next = next.map((e, i) => {
+          if (i === index) return e;
+          const samePair =
+            (e.from === item.from && e.to === item.to) ||
+            (e.from === item.to && e.to === item.from);
+          if (!samePair || e.rel !== reverseId) return e;
+          if (invalid && e.invalidAt !== undefined) return e; // 不覆盖既有标记
+          if (!invalid && e.invalidAt === undefined) return e; // 恢复 no-op
+          cascaded += 1;
+          return invalid ? { ...e, invalidAt: ts } : { ...e, invalidAt: undefined };
+        });
+      }
+      writeEdges(next);
+      return { cascaded };
     },
     [controller, writeEdges],
   );
