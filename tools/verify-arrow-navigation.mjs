@@ -14,9 +14,13 @@
  *   根(0,0) · A(+108,0) · A1(+216,−24) · A2(+216,+24) · B(−108,0)
  */
 import { chromium } from 'file:///C:/Users/20564/AppData/Roaming/npm/node_modules/@playwright/cli/node_modules/playwright-core/index.mjs';
+import { assertLoadedBundle, checkSnapshotFresh } from './lib/snapshotCheck.mjs';
 
 const BASE = process.argv[2] ?? 'http://localhost:5175';
 const DOC = '# 根\n\n- A\n  - A1\n  - A2\n- B\n';
+
+// 先验产物新鲜度：防止「测的是旧快照」导致的假阴性（2026-09-13 已踩过一次）
+checkSnapshotFresh();
 
 const browser = await chromium.launch();
 const page = await browser.newPage({ viewport: { width: 1280, height: 800 } });
@@ -103,6 +107,7 @@ const check = (name, ok, detail) => {
 
 try {
   await page.goto(`${BASE}/`, { waitUntil: 'networkidle' });
+  await assertLoadedBundle(page); // ③ 防浏览器缓存旧 bundle
   await page.waitForSelector('[data-node-id]', { timeout: 20000 });
   await page.keyboard.press('Control+o'); // mock 句柄 → 受控文档
   await page.waitForFunction(

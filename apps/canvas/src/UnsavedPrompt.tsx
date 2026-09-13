@@ -76,7 +76,8 @@ export function UnsavedPrompt({ open, onSettle }: UnsavedPromptProps) {
           <button type="button" data-unsaved-cancel style={btnStyle} onClick={() => onSettle(false)}>
             取消
           </button>
-          {/* biome-ignore lint/a11y/noAutofocus: 模态是用户刚触发的直接操作入口，聚焦主按钮是预期行为（Enter 确认） */}
+          {/* 焦点说明：模态是用户刚触发的直接操作入口 → 聚焦主按钮是预期行为（Enter 确认）。
+              原 biome-ignore 抑制是 no-op（该处并不触发 noAutofocus），2026-09-13 清理。 */}
           <button type="button" data-unsaved-ok autoFocus style={okStyle} onClick={() => onSettle(true)}>
             放弃修改并切换
           </button>

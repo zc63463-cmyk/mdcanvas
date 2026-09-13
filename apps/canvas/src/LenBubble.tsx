@@ -50,7 +50,8 @@ export function LenBubble({ x, y, initial, onCommit, onCancel }: LenBubbleProps)
       >
         <span>出线长度</span>
         <input
-          // biome-ignore lint/a11y/noAutofocus: 气泡是用户刚点开的直接操作入口，聚焦输入框是预期行为
+          // 焦点说明：气泡是用户刚点开的直接操作入口 → 聚焦输入框是预期行为
+          // （原 biome-ignore 抑制是 no-op：该处并不触发 noAutofocus，2026-09-13 清理）
           autoFocus
           value={text}
           onChange={(e) => setText(e.target.value)}

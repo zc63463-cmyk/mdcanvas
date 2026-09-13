@@ -174,13 +174,16 @@ for (const f of prod) {
     if (cur) {
       cur.depth += (l.match(/\{/g) ?? []).length - (l.match(/\}/g) ?? []).length;
       if (cur.depth <= 0 && i > cur.start) {
-        cur.len = i - cur.start + 1;
+        // 行数按 1-based 闭区间计数：i 是 0-based 下标 → len = (i+1) − start + 1 = i − start + 2
+        // （此前写 +1 少算 1 行：StageContent 报 1780、实际 1781 —— 2026-09-13 修正）
+        cur.len = i - cur.start + 2;
         fns.push(cur);
         cur = null;
       }
     }
   }
   if (cur) {
+    // 文件尾仍未闭合：按「文件以换行结尾」口径取末行（lines.length−1）计入
     cur.len = lines.length - cur.start;
     fns.push(cur);
   }

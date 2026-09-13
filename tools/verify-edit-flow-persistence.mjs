@@ -19,12 +19,16 @@
  * 修复后（E 批起）：三条全过。退出码 0 = 全过；1 = 有断言失败（打印明细）。
  */
 import { chromium } from 'file:///C:/Users/20564/AppData/Roaming/npm/node_modules/@playwright/cli/node_modules/playwright-core/index.mjs';
+import { assertLoadedBundle, checkSnapshotFresh } from './lib/snapshotCheck.mjs';
 
 const BASE = process.argv[2] ?? 'http://localhost:5175';
 const SEED_TEXT = '# E2E根\n\n- 甲节点\n- 乙节点\n';
 const TARGET = '乙节点';
 const APPEND = '改';
 const EXPECT_TEXT = TARGET + APPEND;
+
+// 先验产物新鲜度：防止「测的是旧快照」导致的假阴性（2026-09-13 已踩过一次）
+checkSnapshotFresh();
 
 const browser = await chromium.launch();
 const page = await browser.newPage({ viewport: { width: 1280, height: 800 } });
@@ -66,6 +70,7 @@ const check = (name, ok, detail) => {
 
 try {
   await page.goto(`${BASE}/`, { waitUntil: 'networkidle' });
+  await assertLoadedBundle(page); // ③ 防浏览器缓存旧 bundle
   // 启动页只在「有最近文档」时出现（已清 localStorage → 通常直接进画布）；
   // 若出现则点「看内置示例」跳过。用短超时探测，不做硬等待。
   const sampleBtn = page.getByRole('button', { name: '看内置示例' });
