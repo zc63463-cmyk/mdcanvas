@@ -139,7 +139,8 @@ export function useDocumentActions({
       // 后续 Ctrl+S 直接 createWritable() 静默覆盖，不再唤起系统对话框与覆盖确认。
       // 下载兜底没有句柄，保留原值（不把已有 handle 抹成 undefined）。
       const nextHandle = outcome.handle ?? effective;
-      setDoc((d) => ({ ...d, source, handle: nextHandle, saved: true, ts: Date.now() }));
+      // E 批口径：保存路径不得改写 doc.source（解析输入）——内容快照写入 savedSource
+      setDoc((d) => ({ ...d, savedSource: source, handle: nextHandle, saved: true, ts: Date.now() }));
       controller.markSaved();
       docHost.remember({ ...doc, source, handle: nextHandle, saved: true, ts: Date.now() });
       persistHandle(doc.id, nextHandle);
@@ -154,7 +155,8 @@ export function useDocumentActions({
       if (outcome.result === 'cancelled') return;
       setDoc((d) => ({
         ...d,
-        source,
+        // E 批口径：保存路径不得改写 doc.source（解析输入）——内容快照写入 savedSource
+        savedSource: source,
         handle: outcome.handle ?? d.handle,
         saved: true,
         ts: Date.now(),

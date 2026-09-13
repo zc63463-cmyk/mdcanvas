@@ -369,6 +369,42 @@ describe('useDocumentActions · handleSaveAs', () => {
 });
 
 /**
+ * E 批（编辑流保全）：保存写回口径 —— `source` 冻结为「打开/新建时的解析输入」，
+ * 成功保存的内容快照写入 `savedSource`。若实现回退改写 `source`，本组转红。
+ */
+describe('useDocumentActions · 保存写回口径（E 批：source 冻结）', () => {
+  it('handleSave：写回 savedSource、source 保持打开时内容不变', async () => {
+    const { result, setDoc, docHost } = setup({ controller: { serialize: () => 'NEW-SRC' } });
+
+    await act(async () => {
+      await result.current.handleSave();
+    });
+
+    expect(applied(setDoc, baseDoc)).toContainEqual(
+      expect.objectContaining({ savedSource: 'NEW-SRC', source: 'X', saved: true }),
+    );
+    // 回归钉：remember 契约 = 「传入即内容」——快照仍应是新内容
+    expect(docHost.remember).toHaveBeenCalledWith(expect.objectContaining({ source: 'NEW-SRC' }));
+  });
+
+  it('handleSaveAs：同口径（写回 savedSource、source 不动）', async () => {
+    const fresh = { name: 'b.mm.md' } as FsFileHandle;
+    const { result, setDoc } = setup({
+      controller: { serialize: () => 'NEW-SRC' },
+      docHost: { save: vi.fn(async () => fsOk(fresh)) },
+    });
+
+    await act(async () => {
+      await result.current.handleSaveAs();
+    });
+
+    expect(applied(setDoc, baseDoc)).toContainEqual(
+      expect.objectContaining({ savedSource: 'NEW-SRC', source: 'X' }),
+    );
+  });
+});
+
+/**
  * A-D4：UnsavedPrompt 是「未保存切换确认」的载体（替代 window.confirm）。
  * 两按钮语义（决策 A1）：放弃修改并切换 / 取消；键盘语义与 LenBubble 一致（Enter 确认 / Esc 取消）。
  */
