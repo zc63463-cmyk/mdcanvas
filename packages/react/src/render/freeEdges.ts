@@ -429,7 +429,10 @@ export function freeEdgeEndpoints(
       renderable: false,
     };
   }
-  // dir 语义：fwd 源→目标；back 画布上反向绘制（箭头落在源端）；both 两端箭头（方向同 fwd）
+  // dir 语义：fwd 源→目标；back 画布上反向绘制（箭头落在源端）；both 两端箭头（方向同 fwd）。
+  // R3-A3 渲染端语义契约：manual.from/to 与 routingSide 都按【渲染端】解释（所见即所得）——
+  // fwd ↔ back 切换必须同步交换 manual 两端并翻转 routingSide（useEdgeActions.setEdgeDir
+  // 保形实现），否则手工几何会换端、绕行侧会镜像。
   const forward = edge.dir !== 'back';
   return forward
     ? { fromId: s.id, toId: t.id, from: s.box, to: t.box, ghost: false, renderable: true }

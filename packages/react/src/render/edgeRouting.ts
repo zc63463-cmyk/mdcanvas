@@ -309,7 +309,8 @@ export function bezierFromAnchors(
  * - 水平主导（|dx| ≥ |dy|）→ 源右缘/左缘中点 → 靶左缘/右缘中点，进出方向沿水平轴相对；
  * - 垂直主导 → 源下缘/上缘中点 → 靶上缘/下缘中点，进出方向沿垂直轴相对。
  *
- * `stagger`（平行错位）：第 N 条平行入边沿外侧轴反向错位，步长 = 盒边长 × 0.125。
+ * `stagger`（平行错位）：第 N 条平行入边沿外侧轴反向错位，步长 = 盒边长 × 0.0625
+ *  （实现为 `盒边长 × 0.125 / 2` 的半档——防错位后锚点出盒内缩；测试按 0.0625 断言）。
  * 多条边指向同一节点时不再在同一个点扇形炸开（Obsidian 平行入边观感）。
  */
 export function semanticAnchorPair(
@@ -864,7 +865,10 @@ export function routeAesthetic(
      *   'right' = 鼓向右侧（曲率 ≥ 0）
      *
      * 指定后只在该侧枚举曲率，**优先于评分自动选择** —— 让用户一键定向，不必拖 bend 控制点。
-     * 若该侧无解，回退到两侧全枚举（保证可用性，不因用户指定而画不出线）。
+     * 该侧无解 → 由本函数尾部的【直穿降级】兜底（绝不空白，见「直穿降级：所有组合均穿障时…」
+     * 一段；R3-4 起该情形经 RouteResult.forcedSideFallback 显式上报，不再静默）。
+     * 另：dir/routingSide 是渲染端语义（R3-A3 契约）——dir 的 fwd↔back 切换由
+     * useEdgeActions.setEdgeDir 保形（交换 manual 两端 + 翻转 routingSide）。
      */
     forceSide?: 'left' | 'right';
     /**

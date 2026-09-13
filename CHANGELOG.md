@@ -7,6 +7,12 @@
 > （09-05~09-06）与「图引擎适配 / 文件工作台」（09-10）等批次未单独标号，
 > 按完成时间归入对应段落末尾的「同批」小节。
 
+## [1.8.6] — 2026-09-13 · 关系线 R3（自动行为可预期化）
+
+**已知取舍（R3-5 明文档化）**：
+- **低 LOD 关避障 / 动画期形状瞬变 = 刻意换帧率**：低 LOD 下 `MapView` 的 `edgeObstaclesOf` 门控关闭障碍收集、`FreeEdgeLayer` 动画期 `fastRouting` 跳过跳线——形状在门控边界瞬变是性能权衡（B-P3 已冻结手势期 LOD），**不修行为**（R3-A5）。
+- **manual / routingSide 的渲染端语义契约（R3-A3）**：两者都按「渲染 from→to」解释；dir 的 fwd↔back 切换由 `useEdgeActions.setEdgeDir` 保形（同一补丁交换 manual 两端 + 翻转 routingSide）；`both` 与 `fwd` 同向不交换。`RouteResult.forcedSideFallback`（R3-4）仅在 forceSide 指定侧且走到直穿降级时置位——`routed:false` 的两种含义（空旷直连 / 降级直穿）语义不动（R3-A4）。
+
 ## [1.8.5] — 2026-09-13 · 关系线 R2（修复闭环：重挂锚点 + 可发现性 + 删除漂移修复）
 
 **触发**：R0/R1 之后「坏边能看见但不能修」——无任何重挂锚点 UI；R1 复核发现③：删除重复实体会让其余同实体节点的 `#N` 锚越界漂移（stale）。计划：`docs/dispatch/2026-09-13-edge-r2-repair-and-reattach-plan.md`。
