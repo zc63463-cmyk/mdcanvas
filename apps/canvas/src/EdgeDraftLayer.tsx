@@ -125,6 +125,7 @@ export function EdgeDraftLayer({
             ...(selEdgeOpen.routingSide !== undefined
               ? { routingSide: selEdgeOpen.routingSide }
               : {}),
+            ...(selEdgeOpen.manual !== undefined ? { manual: selEdgeOpen.manual } : {}),
           }}
           x={edgeActions.edgeSel.x}
           y={edgeActions.edgeSel.y}

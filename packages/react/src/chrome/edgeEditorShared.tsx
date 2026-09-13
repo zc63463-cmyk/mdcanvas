@@ -186,9 +186,15 @@ export function DirToggle({ value, onChange }: { value: LinkDir; onChange: (d: L
 export function RoutingSideToggle({
   value,
   onChange,
+  disabled,
+  disabledTitle,
 }: {
   value?: 'left' | 'right';
   onChange: (v: 'left' | 'right' | undefined) => void;
+  /** R3-1：manual 锁定期间禁用（静默 no-op 的显式化） */
+  disabled?: boolean;
+  /** R3-1：禁用态 tooltip（指引恢复入口） */
+  disabledTitle?: string;
 }) {
   const { token } = useTheme();
   const opts: Array<{ v: 'left' | 'right' | undefined; t: string; title: string }> = [
@@ -202,7 +208,9 @@ export function RoutingSideToggle({
         <button
           key={o.v ?? 'auto'}
           data-routing-side-opt={o.v ?? 'auto'}
-          title={o.title}
+          disabled={disabled}
+          aria-disabled={disabled || undefined}
+          title={disabled === true && disabledTitle !== undefined ? disabledTitle : o.title}
           onClick={() => onChange(o.v)}
           style={{
             width: 26,
@@ -212,7 +220,8 @@ export function RoutingSideToggle({
               '1px solid ' + (value === o.v ? token.color.selection : 'rgba(128,128,128,0.3)'),
             background: 'transparent',
             color: value === o.v ? token.color.selection : 'inherit',
-            cursor: 'pointer',
+            cursor: disabled ? 'not-allowed' : 'pointer',
+            opacity: disabled ? 0.45 : 1,
             fontSize: 13,
             lineHeight: 1,
           }}

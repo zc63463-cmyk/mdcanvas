@@ -447,3 +447,82 @@ describe('EdgeEditor 重挂入口（R2-1）', () => {
     expect(onReattach).toHaveBeenCalledWith('from', 'node:根/生活');
   });
 });
+
+describe('EdgeEditor manual 边禁用 routingSide/Opp（R3-1）', () => {
+  /** 缺元素即抛错（替代 `!` 断言——新增代码零 lint 告警纪律） */
+  function q3(sel: string, root: ParentNode): Element {
+    const el = root.querySelector(sel);
+    if (el === null) throw new Error(`element not found: ${sel}`);
+    return el;
+  }
+  const plainEdge = {
+    key: 'e0',
+    index: 0,
+    rel: 'blocks',
+    dir: 'fwd' as const,
+    from: 'node:根/A',
+    to: 'node:根/B',
+  };
+  const manualEdge = { ...plainEdge, manual: { curvature: 0.3 } };
+
+  function mountEditor(edge: typeof plainEdge, onChange: (p: unknown) => void) {
+    return render(
+      <ThemeProvider>
+        <EdgeEditor
+          edge={edge}
+          x={10}
+          y={10}
+          onChange={onChange}
+          onStyle={vi.fn()}
+          onInvalidate={vi.fn()}
+          onRestore={vi.fn()}
+          onDelete={() => undefined}
+          onClose={() => undefined}
+        />
+      </ThemeProvider>,
+    );
+  }
+
+  it('带 manual → Opp 与 routingSide 三钮全部禁用（disabled + aria-disabled）', () => {
+    const { container } = mountEditor(manualEdge, vi.fn());
+    const opp = q3('[data-edge-opp]', container) as HTMLButtonElement;
+    expect(opp.disabled).toBe(true);
+    expect(opp.getAttribute('aria-disabled')).toBe('true');
+    const opts = container.querySelectorAll('[data-routing-side-opt]');
+    expect(opts.length).toBe(3);
+    opts.forEach((o) => {
+      expect((o as HTMLButtonElement).disabled).toBe(true);
+      expect(o.getAttribute('aria-disabled')).toBe('true');
+    });
+  });
+
+  it('点击禁用控件 → onChange 不被调用（今天：可点且会写）', () => {
+    const onChange = vi.fn();
+    const { container } = mountEditor(manualEdge, onChange);
+    fireEvent.click(q3('[data-edge-opp]', container));
+    fireEvent.click(q3('[data-routing-side-opt="left"]', container));
+    fireEvent.click(q3('[data-routing-side-opt="auto"]', container));
+    expect(onChange).not.toHaveBeenCalled();
+  });
+
+  it('无 manual → 控件可用，routingSide/Opp 行为不变（回归钉）', () => {
+    const onChange = vi.fn();
+    const { container } = mountEditor(plainEdge, onChange);
+    const opp = q3('[data-edge-opp]', container) as HTMLButtonElement;
+    expect(opp.disabled).toBe(false);
+    const leftOpt = q3('[data-routing-side-opt="left"]', container) as HTMLButtonElement;
+    expect(leftOpt.disabled).toBe(false);
+    fireEvent.click(leftOpt);
+    expect(onChange).toHaveBeenCalledWith({ routingSide: 'left' });
+  });
+
+  it('禁用态 tooltip 指引恢复入口：文案含「双击 bend 恢复自动」', () => {
+    const { container } = mountEditor(manualEdge, vi.fn());
+    const opp = q3('[data-edge-opp]', container) as HTMLButtonElement;
+    expect(opp.getAttribute('title')).toContain('双击 bend 恢复自动');
+    const toggle = q3('[data-routing-side-toggle]', container);
+    toggle.querySelectorAll('button').forEach((b) => {
+      expect(b.getAttribute('title')).toContain('双击 bend 恢复自动');
+    });
+  });
+});

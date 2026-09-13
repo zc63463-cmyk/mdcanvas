@@ -11,7 +11,7 @@
 import { useMemo, useState } from 'react';
 import type { LinkDir } from '@mindcanvas/kernel';
 import { useTheme } from '../theme/ThemeContext.js';
-import type { DocEdge, EdgeStyle } from '../render/freeEdges.js';
+import type { DocEdge, EdgeManual, EdgeStyle } from '../render/freeEdges.js';
 import { inferBowSide } from '../render/edgeRouting.js';
 import {
   clampPos,
@@ -73,6 +73,8 @@ export function EdgeEditor({
     invalidAt?: string;
     /** 绕行侧（对标 markvault routingSide）；undefined = 自动 */
     routingSide?: 'left' | 'right';
+    /** R3-1：人工锁定几何（存在 = routingSide/Opp 静默失效 → 显式禁用） */
+    manual?: EdgeManual;
   };
   x: number;
   y: number;
@@ -101,7 +103,12 @@ export function EdgeEditor({
   //     比"照抄一份路由逻辑重算"可靠 —— 后者会漏掉这些影响而与实际渲染不一致。
   //   · 极端兜底：拿不到 currentD 或路径是直线（推断为 auto）→ 落到 'right'，
   //     之后再点即正常 toggle（与既有行为一致，不会卡死）。
+  // R3-1：manual 锁定期间 routingSide/Opp 对渲染**永远不生效**（manual 优先于
+  // routeAesthetic 的 forceSide）——此前可点但静默无效；现显式禁用 + flipSide 早退双保险。
+  const manualLocked = edge.manual !== undefined;
+  const MANUAL_LOCKED_TITLE = '已锁定手工几何（manual）——双击 bend 恢复自动后方可设置绕行侧';
   const flipSide = () => {
+    if (manualLocked) return;
     const inferred = edge.routingSide ?? (currentD ? inferBowSide(currentD) : 'auto');
     const opp: 'left' | 'right' = inferred === 'right' ? 'left' : 'right';
     onChange({ routingSide: opp });
@@ -184,15 +191,26 @@ export function EdgeEditor({
         <DirToggle value={edge.dir} onChange={(d) => onChange({ dir: d })} />
         <RoutingSideToggle
           value={edge.routingSide}
-          onChange={(v) => onChange({ routingSide: v })}
+          onChange={(v) => {
+            if (manualLocked) return;
+            onChange({ routingSide: v });
+          }}
+          disabled={manualLocked}
+          disabledTitle={MANUAL_LOCKED_TITLE}
         />
         <button
           data-edge-opp
+          disabled={manualLocked}
+          aria-disabled={manualLocked || undefined}
           onClick={flipSide}
-          title="Opp 一键反向：routingSide 已设则翻转，未设则从当前鼓向推断后翻到另一边"
+          title={
+            manualLocked
+              ? MANUAL_LOCKED_TITLE
+              : 'Opp 一键反向：routingSide 已设则翻转，未设则从当前鼓向推断后翻到另一边'
+          }
           style={{
             ...inputStyle,
-            cursor: 'pointer',
+            cursor: manualLocked ? 'not-allowed' : 'pointer',
             color: token.color.textMuted,
             padding: '0 8px',
             fontSize: 11,
