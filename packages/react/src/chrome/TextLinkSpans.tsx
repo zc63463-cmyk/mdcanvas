@@ -45,6 +45,11 @@ export function TextLinkSpans({ text, root, onJumpToAnchor, token }: TextLinkSpa
             data-text-link={span.anchorText}
             data-link-state={span.state ?? 'unknown'}
             title={ghost ? ghostTitle(span.state ?? '', span.reason) : undefined}
+            // 链接触发的按下不冒泡：宿主容器（NotePopover 浮窗根）的 onPointerDown 会
+            // 「点击固定」→ 预览浮窗（floating）被固定卡（embedded）替换、DOM 重建 →
+            // up/click 丢失（实测根因：预览浮窗里点链接要两次才生效）。
+            // 点链接 = 跳转意图，不承担「固定浮窗」职责。
+            onPointerDown={(e) => e.stopPropagation()}
             onClick={(e) => {
               // 链接点击不冒泡（如 DescBlock 的 收起/展开 onToggle 不被误触）
               e.stopPropagation();
