@@ -7,6 +7,19 @@
 > （09-05~09-06）与「图引擎适配 / 文件工作台」（09-10）等批次未单独标号，
 > 按完成时间归入对应段落末尾的「同批」小节。
 
+## [1.8.5] — 2026-09-13 · 关系线 R2（修复闭环：重挂锚点 + 可发现性 + 删除漂移修复）
+
+**触发**：R0/R1 之后「坏边能看见但不能修」——无任何重挂锚点 UI；R1 复核发现③：删除重复实体会让其余同实体节点的 `#N` 锚越界漂移（stale）。计划：`docs/dispatch/2026-09-13-edge-r2-repair-and-reattach-plan.md`。
+
+- **R2-0** kernel `planReferenceMigration` 加 `opts.tolerateMissingTargets`（缺省 false = 现行语义逐位不变，kernel 测试钉死）；`ReferenceDiagnostic.code` 加 `'target-lost-kept'`；三个冲突调用点（cid/路径/实体）统一走降级出口。`remove-node` 条件式入迁移白名单（R2-A4：仅触发 op/批次含 remove-node 时传 true，其余保持严格）——**契约更新**：推翻 R1-1「remove-node 不参与迁移」的偏差；删除不再被 target-lost 阻断，删重复实体时其余实体的 `#N` 锚自动回裸锚（不漂移），指向被删者的引用降级保留原锚（解析层的 #N 定位语义会把保留的 `#N` 重解析到幸存出现，属既有解析行为非迁移改写）。
+- **R2-1** 全仓**第一个**边锚修复入口：`EdgeAnchorPicker`（候选 + 过滤 + Esc/遮罩取消 + `excludeAnchor` 防自关联 + 面板内 stopPropagation）→ `EdgeEditor` head 行「重挂源/重挂靶」入口（可选 props 缺省不渲染）→ `useEdgeActions.reattachEdge` **唯一重挂写路径**（`writeEdges + patchEdgeAt`，只 patch 指定端、不清 `invalidAt`（R2-A3）、一次 undo 回滚）。
+- **R2-2** 可发现性闭环：EdgeHealthBar 加 `onOpen` → 点击打开关系面板——**契约反转** R0-2 的「零点击（pointerEvents none）」为「单点击可达」（缺省未接线仍 none 向后兼容）；点击区域仅条体本身。
+- **R2-3** 关系面板行内动作：「重挂」只出现在有未解析端的行（源锚未解析 → from / 目标未解析 → to / 两端都坏 → from 优先并注明），复用 EdgeAnchorPicker（排除另一端原文防自关联）；「删除」走同一 `writeEdges` 写路径（`useEdgeActions.deleteEdge` = `writeEdges + removeEdgeAt`），动作按钮 stopPropagation 不触发行聚焦。
+- **R2-4** `edgeHealth` 口径注释写准：与 freeEdgeEndpoints 逐情形对照（源锚不可解析/ghost/自关联一致；缺盒/塌陷/零尺寸判不了 → renderable 只会高估不会低估）；noBox 注明【含 ghost 场景】。偏差：计划原表述「ghost 被本函数 renderable 排除（低估）」与实现事实相反（ghost 计入且被测试钉死），按「写准」目标记录实际口径。
+- **R2-A1 裁决（范围收口）**：无源边的画布占位（收件箱角/原点附近）**不做**——`freeEdges.ts:307-314` 有历史裁决「不画飞向世界原点的误导性直线」（E8 P0），该形态需新 UX 概念与命中/z-order 处理；改为「诊断条可点 + 面板行可修复」的**发现路径**闭环。若要收件箱，另立 UX 决策批。
+
+**验收**：kernel **480** / react **1062** / canvas **128** = **1670 全绿**（R1 基线 1651 + 本批 +19）；tsc ×3 / dist 重建 / depcruise（392 模块）/ lint **1481 warnings + 46 infos 持平**（新代码零告警）/ budget 持平（bang 89/90、asCast 31/31）；阈值/契约测试零放宽（唯二契约反转：R2-0 remove-node 条件式启用、R2-2 零点击 → 单点击可达，均在对应 commit message 逐条写明）。
+
 ## [1.8.4] — 2026-09-13 · 关系线 R0+R1（边健康度观测 + 锚迁移接线；react 加法导出 + canvas 接线）
 
 **触发**：自由边「坏了但静默」——畸形项被 `collectFreeEdges` 静默丢弃、改名/缩进/反缩进/重排四类结构编辑默默断开关系线（`planReferenceMigration` 此前只挂在切断/接回两条命令上）。计划：`docs/dispatch/2026-09-13-edge-health-and-anchor-migration-plan.md`。
