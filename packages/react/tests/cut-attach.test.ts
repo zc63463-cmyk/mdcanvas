@@ -296,6 +296,32 @@ describe('A5 引用收集（collectReferenceAnchors）', () => {
     expect(cidRef.anchor).toBe('cid:c-work');
     expect(pathRef.anchor).toBe('node:根/任务');
   });
+
+  it('L2：文本字段内的链接进入盘点清单（span 级 field，按出现顺序编号）', () => {
+    const root = makeTree();
+    root.note = {
+      ...(root.note ?? {}),
+      desc: '前 [去A](node:根/生活) 后',
+      note: ['条 [去C](node:根/任务)'],
+      note_text: '文 [去B](node:根/生活)',
+      qa: ['旧 [去D](node:根/任务/K3)'],
+    };
+    const refs = collectReferenceAnchors(root);
+    const byField = new Map(refs.map((r) => [r.field, r.anchor]));
+    expect(byField.get('desc#0')).toBe('node:根/生活');
+    expect(byField.get('note[0]#0')).toBe('node:根/任务');
+    expect(byField.get('note_text#0')).toBe('node:根/生活');
+    expect(byField.get('qa[0]#0')).toBe('node:根/任务/K3');
+  });
+
+  it('L2：同字段多链接的 span 序号按出现顺序（desc#0 / desc#1）', () => {
+    const root = makeTree();
+    root.note = { ...(root.note ?? {}), desc: '[一](node:根/生活) 和 [二](node:根/任务)' };
+    const refs = collectReferenceAnchors(root);
+    const byField = new Map(refs.map((r) => [r.field, r.anchor]));
+    expect(byField.get('desc#0')).toBe('node:根/生活');
+    expect(byField.get('desc#1')).toBe('node:根/任务');
+  });
 });
 
 describe('A5 引用迁移诊断上报（R0-4）', () => {

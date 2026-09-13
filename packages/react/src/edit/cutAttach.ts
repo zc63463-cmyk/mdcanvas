@@ -28,6 +28,7 @@ import {
 } from '@mindcanvas/kernel';
 import { collectCenters, ensureNodeCid, isRec, removeCenter, upsertCenter } from '../render/centers.js';
 import { anchorOfNode } from '../render/freeEdges.js';
+import { applySpanReplace, parseTextLinks } from './textLinks.js';
 
 /** .mm.md heading 层级上限（H6）→ 节点相对根的最大深度（根深度 0） */
 export const MAX_NODE_DEPTH = 5;
@@ -81,6 +82,28 @@ function isWithin(subtree: EditableNode, id: string): boolean {
 const ANCHOR_NOTE_KEYS = ['centers', 'center_pos', 'edges', 'links', 'groups', 'sections'] as const;
 
 /**
+ * L2：从一段文本收集行内链接锚 → span 级 field（`desc#0` / `note[2]#1` / …）。
+ * 链接判定与渲染同源（textLinks.parseTextLinks：URL 形态 / 裸括号文本不入链接）；
+ * span 序号按出现顺序编号，与 applyAnchorUpdateToNote 的定位口径一致。
+ */
+function collectTextLinkRefs(
+  noteKey: string,
+  key: string,
+  text: unknown,
+  itemIndex: number | undefined,
+  out: AnchorRef[],
+): void {
+  if (typeof text !== 'string' || text === '') return;
+  const prefix = itemIndex === undefined ? key : `${key}[${itemIndex}]`;
+  let k = 0;
+  for (const span of parseTextLinks(text)) {
+    if (span.kind !== 'link' || span.anchorText === undefined) continue;
+    out.push({ noteKey, field: `${prefix}#${k}`, anchor: span.anchorText });
+    k += 1;
+  }
+}
+
+/**
  * 盘点全树 note 锚引用（design §5 清单：centers.at / center_pos.at / edges 两端 /
  * links[].to / groups[].members）。noteKey 用**会话内节点 id**（迁移 update 的定位键）。
  * 未知/非数组形状静默跳过——与「未知元数据保留但不承诺自动迁移」的纪律一致。
@@ -128,6 +151,17 @@ export function collectReferenceAnchors(root: EditableNode): AnchorRef[] {
           }
         });
       }
+      // L2：文本字段内的行内链接（desc / note_text 标量；note[i] / qa[i] 数组项）。
+      // field 形态 `desc#0` / `note_text#0` / `note[2]#1` / `qa[0]#0`——span 序号按出现顺序。
+      collectTextLinkRefs(n.id, 'desc', note.desc, undefined, refs);
+      collectTextLinkRefs(n.id, 'note_text', note.note_text, undefined, refs);
+      for (const key of ['note', 'qa'] as const) {
+        const arr = note[key];
+        if (!Array.isArray(arr)) continue;
+        arr.forEach((item, i) => {
+          if (typeof item === 'string') collectTextLinkRefs(n.id, key, item, i, refs);
+        });
+      }
     }
     for (const c of n.children) walk(c);
   };
@@ -135,12 +169,18 @@ export function collectReferenceAnchors(root: EditableNode): AnchorRef[] {
   return refs;
 }
 
-/** 把单条锚迁移写回 note（不可变；field 形如 `centers[0].at` / `groups[1].members[2]`） */
+/** 把单条锚迁移写回 note（不可变；field 形如 `centers[0].at` / `groups[1].members[2]`；
+ *  L2 追加 span 形态 `desc#0` / `note_text#0` / `note[2]#1` / `qa[0]#0`——文本字段内链接的锚替换） */
 export function applyAnchorUpdateToNote(
   note: Note | undefined,
   field: string,
   to: string,
 ): Note {
+  // L2：文本字段 span 形态 → 替换第 k 个链接的目标区间
+  const sm = /^([a-z_]+)(?:\[(\d+)\])?#(\d+)$/.exec(field);
+  if (sm) {
+    return applyTextLinkUpdate(note, sm[1] ?? '', sm[2], Number(sm[3]), to);
+  }
   const m = /^([a-z_]+)\[(\d+)\](?:\.([a-z]+))?$/.exec(field);
   if (!m) return note ?? {};
   const key = m[1];
@@ -162,6 +202,45 @@ export function applyAnchorUpdateToNote(
     list[idx] = obj;
   }
   const out: Note = { ...base };
+  out[key] = list;
+  return out;
+}
+
+/**
+ * L2：文本字段内第 k 个链接的锚替换（desc / note_text 标量；note[i] / qa[i] 数组项）。
+ *
+ * **从右往左的位移纪律**：链接定位与替换同源（同一 parse 结果的 target 区间），
+ * 单条 update 只替换一处；applySpanReplace 内部对替换列表**从右往左**应用——
+ * 若同一文本上批量传入多处替换（区间均基于同一原文），前段长度变化不会让后段错位。
+ * 同一字段的多条 update 由 buildMigrationOps 逐条处理：每条基于最新文本重新解析，
+ * span 序号在链接数量不变时语义稳定（锚文本替换不改变链接数/顺序）。
+ *
+ * 第 k 个链接不存在 / 文本形态不符 → 原 note 返回（防御性 no-op：updates 基于
+ * 同代文本构建，找不到即跳过——不抛错、不阻断整批）。
+ */
+function applyTextLinkUpdate(
+  note: Note | undefined,
+  key: string,
+  itemIndex: string | undefined,
+  k: number,
+  to: string,
+): Note {
+  const base: Note = note ?? {};
+  const text = readTextValue(base, key, itemIndex);
+  if (text === undefined) return base;
+  const links = parseTextLinks(text).filter((s) => s.kind === 'link');
+  const span = links[k];
+  if (!span || span.targetStart === undefined || span.targetEnd === undefined) return base;
+  const next = applySpanReplace(text, [{ start: span.targetStart, end: span.targetEnd, text: to }]);
+  const out: Note = { ...base };
+  if (itemIndex === undefined) {
+    out[key] = next;
+    return out;
+  }
+  const raw = base[key];
+  if (!Array.isArray(raw)) return base;
+  const list = raw.slice();
+  list[Number(itemIndex)] = next;
   out[key] = list;
   return out;
 }
@@ -200,9 +279,32 @@ export function formatReferenceConflict(c: {
   return `引用迁移冲突（${c.code} @ ${c.field}）${anchor}：${c.message ?? '新路径不可唯一表示'}`;
 }
 
-/** 读迁移 field 指向的当前锚值（field 形如 centers[0].at / edges[1].from / groups[0].members[2]） */
+/** L2：读 span 形态 field 承载的文本（itemIndex 缺省 → 标量键；有 → 数组第 i 项） */
+function readTextValue(
+  note: Note | undefined,
+  key: string,
+  itemIndex: string | undefined,
+): string | undefined {
+  if (!note) return undefined;
+  const raw = note[key];
+  if (itemIndex === undefined) return typeof raw === 'string' ? raw : undefined;
+  if (!Array.isArray(raw)) return undefined;
+  const item = raw[Number(itemIndex)];
+  return typeof item === 'string' ? item : undefined;
+}
+
+/** 读迁移 field 指向的当前锚值（field 形如 centers[0].at / edges[1].from / groups[0].members[2]；
+ *  L2 追加 span 形态 `desc#0` / `note_text#0` / `note[2]#1` / `qa[0]#0`） */
 function readAnchorField(note: Note | undefined, field: string): string | undefined {
   if (!note) return undefined;
+  // L2：文本字段 span 形态 → 第 k 个链接的锚原文
+  const sm = /^([a-z_]+)(?:\[(\d+)\])?#(\d+)$/.exec(field);
+  if (sm) {
+    const text = readTextValue(note, sm[1] ?? '', sm[2]);
+    if (text === undefined) return undefined;
+    const links = parseTextLinks(text).filter((s) => s.kind === 'link');
+    return links[Number(sm[3])]?.anchorText;
+  }
   const m = /^([a-z_]+)\[(\d+)\]\.(?:members\[(\d+)\]|([a-z]+))$/.exec(field);
   const key = m?.[1];
   if (key === undefined) return undefined;
