@@ -352,18 +352,60 @@ describe('Line jumps 跳线', () => {
     expect(findCrossings([a, b])).toHaveLength(0);
   });
 
-  it('pathWithJumps：无跳线点退化为折线；有跳线点则插入拱形弧', () => {
+  it('pathWithJumps：无跳线点退化为折线；有跳线点则插入折线跳（M/L-only）', () => {
     const pts = [
       { x: 0, y: 0 },
       { x: 100, y: 0 },
     ];
     // 无跳线点 → 原样折线
     expect(pathWithJumps(pts, [])).toBe('M 0 0 L 100 0');
-    // 落在路径上的跳线点 → 产生拱形（额外的 C 指令），且首尾不变
+    // 落在路径上的跳线点 → 折线跳（梯形桥），且首尾不变。
+    // R5-1 断言口径变更：旧判据 toContain('C')（贝塞尔拱弧）——折线化后恒假失效，
+    // 换成语义等价折线判据：不含 C + 全串写死（顶点数 = 2 + 4 = 6，抬升高度 = radius = 5）。
     const jumped = pathWithJumps(pts, [{ x: 50, y: 0 }], 5);
     expect(jumped.startsWith('M 0 0')).toBe(true);
     expect(jumped.endsWith('L 100 0')).toBe(true);
-    expect(jumped).toContain('C');
+    expect(jumped).not.toContain('C');
+    // enter(45,0) → 抬升(45,5) → 平台右端(55,5) → exit(55,0)
+    expect(jumped).toBe('M 0 0 L 45 0 L 45 5 L 55 5 L 55 0 L 100 0');
+  });
+
+  it('pathWithJumps：折线跳抬升高度 = radius（radius 参数生效）', () => {
+    const pts = [
+      { x: 0, y: 0 },
+      { x: 100, y: 0 },
+    ];
+    const jumped = pathWithJumps(pts, [{ x: 50, y: 0 }], 8);
+    // enter/exit = 50 ∓ 8；抬升高度 = radius = 8（写死）
+    expect(jumped).toBe('M 0 0 L 42 0 L 42 8 L 58 8 L 58 0 L 100 0');
+    expect(jumped).not.toContain('C');
+  });
+
+  it('pathWithJumps：斜线段上同样沿法向抬起（平台段平行于路径）', () => {
+    const d = pathWithJumps(
+      [
+        { x: 0, y: 0 },
+        { x: 100, y: 100 },
+      ],
+      [{ x: 50, y: 50 }],
+      5,
+    );
+    expect(d).not.toContain('C');
+    // 收集全部 L 顶点（写死数量 = 5：enter / 抬升端 / 平台右端 / exit / 末点）
+    const pts: Array<{ x: number; y: number }> = [];
+    for (const seg of d.match(/L [^L]+/g) ?? []) {
+      const [sx, sy] = seg.slice(2).split(' ');
+      pts.push({ x: Number(sx), y: Number(sy) });
+    }
+    expect(pts).toHaveLength(5);
+    // 抬升两端（1、2 号 L 顶点）到弦（y=x）的距离 = radius
+    const distToChord = (p: { x: number; y: number }): number => Math.abs(p.y - p.x) / Math.SQRT2;
+    const rise = pts[1] ?? { x: 0, y: 0 };
+    const fall = pts[2] ?? { x: 0, y: 0 };
+    expect(distToChord(rise)).toBeCloseTo(5, 6);
+    expect(distToChord(fall)).toBeCloseTo(5, 6);
+    // 平台段方向与路径平行（斜率 = 1）
+    expect((fall.y - rise.y) / (fall.x - rise.x)).toBeCloseTo(1, 6);
   });
 
   it('pathWithJumps：跳线点远离路径时忽略（不产生畸形弧）', () => {
@@ -605,7 +647,9 @@ describe('inferBowSide：跳线/折线路径（R3-2）', () => {
       ],
       [{ x: 50, y: 80 }],
     );
-    expect(bowUp).toContain('C'); // 夹具确有跳线弧（多段路径）
+    // R5-1 断言口径变更：折线化后跳线不再产 C（toContain('C') 恒假失效）。
+    // 语义等价判据：确有多段折线（跳线注入 4 个顶点 → 3 输入 + 4 = 7 个 M/L 指令 ≥ 4）。
+    expect((bowUp.match(/[MLC]/g) ?? []).length).toBeGreaterThanOrEqual(4);
     expect(inferBowSide(bowUp)).toBe('left');
 
     const bowDown = pathWithJumps(

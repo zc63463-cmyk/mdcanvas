@@ -533,12 +533,12 @@ export function inferBowSide(d: string): 'left' | 'right' | 'auto' {
     if (Math.abs(nOffset) < 1e-6) return 'auto';
     return nOffset > 0 ? 'right' : 'left';
   }
-  // ② R3-2：多段路径（跳线 d = M…L…C 拱弧…L…）——主体是 L 折线，C 段只是
-  //    过障小弧（其法向是「跳」的方向，不代表连线整体鼓向），故取【离首末弦
-  //    最远的路径顶点】的偏移符号判定：弓形主体顶点（路由中点）必然主导，
-  //    跳线弧端点落在主体折线上、偏移不超主体（对 plan A2「最长 C 段」的修正：
-  //    pathWithJumps 产出的主体是 L 段而非 C 段，见该函数实现）。
-  //    纯折线（无 C）同样落此分支；三点共线 / 顶点不足 → 'auto'。
+  // ② R3-2：多段路径（跳线 d = M…L 折线跳…L…；R5-1 起跳线为梯形桥、顶点离弦 ≤ radius）——
+  //    主体是 L 折线，跳线只是过障小桥（其法向是「跳」的方向，不代表连线整体鼓向），
+  //    故取【离首末弦最远的路径顶点】的偏移符号判定：弓形主体顶点（路由中点）必然主导；
+  //    跳线顶点只在完全无弓的直线上才会被选中（按跳线抬升方向落侧，非 'auto'）。
+  //    历史 C 形态路径（人工/旧数据）同样经 onPathPointsOf 落此分支；
+  //    三点共线 / 顶点不足 → 'auto'。
   const pathPoints = onPathPointsOf(d);
   if (pathPoints.length < 3) return 'auto';
   const first = pathPoints[0];
@@ -560,7 +560,7 @@ export function inferBowSide(d: string): 'left' | 'right' | 'auto' {
 }
 
 /** 从 path d 提取全部「在路径上」的点（M 起点 + L 端点 + C 端点；控制点不在路径上，剔除）。
- *  坐标对之间容忍逗号（pathWithJumps 产出 `C x y, x y, x y` 形态）。 */
+ *  C 形态为历史/人工路径保留（R5-1 起跳线折线化、不再产 C）；坐标对之间容忍逗号。 */
 function onPathPointsOf(d: string): Array<{ x: number; y: number }> {
   const out: Array<{ x: number; y: number }> = [];
   const re = /([MLC])((?:\s*,?\s*-?[\d.]+)+)/g;
@@ -604,16 +604,17 @@ function segmentsCross(
 // Line jumps 跳线（Issue #4）—— 交叉可读
 //
 // 设计：交叉无法完全避免时，不强求消除，而是让交叉**可读**。
-// 在被跨越的那条线（under）上，于交点处绘制一个跨越小弧（hop），
-// 明确「哪条在上、哪条在下」。参照 Miro 的 Line jumps；
+// 在被跨越的那条线（under）上，于交点处绘制一个跨越小桥（hop，折线梯形：
+// 抬起 → 平行跨过 → 落回），明确「哪条在上、哪条在下」。参照 Miro 的 Line jumps；
 // 但因 Miro 仅支持 straight / orthogonal 线型，曲线需自绘（此处实现）。
+// R5-1：hop 形态由贝塞尔拱弧折线化为 M/L-only 的梯形桥（单几何形态贯穿全链路）。
 // ═══════════════════════════════════════════════════════════════════
 
 /**
  * 跳线应用纯函数（P2-1 · 从 FreeEdgeLayer useMemo 抽出，供 fastRouting 门控）。
  *
  * - 单条边 / 无交叉（crossings 为空）→ 返回原 map（零拷贝，fast 路径零开销）
- * - 有交叉 → under 边（先路由）的 route.d 经 pathWithJumps 注入拱弧，其余边原样
+ * - 有交叉 → under 边（先路由）的 route.d 经 pathWithJumps 注入折线跳，其余边原样
  * 交叉仅由 route.points（p0–mid–p3 三点折线）求交——精度足够且成本远低于全曲线采样。
  */
 export function applyLineJumps<T extends { route: RouteResult }>(
@@ -744,14 +745,15 @@ function segIntersectPoint(
 }
 
 /**
- * 在折线上插入跳线弧：位于交叉点处「跨过去」的小拱形。
+ * 在折线上插入折线跳（梯形桥）：位于交叉点处「跨过去」的小桥。
  *
- * 实现：在每个跳线点处，沿路径方向前后各留 `radius` 距离，用三次贝塞尔
- * 拱起一个垂直于路径方向的小弧（控制点沿法向外推）。
+ * 实现：在每个跳线点处，沿路径方向前后各留 `radius` 距离（enter/exit），
+ * 于 enter 处沿法向抬起、跨过 2r 后落回 exit —— 抬升高度 = radius、平台段与路径平行。
+ * R5-1：形态由「贝塞尔拱弧」改为「折线梯形桥」，产出路径只含 M/L。
  *
  * @param pts 原始折线
  * @param jumpPoints 跳线点（通常取 EdgeCrossing 中 under === 本边索引的那些）
- * @param radius 跳线弧半径（默认 5）
+ * @param radius 折线跳半径（默认 5；语义 = 前后各留 r + 抬升高度）
  */
 export function pathWithJumps(
   pts: readonly { x: number; y: number }[],
@@ -801,7 +803,7 @@ export function pathWithJumps(
     const segLen = Math.hypot(dx, dy) || 1;
     const ux = dx / segLen;
     const uy = dy / segLen;
-    // 法向（用于拱起方向）：统一取 (-uy, ux)
+    // 法向（跳线抬起方向）：统一取 (-uy, ux)
     const nxp = -uy;
     const nyp = ux;
     while (ji < jumps.length && jumps[ji]!.seg === i) {
@@ -815,10 +817,16 @@ export function pathWithJumps(
       }
       const enter = { x: j.x - ux * r, y: j.y - uy * r };
       const exit = { x: j.x + ux * r, y: j.y + uy * r };
-      // 控制点沿法向外推，形成拱形（跳线）
-      const c1 = { x: enter.x + nxp * r * 1.3, y: enter.y + nyp * r * 1.3 };
-      const c2 = { x: exit.x + nxp * r * 1.3, y: exit.y + nyp * r * 1.3 };
-      d += ` L ${enter.x} ${enter.y} C ${c1.x} ${c1.y}, ${c2.x} ${c2.y}, ${exit.x} ${exit.y}`;
+      // R5-1 折线跳（梯形桥）：enter → 沿法向抬起 r → 沿路径走完 2r → 落回 exit。
+      // 与旧贝塞尔拱弧同一语义（前后各留 r、抬升高度 = radius），但产出只含 M/L ——
+      // 单几何形态贯穿路由 → 渲染 → 判定（inferBowSide）→ 导出。
+      const rise = { x: enter.x + nxp * r, y: enter.y + nyp * r };
+      const fall = { x: exit.x + nxp * r, y: exit.y + nyp * r };
+      d +=
+        ` L ${enter.x} ${enter.y}` +
+        ` L ${rise.x} ${rise.y}` +
+        ` L ${fall.x} ${fall.y}` +
+        ` L ${exit.x} ${exit.y}`;
       ji++;
     }
     d += ` L ${b.x} ${b.y}`;

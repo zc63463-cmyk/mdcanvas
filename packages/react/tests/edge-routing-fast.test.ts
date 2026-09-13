@@ -12,7 +12,7 @@
  */
 import { describe, expect, it } from 'vitest';
 import type { RouteResult } from '../src/render/edgeRouting.js';
-import { applyLineJumps } from '../src/render/edgeRouting.js';
+import { applyLineJumps, pathWithJumps } from '../src/render/edgeRouting.js';
 import { edgeObstaclesOf } from '../src/render/MapView.js';
 
 const layout = {
@@ -79,7 +79,7 @@ describe('applyLineJumps：跳线应用（fastRouting 门控的抽层）', () =>
     ]);
     expect(applyLineJumps(m)).toBe(m);
   });
-  it('对角线相交 → under 边注入跳线弧（route.d 出现 C 段），over 边保持', () => {
+  it('对角线相交 → under 边注入折线跳（M/L-only，顶点增加），over 边保持', () => {
     const m = new Map([
       ['e0', wrap(mkRoute(diagPts))], // 先路由 → 下方
       ['e1', wrap(mkRoute(antiDiagPts))],
@@ -87,7 +87,14 @@ describe('applyLineJumps：跳线应用（fastRouting 门控的抽层）', () =>
     const out = applyLineJumps(m);
     const d0 = out.get('e0')!.route.d;
     const d1 = out.get('e1')!.route.d;
-    expect(d0).toMatch(/C /); // 被跨越 → 加拱弧
-    expect(d1).not.toMatch(/C /); // 上方边不画跳线
+    // R5-1 断言口径变更（逐条对照见 commit message）：
+    // ① d0 的旧判据 `toMatch(/C /)` 断的是「恰好产出 C 拱弧」这一实现细节；
+    //    折线化后换形态判据——只含 M/L（不再含 C）。
+    expect(d0).not.toContain('C');
+    // ② 顶点数写死：3（输入）+ 4（enter / 抬升 / 平台端 / exit）= 7 个 M/L 指令。
+    expect((d0.match(/[ML] /g) ?? []).length).toBe(7);
+    // ③ d1 的旧负例 `not.toMatch(/C /)`（上方边不画跳线）折线化后【恒真】——
+    //    守卫静默失效。换语义等价判据：与「输入点直出折线」逐字相等（未注入任何跳线顶点）。
+    expect(d1).toBe(pathWithJumps(antiDiagPts, []));
   });
 });
