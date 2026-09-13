@@ -201,13 +201,20 @@ export function NotePopover({
     [editing, root],
   );
 
-  /** L3：打开候选选择器（先记录光标区间——picker 过滤框的 autoFocus 会让 textarea 失焦） */
-  const openPicker = (): void => {
+  /** L3：记录 textarea 光标区间——挂**按钮 pointerdown**（blur 之前），
+      失焦可能重置 selection，onClick 时再读就晚了；键盘激活按钮走 openPicker 兜底。 */
+  const rememberCaret = (): void => {
     const ta = taRef.current;
-    pickerRangeRef.current =
-      ta === null
-        ? null
-        : { start: ta.selectionStart ?? ta.value.length, end: ta.selectionEnd ?? ta.value.length };
+    if (ta === null) return;
+    pickerRangeRef.current = {
+      start: ta.selectionStart ?? ta.value.length,
+      end: ta.selectionEnd ?? ta.value.length,
+    };
+  };
+
+  /** L3：打开候选选择器 */
+  const openPicker = (): void => {
+    if (pickerRangeRef.current === null) rememberCaret();
     setPicker(true);
   };
 
@@ -477,6 +484,7 @@ export function NotePopover({
             <button
               type="button"
               data-insert-link
+              onPointerDown={rememberCaret}
               onClick={openPicker}
               style={{
                 border: 'none',

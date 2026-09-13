@@ -68,12 +68,17 @@ export function NoteGrowthPanel({
     () => (editing && root ? collectNodeChoices(root) : []),
     [editing, root],
   );
-  const openPicker = (): void => {
+  /** L3：记录 textarea 光标区间——挂按钮 pointerdown（blur 之前），失焦可能重置 selection */
+  const rememberCaret = (): void => {
     const ta = textRef.current;
-    pickerRangeRef.current =
-      ta === null
-        ? null
-        : { start: ta.selectionStart ?? ta.value.length, end: ta.selectionEnd ?? ta.value.length };
+    if (ta === null) return;
+    pickerRangeRef.current = {
+      start: ta.selectionStart ?? ta.value.length,
+      end: ta.selectionEnd ?? ta.value.length,
+    };
+  };
+  const openPicker = (): void => {
+    if (pickerRangeRef.current === null) rememberCaret();
     setPicker(true);
   };
   const insertLinkAt = (anchor: string): void => {
@@ -158,6 +163,7 @@ export function NoteGrowthPanel({
             <button
               type="button"
               data-insert-link
+              onPointerDown={rememberCaret}
               onClick={openPicker}
               style={{ border: 'none', background: 'transparent', color: token.color.linkStroke, cursor: 'pointer', fontSize: CHROME.fontSizeSmall * s, padding: '0 2px' }}
             >

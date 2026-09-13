@@ -85,6 +85,20 @@ describe('L3 · NotePopover 插入链接', () => {
     expect(baseElement.querySelector('[data-edge-anchor-panel]')).toBeNull();
   });
 
+  it('光标记录挂在 pointerdown（失焦重置 selection 之前）——click 前已丢失 selection 也能插回原光标', () => {
+    const { container, baseElement } = renderPopover({ root: tree(), text: 'AB' });
+    const ta = needTextArea(container.querySelector('[data-note-textarea] textarea'));
+    ta.setSelectionRange(1, 1);
+    const btn = need(container.querySelector('[data-insert-link]'), '按钮');
+    fireEvent.pointerDown(btn); // 记录 caret={1,1}
+    ta.setSelectionRange(0, 0); // 模拟真实浏览器失焦后 selection 被重置
+    fireEvent.click(btn);
+    fireEvent.click(
+      need(baseElement.querySelector('[data-edge-anchor-option="node:根/任务/A"]'), '候选 A'),
+    );
+    expect(ta.value).toBe('A[A](node:根/任务/A)B'); // 插在 1——而非重置后的 0
+  });
+
   it('T-A7：目标节点有 cid → 插入 cid: 形态', () => {
     const { container, baseElement } = renderPopover({ root: treeWithCid(), text: '' });
     const ta = needTextArea(container.querySelector('[data-note-textarea] textarea'));
