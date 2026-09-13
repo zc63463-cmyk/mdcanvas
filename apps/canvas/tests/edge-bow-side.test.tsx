@@ -34,6 +34,19 @@ function buildController(): EditorController {
   return new EditorController(built);
 }
 
+/** 两条边的夹具（e0/e1）——用于「换到尚未收到路由的边」的门控用例 */
+function buildTwoEdgeController(): EditorController {
+  const built = astToEditable(makeTextNode('根2', [makeTextNode('A'), makeTextNode('B')]));
+  if (built === null) throw new Error('fixture broken');
+  built.note = {
+    edges: [
+      { from: 'node:根2/A', to: 'node:根2/B', rel: 'relates-to' },
+      { from: 'node:根2/B', to: 'node:根2/A', rel: 'blocks' },
+    ],
+  };
+  return new EditorController(built);
+}
+
 function entry(points: Array<{ x: number; y: number }>, d: string): EdgeRouteEntry {
   const box = { x: 0, y: 0, w: 10, h: 10 };
   return {
@@ -92,6 +105,37 @@ describe('handleEdgeRoutes：鼓向来源 = 路由折线顶点（R5-1 补）', (
       result.current.handleEdgeRoutes(new Map([['e0', bowed(140)]]));
     });
     expect(result.current.selEdgeBowSide).toBe('right');
+  });
+
+  it('换边门控（三项路由事实）：未收到新边路由前，d / 兜底标志 / 鼓向都不得复用上一结论', () => {
+    const { result } = renderHook(() => useEdgeActions(buildTwoEdgeController()));
+    act(() => {
+      result.current.setEdgeSel({ key: 'e0', x: 0, y: 0 });
+    });
+    const base = entry(
+      [
+        { x: 0, y: 100 },
+        { x: 100, y: 60 },
+        { x: 200, y: 100 },
+      ],
+      'M 0 100 C 50 0, 150 0, 200 100',
+    );
+    act(() => {
+      result.current.handleEdgeRoutes(
+        new Map([['e0', { ...base, route: { ...base.route, forcedSideFallback: true } }]]),
+      );
+    });
+    expect(result.current.selEdgeCurrentD).toBe('M 0 100 C 50 0, 150 0, 200 100');
+    expect(result.current.selEdgeBowSide).toBe('left');
+    expect(result.current.selEdgeForcedSideFallback).toBe(true);
+
+    // 换到 e1（本帧没有任何 e1 的路由条目）→ 三项一律回落默认，不得沿用 e0 的结论
+    act(() => {
+      result.current.setEdgeSel({ key: 'e1', x: 0, y: 0 });
+    });
+    expect(result.current.selEdgeCurrentD).toBeUndefined();
+    expect(result.current.selEdgeBowSide).toBeUndefined();
+    expect(result.current.selEdgeForcedSideFallback).toBe(false);
   });
 
   it('换边后不复用上一结论（按 key 门控；未收到该边路由 → undefined）', () => {

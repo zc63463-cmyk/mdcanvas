@@ -138,42 +138,53 @@ export function useEdgeActions(controller: EditorController): EdgeActions {
     return e ? { ...e, index: selEdgeIndex } : null;
   }, [edgeSel, freeEdges, selEdgeIndex]);
 
-  // Opp 精确翻转：只留「选中边当前的 d」而非整个 routes Map —— 这是**值比较**短路的关键。
-  // 存 Map 的话对象是引用、路由一重算就变，无法判断"内容是否真的变了"；
-  // 存 d（字符串）可以值比较，内容不变就不 setState，从源头掐断
-  // 「回调 → setState → 重渲染 → 回调」的自我触发（死循环）。
-  const [selEdgeD, setSelEdgeD] = useState<string | undefined>(undefined);
+  // 选中边的三项「路由事实」（d / 鼓向 / 指定侧无解标志）——**统一按边 key 门控**：
+  // 换边后一律不得复用上一条边的结论（旧实现只存裸值 → 换到「尚未收到路由」的边时，
+  // Opp 的回落解析会拿上一条边的 d 翻转；R5-1 复核收口）。
+  // 值比较短路（只存标量/字符串，不存 Map/数组/顶点）：内容不变不 setState，
+  // 从源头掐断「回调 → setState → 重渲染 → 回调」的自我触发（死循环）。
+  const [selEdgeRoute, setSelEdgeRoute] = useState<{
+    key: string;
+    d: string | undefined;
+    side: 'left' | 'right' | 'auto';
+    forcedSideFallback: boolean;
+  } | null>(null);
   const selEdgeKeyRef = useRef<string | null>(null);
   selEdgeKeyRef.current = selEdge?.key ?? null;
-  const [selEdgeFallback, setSelEdgeFallback] = useState(false);
-  // R5-1 补：鼓向（顶点版）+ 所属边 key —— **按 key 门控**：换边后不得复用上一结论。
-  // 存三值枚举（不是顶点数组）：值比较可短路（与 selEdgeD 同款防重渲纪律）。
-  const [selEdgeBow, setSelEdgeBow] = useState<{
-    key: string;
-    side: 'left' | 'right' | 'auto';
-  } | null>(null);
   // R4-5：多选集合（空数组 = 未激活批量；单选 setEdgeSel 清空之）
   const [edgeMultiSel, setEdgeMultiSel] = useState<readonly string[]>([]);
   const handleEdgeRoutes = useCallback((routes: ReadonlyMap<string, EdgeRouteEntry>) => {
     const key = selEdgeKeyRef.current;
-    const entry = key ? routes.get(key) : undefined;
-    const d = entry?.route.d;
-    setSelEdgeD((prev) => (prev === d ? prev : d));
-    // R3-4：与 selEdgeD 同款值比较——同值不 setState，掐断重渲死循环
-    const fb = entry?.route.forcedSideFallback === true;
-    setSelEdgeFallback((prev) => (prev === fb ? prev : fb));
-    // R5-1 补：鼓向取**顶点**（entry.route.points）——跳线只改写 d、不改 points，
-    // 桥的抬升不会被读成鼓向（直线 + 跳线 → 'auto'，与 R5-1 之前行为一致）。
-    const bow =
-      entry !== undefined && key !== null
-        ? { key, side: inferBowSideFromPoints(entry.route.points) }
+    const entry = key !== null ? routes.get(key) : undefined;
+    // 三项一次算齐（同一条路由条目）；该边本帧无条目 → null（"无结论"，断言口径与
+    // 「未选中」区分——门控统一由下方 selEdgeRouteHit 负责）
+    const next =
+      key !== null && entry !== undefined
+        ? {
+            key,
+            d: entry.route.d,
+            // 鼓向取**顶点**（entry.route.points）：跳线只改写 d、不改 points，
+            // 桥的抬升不会被读成鼓向（直线 + 跳线 → 'auto'，与 R5-1 之前行为一致）
+            side: inferBowSideFromPoints(entry.route.points),
+            forcedSideFallback: entry.route.forcedSideFallback === true,
+          }
         : null;
-    setSelEdgeBow((prev) => (prev?.key === bow?.key && prev?.side === bow?.side ? prev : bow));
+    // 值比较（含 key）——同值不 setState，掐断重渲死循环（R3-4 纪律沿用）
+    setSelEdgeRoute((prev) =>
+      prev?.key === next?.key &&
+      prev?.d === next?.d &&
+      prev?.side === next?.side &&
+      prev?.forcedSideFallback === next?.forcedSideFallback
+        ? prev
+        : next,
+    );
   }, []);
-  const selEdgeCurrentD = selEdge ? selEdgeD : undefined;
-  const selEdgeBowSide =
-    selEdge !== null && selEdgeBow?.key === selEdge.key ? selEdgeBow.side : undefined;
-  const selEdgeForcedSideFallback = selEdge !== null ? selEdgeFallback : false;
+  // 门控出口：选中边的 key 与缓存不一致（换边尚未收到新路由）→ 一律回落默认
+  const selEdgeRouteHit =
+    selEdge !== null && selEdgeRoute?.key === selEdge.key ? selEdgeRoute : null;
+  const selEdgeCurrentD = selEdgeRouteHit?.d;
+  const selEdgeBowSide = selEdgeRouteHit?.side;
+  const selEdgeForcedSideFallback = selEdgeRouteHit?.forcedSideFallback ?? false;
 
   const writeEdges = useCallback(
     (edges: DocEdge[]): void => {
