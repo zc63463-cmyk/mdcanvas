@@ -7,7 +7,8 @@
  * - 首挂跳过其后 4 个动作（controller 首次创建 + MapView 初始 fit 已处理，避免重复动画），
  *   但**首挂仍要**把文档内实体引用登记进候选宿主（跨文档复用）。
  *
- * 依赖纪律（E 批判别）：deps 严格锁在 `doc.source` ——
+ * 依赖纪律（E 批判别）：**保存路径不得改写 `doc.source`**（见
+ * docs/dispatch/2026-09-13-edit-flow-session-integrity-plan.md）——deps 严格锁在 `doc.source`：
  * 不得改用对象身份（`doc`）或把 `savedSource`/`ts`/`handle` 放进 deps，
  * 否则保存路径的写回（E 批起只动 savedSource）会误触发文档重建。
  */

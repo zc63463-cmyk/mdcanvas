@@ -380,6 +380,7 @@ function StageContent({
   // B1 文档切换（迁至 hooks/useDocumentSwitch；纯搬迁：动作顺序 / deps / 首挂跳过逐字保留）。
   // 调用点留在原位 —— 保证 useDocumentSwitch 的 effect 注册在 useAutoSave 之前
   // （切换时 reset 先执行，autosave 随后读到 dirty=false 早退）。
+  // 注意：保存路径不得改写 doc.source（解析输入）——见 docs/dispatch/2026-09-13-edit-flow-session-integrity-plan.md
   useDocumentSwitch({
     doc,
     editable,
@@ -753,16 +754,18 @@ function StageContent({
 
   // 文档落盘 → 登记进文档库（文件管理的索引来源）。
   // 只在 saved 时登记：新建未保存的文档不进库，否则关掉就留下一堆空条目。
+  // E 批口径：快照读 savedSource（最近一次成功保存的内容）；保存路径不得改写 doc.source ——
+  // 见 docs/dispatch/2026-09-13-edit-flow-session-integrity-plan.md
   useEffect(() => {
     if (doc.saved) {
       library.upsert({
         id: doc.id,
         name: doc.name,
-        source: doc.source,
+        source: doc.savedSource ?? doc.source,
         folder: doc.id === 'gateway.mm.md' ? '示例导图' : undefined,
       });
     }
-  }, [doc.id, doc.name, doc.source, doc.saved, library]);
+  }, [doc.id, doc.name, doc.savedSource, doc.source, doc.saved, library]);
   // 异步清单（宿主可换 HTTP/FS 实现）；插入/上传后由 Stage 更新本地副本
   const [assetList, setAssetList] = useState<AssetItem[]>([]);
 
