@@ -362,6 +362,8 @@ export {
   pillWidthOf,
   textWidthOf,
 } from './render/EdgeLabel.js';
+export type { FreeEdgeLabelSpec } from './render/EdgeLabelLayer.js';
+export { FreeEdgeLabelLayer, FreeEdgeLabelStore } from './render/EdgeLabelLayer.js';
 export type {
   AestheticWeights,
   EdgeCrossing,

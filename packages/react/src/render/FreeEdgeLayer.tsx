@@ -4,7 +4,7 @@
  * 数据/几何来自 freeEdges.ts 纯函数；本组件只做 SVG 组装。
  * 已知边界：Canvas 模式（>50K 自动降级）不渲染自由边——L3 场景树未含边类型，等场景 diff 批次补。
  */
-import { useEffect, useMemo, useRef, useState, type ReactElement } from 'react';
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactElement } from 'react';
 import type { EditableNode } from '@mindcanvas/kernel';
 import type { Box } from '@mindcanvas/kernel';
 import type { TokenSet } from '../theme/types.js';
@@ -19,7 +19,7 @@ import {
   type RouteObstacle,
   type RouteResult,
 } from './edgeRouting.js';
-import { EdgeLabel } from './EdgeLabel.js';
+import type { FreeEdgeLabelSpec } from './EdgeLabelLayer.js';
 
 /**
  * 人工锁定边的手动路径（Issue #3）。
@@ -105,9 +105,17 @@ export interface FreeEdgeLayerProps {
    * 路由本身仍按 obstacles 快路径执行。静态态默认 false 行为不变。
    */
   fastRouting?: boolean;
+  /**
+   * R5-2：标签描述符上报（收集器）——标签渲染搬去宿主层（节点层之上，修遮挡）。
+   * 本层不再渲染 EdgeLabel；命中区与 path 留原层（交互层级不得上提）。
+   * 上报时机 = layout effect（与路由同一次提交内，标签不滞后一帧）；卸载时清空。
+   */
+  onLabelsChange?: (labels: readonly FreeEdgeLabelSpec[]) => void;
 }
 
 const GHOST_R = 4;
+/** R5-2：空标签集（卸载清空宿主层用；模块级唯一引用 → set 短路成立） */
+const EMPTY_LABELS: readonly FreeEdgeLabelSpec[] = [];
 
 /**
  * 一条边的路由结果条目（Opp 精确翻转用）。
@@ -134,6 +142,7 @@ export function FreeEdgeLayer({
   onManualChange,
   onRoutesChange,
   fastRouting = false,
+  onLabelsChange,
 }: FreeEdgeLayerProps) {
   // Issue #3：正在拖拽的 handle（端点 / bend 控制点）。仅选中的边渲染 handle，
   // 与 XMind 交互一致——选中关系线后才出现可拖拽的端点与控制点。
@@ -237,6 +246,48 @@ export function FreeEdgeLayer({
     onRoutesChange?.(routes);
   }, [routes, onRoutesChange]);
 
+  // R5-2：标签描述符收集（渲染搬去宿主层——MapView 的 edge-labels 层，节点层之上）。
+  // 字段口径与原渲染循环逐项一致：stroke 三态（失效→灰 / stale→warn / 语义色）、
+  // ghost 边挂幽灵锚点、空文本不产出（EdgeLabel 内部再守一道——双保险）。
+  // deps 全为稳定引用（edges 经 stableByKeys / routes 经 useMemo / token 主题级）——
+  // 引用稳定是「store 引用相等短路」成立的前提（防宿主重渲回环）。
+  const labels = useMemo(() => {
+    const out: FreeEdgeLabelSpec[] = [];
+    for (const edge of edges) {
+      const cached = routes.get(edge.key);
+      if (!cached) continue;
+      const { eps, route } = cached;
+      const visual = edgeVisualOf(edge, token);
+      const invalidated = edge.invalidAt !== undefined;
+      const stroke = invalidated
+        ? token.color.textMuted
+        : edge.state === 'stale'
+          ? token.color.warn
+          : visual.stroke;
+      const text = edge.label !== undefined && edge.label !== '' ? edge.label : edge.rel;
+      if (text === '') continue;
+      out.push({
+        key: edge.key,
+        ax: eps.ghost ? eps.to.x + eps.to.w / 2 : route.mid.x,
+        ay: eps.ghost ? eps.to.y + eps.to.h / 2 - GHOST_R : route.mid.y,
+        nx: eps.ghost ? 0 : route.nx,
+        ny: eps.ghost ? -1 : route.ny,
+        text,
+        stroke,
+        muted: invalidated,
+      });
+    }
+    return out;
+  }, [edges, routes, token]);
+  // 上报时机 = layout effect：与路由同一次提交内，标签不滞后一帧（pan/动画不脱节）
+  useLayoutEffect(() => {
+    onLabelsChange?.(labels);
+  }, [labels, onLabelsChange]);
+  // 卸载（边删光 / 切 SVG↔Canvas）→ 清空宿主层，防残留旧标签
+  useLayoutEffect(() => {
+    return () => onLabelsChange?.(EMPTY_LABELS);
+  }, [onLabelsChange]);
+
   // Issue #3：拖拽期间在 window 上跟踪指针 —— 指针可能移出 SVG 区域，
   // 只在元素上监听会导致拖拽中断。
   useEffect(() => {
@@ -303,7 +354,7 @@ export function FreeEdgeLayer({
   const onSelectRef = onSelect;
   const onEdgeContextRef = onEdgeContext;
   return (
-    <g data-free-edge-layer>
+    <g data-free-edge-layer data-layer="free-edges">
       <defs>
         {colors.map((c, i) => (
           <marker
@@ -331,7 +382,7 @@ export function FreeEdgeLayer({
         const cached = routes.get(edge.key);
         if (!cached) return null;
         const { eps, route } = cached;
-        const { d, mid, nx, ny } = route;
+        const { d } = route;
         const visual = edgeVisualOf(edge, token);
         const stale = edge.state === 'stale';
         const invalidated = edge.invalidAt !== undefined;
@@ -346,9 +397,6 @@ export function FreeEdgeLayer({
           selectedKey === edge.key || (selectedKeys?.includes(edge.key) ?? false);
         const mId = markerIdOf(stroke);
         const both = edge.dir === 'both' && !eps.ghost;
-        // R4-3③：label 空串也回落 rel（?? 只挡 undefined——空串 label 会丢失 rel 信息）；
-        // EdgeLabel 自带空文本守卫（text==='' → null），双保险不渲染空胶囊
-        const labelText = edge.label !== undefined && edge.label !== '' ? edge.label : edge.rel;
         const tip = [
           invalidated ? `已失效 ${edge.invalidAt?.slice(0, 10)}` : '',
           `${edge.rel}${edge.label ? ` · ${edge.label}` : ''}`,
@@ -361,9 +409,11 @@ export function FreeEdgeLayer({
         return (
           <g key={edge.key} data-free-edge={edge.key} data-free-edge-state={edge.state}>
             <title>{tip}</title>
-            {/* 命中区：宽透明描边，拦截点击（阻断下层 pan 启动）；浏览态不挂载（边只读） */}
+            {/* 命中区：宽透明描边，拦截点击（阻断下层 pan 启动）；浏览态不挂载（边只读）。
+                R5-2：data-free-edge-hit 供层序契约测试钉「命中区留在节点层之下」。 */}
             {interactive && (
               <path
+                data-free-edge-hit
                 d={d}
                 fill="none"
                 stroke="transparent"
@@ -406,18 +456,9 @@ export function FreeEdgeLayer({
                 style={{ pointerEvents: 'none' }}
               />
             )}
-            {/* E8：关系标签「线中生长」——触点 + 短茎 + 小胶囊（字号 10 / 高 14）
-                ghost 边：标签挂在幽灵锚点上方（不压源节点折叠钮） */}
-            <EdgeLabel
-              ax={eps.ghost ? eps.to.x + eps.to.w / 2 : mid.x}
-              ay={eps.ghost ? eps.to.y + eps.to.h / 2 - GHOST_R : mid.y}
-              nx={eps.ghost ? 0 : nx}
-              ny={eps.ghost ? -1 : ny}
-              text={labelText}
-              stroke={stroke}
-              token={token}
-              muted={invalidated}
-            />
+            {/* R5-2：关系标签已搬至宿主层（MapView「edge-labels」层，节点层之上）——
+                本层只留命中区 + path + 幽灵点 + handles：交互层级不得随标签上提，
+                否则宽透明描边会抢节点点击。标签描述符经 onLabelsChange 上报。 */}
             {/* Issue #3：手动覆盖 handle —— 选中边才显示（与 XMind 一致）：
                 两个端点圆点（from/to）+ 一个 bend 方点（曲率）。拖动任一即写入
                 edge.manual 并停用自动优化；Shift+点击 bend 或点击「恢复自动」清空。 */}

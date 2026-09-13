@@ -207,7 +207,7 @@ export function SectionLayer({
   const inv = 1 / (k > 0 ? k : 1);
   let ghostY = view.y + 12 * inv;
   return (
-    <g data-section-layer="">
+    <g data-section-layer="" data-layer="sections">
       {views.map((v) => {
         if (v.kind === 'frame') {
           return (

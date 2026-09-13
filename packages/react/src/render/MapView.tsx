@@ -47,6 +47,11 @@ import { createDisplayMetricsFn } from './domMeasure.js';
 import { cubicMidNormal, EdgeLabel } from './EdgeLabel.js';
 import type { EdgeRouteEntry } from './FreeEdgeLayer.js';
 import { type EdgeManual, FreeEdgeLayer } from './FreeEdgeLayer.js';
+import {
+  FreeEdgeLabelLayer,
+  FreeEdgeLabelStore,
+  type FreeEdgeLabelSpec,
+} from './EdgeLabelLayer.js';
 import { collectFreeEdges, type FreeEdge } from './freeEdges.js';
 import { stableByKeys } from './stableArray.js';
 import { CULL_QUANT, quantizeRect } from './viewportQuant.js';
@@ -572,6 +577,19 @@ export function MapView({
   const handleRoutesChange = useCallback((routes: ReadonlyMap<string, EdgeRouteEntry>) => {
     onEdgeRoutesRef.current?.(routes);
   }, []);
+  // R5-2：自由边标签宿主存储 —— 收集面（FreeEdgeLayer）与渲染面（标签层）解耦。
+  // set 引用短路 + 订阅面收敛到 FreeEdgeLabelLayer：标签随路由每帧变化（动画期）时
+  // 只有几条 EdgeLabel 重渲，MapView 不整树重渲（与 viewport / controller store 同款纪律）。
+  const freeLabelStoreRef = useRef<FreeEdgeLabelStore | null>(null);
+  if (freeLabelStoreRef.current === null) freeLabelStoreRef.current = new FreeEdgeLabelStore();
+  const freeLabelStore = freeLabelStoreRef.current;
+  // 同理必须是稳定引用 —— FreeEdgeLayer 的 layout effect 依赖它
+  const handleEdgeLabels = useCallback(
+    (labels: readonly FreeEdgeLabelSpec[]) => {
+      freeLabelStore.set(labels);
+    },
+    [freeLabelStore],
+  );
   // Issue #3：屏幕坐标 → 世界坐标（拖 handle 定位；需扣掉容器偏移）
   const toWorld = useCallback(
     (sx: number, sy: number) => {
@@ -1357,6 +1375,17 @@ export function MapView({
   const k = Number.isFinite(kRaw) && kRaw > 0 ? kRaw : 1;
   const x = Number.isFinite(xRaw) ? xRaw : 0;
   const y = Number.isFinite(yRaw) ? yRaw : 0;
+  // R5-2：树线标注（chip）渲染收集——统一进节点层之上的「edge-labels」层
+  // （渲染循环里 push；层序契约与理由见渲染块开头注释）
+  const treeEdgeLabels: Array<{
+    key: string;
+    ax: number;
+    ay: number;
+    nx: number;
+    ny: number;
+    text: string;
+    stroke: string;
+  }> = [];
   return (
     <div
       ref={containerRef}
@@ -1476,6 +1505,12 @@ export function MapView({
             }}
           >
             <g transform={`translate(${x} ${y}) scale(${k})`}>
+              {/* R5-2 层序契约（绘制序 = 文档序 = 自下而上）：
+                    sections → tree-links → free-edges → nodes → edge-labels → ghosts → drag。
+                  为什么：① 标签是**信息层**——落在节点盒范围内被盖住即失效（本批修复：
+                  树线标注与自由边标签统一上提到 edge-labels 层）；② 命中区（自由边宽透明
+                  描边 / 树边命中区）是**交互层**——必须在节点之下，上提会抢节点点击。
+                  每层带 data-layer 标记，顺序由 mapview-layer-order.test.tsx 契约测试钉死。 */}
               {/* v1.5.0 Section 背景层：永在连线/节点之下（T3）。逐框 isBoxInView 自裁剪
                   （view 已含 CULL_MARGIN）；Canvas 模式不经 SVG 分支 → 自动降级不渲染。 */}
               {sectionViews.length > 0 && (
@@ -1499,7 +1534,7 @@ export function MapView({
                   onTitlePointerDown={handleSectionTitlePointerDown}
                 />
               )}
-              <g>
+              <g data-layer="tree-links">
                 {visibleLinkGeoms.map((g) => {
                   const { ln, from, to, dir } = g;
                   const palette = token.color.branches[derived.branchIndex.get(ln.toId) ?? 0];
@@ -1532,6 +1567,19 @@ export function MapView({
                   const chipStroke = annObj?.style?.color ?? p.stroke;
                   // 性能：cubicMidNormal 含正则解析——仅标注树边计算（无标注 = 无标签，跳过热路径）
                   const mid = labelText !== '' ? cubicMidNormal(p.d) : null;
+                  // R5-2：标注（chip）收集到 edge-labels 层（节点层之上）——本层不再渲染，
+                  // 修「标签落在节点盒范围时被节点遮挡」。key 与树边渲染 key 同源。
+                  if (labelText !== '' && mid !== null) {
+                    treeEdgeLabels.push({
+                      key: `${ln.fromId}->${ln.toId}`,
+                      ax: mid.x,
+                      ay: mid.y,
+                      nx: mid.nx,
+                      ny: mid.ny,
+                      text: labelText,
+                      stroke: chipStroke,
+                    });
+                  }
                   return (
                     // A6 冒烟修复：path 是 SVG d 字符串——两条几何形状相同的边会产出
                     // 相同 d → React 重复 key 警告。改用端点 id（一对节点间至多一条树边）。
@@ -1570,20 +1618,8 @@ export function MapView({
                           </title>
                         </path>
                       )}
-                      {/* E8：关系标签「线中生长」——触点（线上小芽）+ 短茎 + 小胶囊（字号 10/高 14） */}
-                      {labelText && mid && (
-                        <g data-tree-edge-label>
-                          <EdgeLabel
-                            ax={mid.x}
-                            ay={mid.y}
-                            nx={mid.nx}
-                            ny={mid.ny}
-                            text={labelText}
-                            stroke={chipStroke}
-                            token={token}
-                          />
-                        </g>
-                      )}
+                      {/* R5-2：标注 chip 已收集至 edge-labels 层（渲染循环上方 push）——
+                          本层保留命中区（悬停/右键编辑），层级不得上提。 */}
                     </g>
                   );
                 })}
@@ -1668,9 +1704,11 @@ export function MapView({
                   onRoutesChange={handleRoutesChange}
                   // P2-1：动画期跳过交叉检测/跳线（配合 obstacles 置空，降载至 O(E)）
                   fastRouting={animating}
+                  // R5-2：标签描述符收集 → edge-labels 层（节点之上；本层不渲染标签）
+                  onLabelsChange={handleEdgeLabels}
                 />
               )}
-              <g>
+              <g data-layer="nodes">
                 {visibleNodes.map((ln) => {
                   const m = derived.metrics.get(ln.node.id);
                   if (!m) return null;
@@ -1760,9 +1798,30 @@ export function MapView({
                   );
                 })}
               </g>
+              {/* R5-2：边标签层——树线标注 + 自由边标签统一在此渲染：节点层之上（不被
+                  节点盒遮挡，修「标签落进节点范围即失效」）、ghost 层之下。命中区不在本层
+                  （留 free-edges 层——交互层级不得随标签上提；契约测试含反例钉）。 */}
+              <g data-layer="edge-labels">
+                {treeEdgeLabels.map((l) => (
+                  <g key={l.key} data-tree-edge-label>
+                    <EdgeLabel
+                      ax={l.ax}
+                      ay={l.ay}
+                      nx={l.nx}
+                      ny={l.ny}
+                      text={l.text}
+                      stroke={l.stroke}
+                      token={token}
+                    />
+                  </g>
+                ))}
+                {/* 自由边标签：订阅 store（收集面见 FreeEdgeLayer.onLabelsChange + 本文件
+                    freeLabelStore）——订阅面收敛在本组件，标签随路由每帧变化不重渲 MapView */}
+                <FreeEdgeLabelLayer store={freeLabelStore} token={token} />
+              </g>
               {/* 淡出中的被删节点（M5-T2 ghost）：动画期间随帧淡出，结束后随 anim 清空移除 */}
               {visibleGhosts.length > 0 && (
-                <g data-ghost-group>
+                <g data-ghost-group data-layer="ghosts">
                   {visibleGhosts.map((g) => {
                     const a = animBoxes?.get(g.node.id);
                     if (!a) return null;
@@ -1799,7 +1858,7 @@ export function MapView({
               {/* M5-T5：拖拽浮空克隆（跟随光标，置顶） */}
               {/* A4：中心岛拖动不走浮空克隆（整岛已在原位偏移预览） */}
               {nodeDrag?.moved && draggedLn && !centerPreview && (
-                <g data-drag-layer style={{ pointerEvents: 'none' }}>
+                <g data-drag-layer data-layer="drag" style={{ pointerEvents: 'none' }}>
                   <g data-drag-clone>
                     <NodeG
                       node={draggedLn}

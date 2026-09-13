@@ -18,6 +18,7 @@ export * from './sceneBuilder.js';
 export * from './freeEdges.js';
 export * from './FreeEdgeLayer.js';
 export * from './EdgeLabel.js';
+export * from './EdgeLabelLayer.js';
 export * from './edgeRouting.js';
 // FA2-T3：画布拖拽落点智能感知
 export * from './dropSensing.js';
