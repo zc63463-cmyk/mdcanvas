@@ -9,6 +9,15 @@
 
 ## [1.8.6] — 2026-09-13 · 关系线 R3（自动行为可预期化）
 
+**触发**：三类静默——「点了没反应」（manual 边上 routingSide/Opp 永不生效、Opp 对跳线恒落 right）、「形状悄悄变了」（切 dir 手工几何换端）、「方向反了无感知」（指定侧无解静默变直连）。计划：`docs/dispatch/2026-09-13-edge-r3-predictable-autobehavior-plan.md`。
+
+- **R3-1** manual 边显式禁用 routingSide/Opp：EdgeEditor edge prop 加法扩展 `manual?`；禁用态 tooltip 指引「双击 bend 恢复自动」；flipSide/onChange 双早退（R3-A1）。
+- **R3-2** `inferBowSide` 支持多段路径：单 C 段分支逐位不变（回归钉）；跳线/折线走「离首末弦最远的路径顶点」判定——对 plan A2「最长 C 段」的修正（pathWithJumps 主体是 L 段，C 段只是过障小弧）；Opp 的 `'auto'` 兜底仍落 right 但给行内提示（不再静默）。
+- **R3-3** dir 切换保形：`useEdgeActions.setEdgeDir`——fwd↔back 同一补丁交换 manual.from/to 并翻转 routingSide（两端锚点与侧向保位，手工把手不跳），both 与 fwd 同向不交换（三态边界钉）；单补丁一次写一条 history。**偏差**：plan 绿期望「渲染 d 逐位相同」数学不可达（dir 翻转后渲染起点必须落在另一盒；manualBezier 切线手性使反向重建非同一曲线），按可达成的最强契约钉「端点保位」。
+- **R3-4** `RouteResult` 加法扩展可选 `forcedSideFallback?`——仅 forceSide 指定侧且走到直穿降级时置位（`routed` 语义不动，R3-A4）；无 forceSide 的降级/空旷直连不置位（区分钉）；经 `handleEdgeRoutes`（值比较）→ EdgeEditor 行内提示「指定侧不可行：已回退直连（可试另一侧）」。
+- **R3-5** 注释对齐：forceSide「回退两侧全枚举」→ 实情（直穿降级兜底绝不空白）；stagger 步长注释 0.125 → 实际 0.0625 半档；freeEdges.ts forward 判据旁落渲染端语义契约。
+- **结构**：LinkCreator 机械抽出 EdgeEditor（630 破 600 → bigFiles 回 3/4），公开出口经 re-export 不变。
+
 **已知取舍（R3-5 明文档化）**：
 - **低 LOD 关避障 / 动画期形状瞬变 = 刻意换帧率**：低 LOD 下 `MapView` 的 `edgeObstaclesOf` 门控关闭障碍收集、`FreeEdgeLayer` 动画期 `fastRouting` 跳过跳线——形状在门控边界瞬变是性能权衡（B-P3 已冻结手势期 LOD），**不修行为**（R3-A5）。
 - **manual / routingSide 的渲染端语义契约（R3-A3）**：两者都按「渲染 from→to」解释；dir 的 fwd↔back 切换由 `useEdgeActions.setEdgeDir` 保形（同一补丁交换 manual 两端 + 翻转 routingSide）；`both` 与 `fwd` 同向不交换。`RouteResult.forcedSideFallback`（R3-4）仅在 forceSide 指定侧且走到直穿降级时置位——`routed:false` 的两种含义（空旷直连 / 降级直穿）语义不动（R3-A4）。
@@ -25,6 +34,8 @@
 - **R2-A1 裁决（范围收口）**：无源边的画布占位（收件箱角/原点附近）**不做**——`freeEdges.ts:307-314` 有历史裁决「不画飞向世界原点的误导性直线」（E8 P0），该形态需新 UX 概念与命中/z-order 处理；改为「诊断条可点 + 面板行可修复」的**发现路径**闭环。若要收件箱，另立 UX 决策批。
 
 **验收**：kernel **480** / react **1062** / canvas **128** = **1670 全绿**（R1 基线 1651 + 本批 +19）；tsc ×3 / dist 重建 / depcruise（392 模块）/ lint **1481 warnings + 46 infos 持平**（新代码零告警）/ budget 持平（bang 89/90、asCast 31/31）；阈值/契约测试零放宽（唯二契约反转：R2-0 remove-node 条件式启用、R2-2 零点击 → 单点击可达，均在对应 commit message 逐条写明）。
+
+**R3 验收（本段终稿）**：kernel **480** / react **1081** / canvas **133** = **1694 全绿**（R2 基线 1670 + 本批 +24）；tsc ×3 / dist 重建 / depcruise（393 模块）/ lint **1481 warnings + 46 infos 持平** / budget 持平（bang 89/90、asCast 31/31、bigFiles 3/4 经 LinkCreator 拆分维持）；阈值/契约测试零放宽（既有 edge-routing/edge-editor 用例零修改，新增全部为加法）。
 
 ## [1.8.4] — 2026-09-13 · 关系线 R0+R1（边健康度观测 + 锚迁移接线；react 加法导出 + canvas 接线）
 
