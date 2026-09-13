@@ -1473,11 +1473,13 @@ function StageContent({
           setExpandedQaId(Array.isArray(qa) && (qa as string[]).length > 0 ? ln.node.id : null);
         }}
         onBlankClick={() => {
-          // 点画布空白：取消选中 + 收起放大展开（这是取消选中的唯一入口）
+          // 点画布空白：**只**取消选中 + 收起「放大展开」（后者是选中态的附属面板）。
+          //
+          // v1.8.10 用户裁决：不再顺手清 pinnedNotePaths / editingNotePaths —— 那是**用户显式
+          // 打开的面板**（不属于选中态），此前会被静默关掉：正在输入的笔记内容直接消失
+          // （「丢失正在编辑的内容」的另一条真凶）。关闭路径仍完整：卡片 × → onNoteClose。
           controller.select(null);
           setExpandedQaId(null);
-          setPinnedNotePaths([]);
-          setEditingNotePaths([]);
         }}
         onNodeContext={(node, sx, sy) => {
           // 右键：命中节点 → 选中并弹菜单；空白 → 关菜单

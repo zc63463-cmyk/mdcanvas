@@ -1443,14 +1443,13 @@ export function MapView({
           onNodeContextRef.current?.(ln, e.clientX, e.clientY);
         }}
         onDoubleClick={(e) => {
-          // 双击：命中 text 节点 → 请求进入编辑；空白/非 text → 平滑适配视图
+          // 双击：**只**处理「命中 text 节点 → 进入编辑」；空白 / 非 text 节点 → 无操作。
+          //
+          // v1.8.10 用户裁决 B：空白分支此前会 fitBoundsAnimated（跳回全图）——「随手在空白
+          // 双击就把视图重置」是编辑流里的干扰源。适配视图的显式入口仍在：工具栏「适配视图」/ Ctrl+0。
           const w = worldPointOf(e, e.currentTarget, viewport);
           const ln = hitNodeAt(visibleNodes, w, undefined, hitIndex);
-          if (ln) {
-            if (ln.node.type === 'text') onEditStartRef.current?.(ln.node.id);
-            return;
-          }
-          viewport.fitBoundsAnimated(layout.bounds);
+          if (ln && ln.node.type === 'text') onEditStartRef.current?.(ln.node.id);
         }}
       >
         {/* C2：Canvas 模式（forceBackend 或 >CANVAS_AUTO_NODES）——场景树 → 2D 画布；SVG 层让位。
