@@ -248,11 +248,11 @@ function StageInner() {
         recent={docHost.recent()}
         onOpenRecent={(d) => {
           // 这里**不需要** applyDoc 的未保存守卫，理由（2026-09-03 复核）：
-          // 启动页只在冷启动出现一次（初值 = 有最近文档），此时用户尚未编辑任何内容，
-          // controller 也还没建立（本组件不持有它）—— 不存在"可丢失的未保存修改"。
-          // 关闭后 showStartup=false，编辑过程中不会再回到这里。
-          // 反过来，applyDoc 定义在 StageContent 里（本分支早退，根本渲染不到它），
-          // 想用也拿不到；强行上提反而要把 controller 拖进启动页，得不偿失。
+          // 启动页只在冷启动出现一次（初值 = 有最近文档），此时用户尚未编辑任何内容
+          // —— 不存在"可丢失的未保存修改"；applyDoc 在 StageContent 里（本分支早退拿不到）。
+          // ⚠️ 「不需要守卫」≠「不需要同步」：controller 已在本组件随初始树建立（见上方
+          // controllerRef 段），三条出口 setDoc 直通 = 「StageContent 挂载前 doc 已换」——
+          // 树同步由 useDocumentSwitch 的状态判据兜住（首挂不同源 → 补做 reset；S2F [1.8.19]）。
           setDoc(d);
           docHost.remember(d); // 刷新 ts，下次启动仍是它排第一
           setShowStartup(false);

@@ -7,6 +7,16 @@
 > （09-05~09-06）与「图引擎适配 / 文件工作台」（09-10）等批次未单独标号，
 > 按完成时间归入对应段落末尾的「同批」小节。
 
+## [1.8.19] — 2026-09-14 · S2F 启动页文档切换同步（状态判据修复）
+
+**触发**：P1 收尾小修复核的「范围外发现①」——启动页三出口（继续上次/最近/新建）`setDoc` 直通 + `StageContent`（内含 `useDocumentSwitch`）在启动页期间未挂载 → hook 的「首挂跳过」吃掉了唯一一次同步机会 → **文档名已切、画布仍是 gateway 示例树**（会话内不自愈；错位期编辑 + 自动保存有写错文档的数据风险）。用户裁定**方案 A**：判据从**时间点**（`isFirst`）改**状态**（`ctrl.root === editable`）。计划：`docs/dispatch/2026-09-14-s2f-startup-doc-switch-sync-plan.md`；报告：`outputs/2026-09-14-s2f-doc-switch-sync-report.md`。
+
+- **修复**（`d7ec9a6`）：`useDocumentSwitch.ts:66` → `if (isFirst && controllerRef.current?.root === editable) return;`——首挂**且同源**才跳过；首挂**不同源**（挂载前改 doc 的路径）→ 补做四动作（reset/setEntities/setExpandedQaId/fit）。四动作与 `remember` 逐字未动；deps 仍锁 `[doc.source]`；注释同步（hook 头 + 条件处 + `MindmapStage` 启动页段订正：「不需要未保存守卫」≠「不需要同步」）。
+- **判别钉（先红后绿）**：hook t0 判据实证（真实 `EditorController`：构造后 `root === editable`、`reset(other)` 后 `root === other`）/ t3 首挂不同源 → 四动作各恰一次 / t4 controller 为 null 不崩（reset 安全空调用）；三出口 e2e（**双边断言**：目标独有节点存在 且 gateway 节点不存在）；`tools/verify-startup-doc-switch.mjs` 真浏览器复现→修复（**构建产物**；含 M5-T2 过渡 ghost 等落定后的稳态口径）。
+- **StrictMode 掩蔽（记录）**：`main.tsx` 启用 StrictMode → dev 下 effect 双调用（第二次 `isFirst=false` → 四动作照做）**掩盖本 bug**；bug 只在构建产物发作——一切复现/验证以 `vite preview` 产物为准。
+- **验收**：kernel **523 不动** / react **1266 不动** / canvas **197→203**（+6：hook t0/t3/t4 + 三出口 e2e）；tsc ×3 零错误；depcruise **439 模块 / 1250 deps 零违规**（+1 = 新测试文件）；lint **1468 + 46** 逐数持平（Checked 438 = 437 + 1）；budget 全持平。红→绿原文与浏览器输出（含截图路径）见报告。
+- **同类路径扫描（收口表）**：全仓 `setDoc(` 7 点——启动页两出口 = 原缺陷路径（已修）；`applyDoc` / 保存写回 ×3 / 自动保存写回 / 句柄回填 = 「挂载后」或「不改 `source`」= 安全。仅启动页两出口可能发生在 `StageContent` 挂载前（状态判据已兜住，且对未来同类路径通用）。
+
 ## [1.8.18] — 2026-09-14 · P1 收尾小修（翻卡态提升宿主 / FlipCard 非交互模式 / 最小记录）
 
 **触发**：P1（[1.8.17]）复核裁定三项收尾——② 设计稿 §6「翻卡态随节点离屏保持（会话态、按节点 id 记）」未兑现（实现为面板内 state、卸载即丢）→ 提升至宿主；③ 受控 no-op 的 FlipCard 残留 `role=button`/`cursor:pointer`「幽灵按钮」a11y 语义 → 加 `interactive`；① P1 宿主勘误（NotePopover embedded）与 `NoteGrowthPanel` 孤儿状态 → 最小记录。计划：`docs/dispatch/2026-09-14-node-card-p1-tail-fix-plan.md`；报告：`outputs/2026-09-14-node-card-p1-tail-fix-report.md`。
