@@ -218,26 +218,24 @@ function shiftIsland(
 }
 
 /**
- * 平移副本 memo（F4 优化）：local 子树 → 副本（+ 生成它的 delta + 子树前序）。
+ * 平移副本（**每次实算——不可 memo**，F5 复核证据链）：
+ * 任何「身份 + 部分输入」的 memo 都不充分——条目有效性要求「整棵源子树的 box 均未变」，
+ * 而岛内放置重放会**原地改写复用 LayoutNode 的 box**（F3 机制），身份相等 ≠ 几何未变
+ * （实测：memo 只校验 (dx,dy) 时，深层 w-编辑可只改后代 box 而岛 dx/dy 不变 → 命中
+ * 返回陈旧副本，n5 差 36px 且持久）。「补 node 自身 box 校验」同样不充分：只覆盖祖先
+ * 自身、不覆盖后代被改写的情形。故放弃 memo；复核实测代价 ~2.1ms，远低于 16ms 预算。
+ * 回归钉：`tests/layout-forest-shift-invariance.test.ts`（四方向 × 两种 measure 矩阵）。
  *
- * 未变子树（对象身份）+ 同 delta（岛 origin 未变）→ 直接复用上次副本与前序段
- * （O(变更路径) 而非 O(岛大小)）；delta 变化（岛被挤动）→ miss → 重建。
- * 正确性：副本 = f(local, delta) 纯函数——同输入可复用（delta 用精确比较）。
+ * 返回 { shifted, preorder }：shifted = 平移副本树（全新对象；对源树零写入），
+ * preorder = 其前序数组（与 shifted 同构；直接并入输出）。
  */
-interface ShiftedMemoEntry {
-  dx: number;
-  dy: number;
+interface ShiftedEntry {
   shifted: LayoutNode;
-  /** 子树前序数组（与 shifted 同构；复用时直接并入输出） */
+  /** 子树前序数组（与 shifted 同构） */
   preorder: LayoutNode[];
 }
 
-const shiftedMemo = new WeakMap<LayoutNode, ShiftedMemoEntry>();
-
-/** 平移副本树 · memo 版（全新对象；对源树零写入） */
-function shiftTree(ln: LayoutNode, dx: number, dy: number): ShiftedMemoEntry {
-  const hit = shiftedMemo.get(ln);
-  if (hit && hit.dx === dx && hit.dy === dy) return hit;
+function shiftTree(ln: LayoutNode, dx: number, dy: number): ShiftedEntry {
   const children = ln.children.map((c) => shiftTree(c, dx, dy));
   const shifted: LayoutNode = {
     ...ln,
@@ -248,9 +246,7 @@ function shiftTree(ln: LayoutNode, dx: number, dy: number): ShiftedMemoEntry {
   for (const c of children) {
     for (const n of c.preorder) preorder.push(n);
   }
-  const entry: ShiftedMemoEntry = { dx, dy, shifted, preorder };
-  shiftedMemo.set(ln, entry);
-  return entry;
+  return { shifted, preorder };
 }
 
 /**
