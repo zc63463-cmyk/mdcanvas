@@ -7,20 +7,6 @@
 > （09-05~09-06）与「图引擎适配 / 文件工作台」（09-10）等批次未单独标号，
 > 按完成时间归入对应段落末尾的「同批」小节。
 
-## [1.8.14] — 2026-09-14 · 文本区域链接 Phase 1（解析 / 只读渲染 / 跳转 / 迁移跟随 / 插入入口）
-
-**触发**：注释 / 内容区 / 笔记区三处文本此前都是纯文本——`[名](锚)` 显示为原样文字（无解析、无样式、无跳转）。本轮接上「命名 + 跳转 + 改名跟随」：语法采用 **CommonMark 行内链接**（T-A1，不引入 Wikilink），锚语法与 `note.rel` / `sections.root` 逐字一致（`node:` 路径锚 / `cid:` 稳定身份 / `@实体`）；**不存 nodeId**（原文即所写，会话内 id 每次解析都变）。计划：`docs/dispatch/2026-09-13-text-links-phase1-plan.md`；报告：`outputs/2026-09-13-text-links-report.md`。
-
-- **L1 解析纯函数 + 只读渲染 + 跳转**（`0990caf`）：新 `edit/textLinks.ts`——`parseTextLinks`（label/target 转义 `\]`/`\)`、嵌套 `[` 宁可不认、URL 形态不认作内部锚 T-A6、三态复用 kernel `resolveLinkAnchor`）、`applySpanReplace`（**从右往左**应用防位移）、`findEntityNodeId`（实体锚→树中节点桥）；新 `chrome/TextLinkSpans.tsx`（**零包裹容器** Fragment 直出——不改变既有行内排版与 measure 口径）；三区域只读态接入（DescBlock / NotePopover / NoteGrowthPanel，**编辑态一行不动** T-A3）；`onJumpToAnchor` 宿主接线（MapView 透传 → 面板；MindmapStage 实现：展开折叠祖先 → reveal → 选中，T-A4，不自动开浮窗）。**round-trip 保真钉**（kernel `tests/text-links-roundtrip.test.ts`）：desc / note[2] / note_text 各含一条链接 → parse→serialize→parse **三字段逐字相同** + canonical 幂等（§1.4「`[` 起始文本往返安全」的证据化）。判别要点：`[已归档]`（无目标）、裸 `(node:x)`、`[a](http://…)`（Phase 1 = 纯文本）不误伤。
-- **L2 迁移收集扩展**（`597e71f`）：`collectReferenceAnchors` 增扫文本字段内行内链接——`desc#0` / `note_text#0` / `note[2]#1` / `qa[0]#0`（span 级 field，与渲染同源判定）；`applyAnchorUpdateToNote` / `readAnchorField` 支持 span 形态（同一字段多处替换**从右往左**——实现注释 + 判别测试钉死）；改名/切搬后路径锚自动迁移为新路径、`cid:` 锚原样保留（走原样保留路径）；**坏锚保留原值、不阻断其他迁移**（回归钉）。盘点清单断言**纯追加**（cut-attach 既有 `toContain` 断言未动）。
-- **L3 插入链接入口**（`e6bfc7d`）：**复用 `EdgeAnchorPicker` 未改其公开契约**（choices/onPick/onClose 原样；调用点用 `createPortal` 到 body——浮窗根有 transform，fixed 遮罩会被困住）；编辑态正文区「插入链接」按钮 → 候选选择器 → textarea **光标处**插入 `[显示名](锚)`；`preferredLinkAnchor`：目标有 cid 写 `cid:`（T-A7，**不做全库补发**）。
-- **收口期两处真浏览器实测修复**（各带判别对照）：① **光标记录移到按钮 `pointerdown`**（`4decf73`）——按钮 onClick 时 textarea 已失焦、selection 可能被重置（对照：恒重读版插到位置 0，`expected '[A](node:根/任务/A)AB' to be 'A[A](node:根/任务/A)B'`）；② **链接 pointerdown 不冒泡**（`2ba219a`）——预览浮窗内点链接时 down 先触发「点击固定」→ floating→embedded **DOM 重建** → up/click 丢失（实测「要点两次才生效」的根因）。点链接 = 跳转意图，不承担固定浮窗职责。
-- **真浏览器验证**（新 `tools/verify-l-text-links.mjs`）：① 预览浮窗 2 链接三态样式（well-formed 实线 + pointer；dangling 虚线 + title + default）；② 点击跳转——A 屏幕位置 (958,382)→(640,400) **精确居中**（指标用 getBoundingClientRect：`g.transform` 是世界坐标，viewport 平移不改它）；③ 幽灵点击视图不动；④ 环（Alt→更多→二级「编辑笔记」）→ 插入按钮 → 选择器 → textarea 插入第二条 `[A](node:根/任务/A)`。**全通过**；截图 `verify-shots/l-links-{preview,preview-zoom,jump,insert-picker,insert-done}.png`（快照守卫 `--allow-stale` 因 HEAD 为并行 docs 提交而正当——源码新鲜度通过）。
-
-**验收**：kernel **483**（+3）/ react **1203**（+63）/ canvas **195** = **1881 全绿**；tsc ×3 / react dist 重建 / depcruise（429 模块 / 1214 deps，零违规）/ lint **1468 warnings + 46 infos**（持平原水位，新代码零告警）/ budget 全持平（bang 89/90、asCast 31/31、bigFiles 3/4；超 600 行：MindmapStage 2293 / edgeRouting 1235 / MapView 2230）。**TDD 红证据 4 组 + 阴性对照 3 组**（各自精确变红后恢复、`git diff` 空）：① text-links 29/31 红（`expected [] to have a length of 1`）；② 渲染接入 9/13 红（`expected null not to be null`）；③ 迁移 7/18 红（`expected undefined to be 'node:根/生活'`）；④ 去文本字段扫描 → 7 红（`expected '看 [名](node:根/任务/A)…' to be '…(node:根/任务/A2)…'`）；⑤ caret 恒重读对照 → 1 红；⑥ 按钮禁用对照 → 5 红（`未渲染 插入链接按钮`）。
-
-**偏差与记录**：① canvas 首轮全量 3 红（C 批 `center-actions-promote` 的 cid 断言）——单跑/复跑全绿 + 路径论证（该链路 op 全为 note patch，`isAnchorAffectingOp` 短路、不经迁移收集）+ 历史偶发先例 → 判**低频偶发、与本批无因果**（留观察）；② 右键菜单已无「编辑笔记」（v1.8.2 瘦身移出，环内二级有等价席位）——验证脚本走环路径；③ L2 后重建的 dist 含同树并行批次源码（同工作树纪律，报备）。
-
 ## [1.8.15] — 2026-09-14 · 森林布局缓存（岛级 + 岛内增量 / 投影壳稳定化 / 基准收口）
 
 **触发**：C5 取证（`634ef9b`）N≈3280 多中心 21.7–33.3ms 同时越过 1.5×+16ms 双阈值 → 判定立项缓存批。计划：`docs/dispatch/2026-09-14-forest-layout-cache-plan.md`；报告：`outputs/2026-09-14-forest-layout-cache-report.md`。
@@ -36,6 +22,20 @@
 **偏差与记录**：① **F4 投影壳稳定化为计划外新增**（计划 F-A5「投影缓存不做」）——实测证明「升格剪枝每次换壳」令根岛**恒 miss**（k=1 编辑 24ms 不达标）；稳定化非「缓存投影计算」（walk 照跑），是「壳身份稳定化」——§1.4 岛根身份假设的补全；② **已知边界**：编辑「嵌套升格子岛」内时其祖先升格岛会误 miss（内容未变但重算——需「投影产出的层级对齐」，另批）；③ `<5ms` 争取档未达（6.5–7.0ms；硬目标 <16ms 达成）；④ 本批与 L 批（文本链接）并行：文件面零重叠，CHANGELOG 顺延至 [1.8.15]。
 
 **待跟进（范围外）**：islandLinks 子树级 memo / place 重放的 delta 平移 / 嵌套中层投影对齐（见本批边界②）。
+
+## [1.8.14] — 2026-09-14 · 文本区域链接 Phase 1（解析 / 只读渲染 / 跳转 / 迁移跟随 / 插入入口）
+
+**触发**：注释 / 内容区 / 笔记区三处文本此前都是纯文本——`[名](锚)` 显示为原样文字（无解析、无样式、无跳转）。本轮接上「命名 + 跳转 + 改名跟随」：语法采用 **CommonMark 行内链接**（T-A1，不引入 Wikilink），锚语法与 `note.rel` / `sections.root` 逐字一致（`node:` 路径锚 / `cid:` 稳定身份 / `@实体`）；**不存 nodeId**（原文即所写，会话内 id 每次解析都变）。计划：`docs/dispatch/2026-09-13-text-links-phase1-plan.md`；报告：`outputs/2026-09-13-text-links-report.md`。
+
+- **L1 解析纯函数 + 只读渲染 + 跳转**（`0990caf`）：新 `edit/textLinks.ts`——`parseTextLinks`（label/target 转义 `\]`/`\)`、嵌套 `[` 宁可不认、URL 形态不认作内部锚 T-A6、三态复用 kernel `resolveLinkAnchor`）、`applySpanReplace`（**从右往左**应用防位移）、`findEntityNodeId`（实体锚→树中节点桥）；新 `chrome/TextLinkSpans.tsx`（**零包裹容器** Fragment 直出——不改变既有行内排版与 measure 口径）；三区域只读态接入（DescBlock / NotePopover / NoteGrowthPanel，**编辑态一行不动** T-A3）；`onJumpToAnchor` 宿主接线（MapView 透传 → 面板；MindmapStage 实现：展开折叠祖先 → reveal → 选中，T-A4，不自动开浮窗）。**round-trip 保真钉**（kernel `tests/text-links-roundtrip.test.ts`）：desc / note[2] / note_text 各含一条链接 → parse→serialize→parse **三字段逐字相同** + canonical 幂等（§1.4「`[` 起始文本往返安全」的证据化）。判别要点：`[已归档]`（无目标）、裸 `(node:x)`、`[a](http://…)`（Phase 1 = 纯文本）不误伤。
+- **L2 迁移收集扩展**（`597e71f`）：`collectReferenceAnchors` 增扫文本字段内行内链接——`desc#0` / `note_text#0` / `note[2]#1` / `qa[0]#0`（span 级 field，与渲染同源判定）；`applyAnchorUpdateToNote` / `readAnchorField` 支持 span 形态（同一字段多处替换**从右往左**——实现注释 + 判别测试钉死）；改名/切搬后路径锚自动迁移为新路径、`cid:` 锚原样保留（走原样保留路径）；**坏锚保留原值、不阻断其他迁移**（回归钉）。盘点清单断言**纯追加**（cut-attach 既有 `toContain` 断言未动）。
+- **L3 插入链接入口**（`e6bfc7d`）：**复用 `EdgeAnchorPicker` 未改其公开契约**（choices/onPick/onClose 原样；调用点用 `createPortal` 到 body——浮窗根有 transform，fixed 遮罩会被困住）；编辑态正文区「插入链接」按钮 → 候选选择器 → textarea **光标处**插入 `[显示名](锚)`；`preferredLinkAnchor`：目标有 cid 写 `cid:`（T-A7，**不做全库补发**）。
+- **收口期两处真浏览器实测修复**（各带判别对照）：① **光标记录移到按钮 `pointerdown`**（`4decf73`）——按钮 onClick 时 textarea 已失焦、selection 可能被重置（对照：恒重读版插到位置 0，`expected '[A](node:根/任务/A)AB' to be 'A[A](node:根/任务/A)B'`）；② **链接 pointerdown 不冒泡**（`2ba219a`）——预览浮窗内点链接时 down 先触发「点击固定」→ floating→embedded **DOM 重建** → up/click 丢失（实测「要点两次才生效」的根因）。点链接 = 跳转意图，不承担固定浮窗职责。
+- **真浏览器验证**（新 `tools/verify-l-text-links.mjs`）：① 预览浮窗 2 链接三态样式（well-formed 实线 + pointer；dangling 虚线 + title + default）；② 点击跳转——A 屏幕位置 (958,382)→(640,400) **精确居中**（指标用 getBoundingClientRect：`g.transform` 是世界坐标，viewport 平移不改它）；③ 幽灵点击视图不动；④ 环（Alt→更多→二级「编辑笔记」）→ 插入按钮 → 选择器 → textarea 插入第二条 `[A](node:根/任务/A)`。**全通过**；截图 `verify-shots/l-links-{preview,preview-zoom,jump,insert-picker,insert-done}.png`（快照守卫 `--allow-stale` 因 HEAD 为并行 docs 提交而正当——源码新鲜度通过）。
+
+**验收**：kernel **483**（+3）/ react **1203**（+63）/ canvas **195** = **1881 全绿**；tsc ×3 / react dist 重建 / depcruise（429 模块 / 1214 deps，零违规）/ lint **1468 warnings + 46 infos**（持平原水位，新代码零告警）/ budget 全持平（bang 89/90、asCast 31/31、bigFiles 3/4；超 600 行：MindmapStage 2293 / edgeRouting 1235 / MapView 2230）。**TDD 红证据 4 组 + 阴性对照 3 组**（各自精确变红后恢复、`git diff` 空）：① text-links 29/31 红（`expected [] to have a length of 1`）；② 渲染接入 9/13 红（`expected null not to be null`）；③ 迁移 7/18 红（`expected undefined to be 'node:根/生活'`）；④ 去文本字段扫描 → 7 红（`expected '看 [名](node:根/任务/A)…' to be '…(node:根/任务/A2)…'`）；⑤ caret 恒重读对照 → 1 红；⑥ 按钮禁用对照 → 5 红（`未渲染 插入链接按钮`）。
+
+**偏差与记录**：① canvas 首轮全量 3 红（C 批 `center-actions-promote` 的 cid 断言）——单跑/复跑全绿 + 路径论证（该链路 op 全为 note patch，`isAnchorAffectingOp` 短路、不经迁移收集）+ 历史偶发先例 → 判**低频偶发、与本批无因果**（留观察）；② 右键菜单已无「编辑笔记」（v1.8.2 瘦身移出，环内二级有等价席位）——验证脚本走环路径；③ L2 后重建的 dist 含同树并行批次源码（同工作树纪律，报备）。
 
 ## [1.8.13] — 2026-09-14 · 升中心 Phase 2（写路径统一 / 守卫补齐 / 嵌套语义收口 / 可见性 / 缓存取证）
 
