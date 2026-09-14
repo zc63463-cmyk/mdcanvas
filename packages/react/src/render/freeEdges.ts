@@ -71,6 +71,12 @@ export interface DocEdge {
    * 曲率仍由算法在该侧内择优。
    */
   routingSide?: 'left' | 'right';
+  /**
+   * 属性（R6-S2 首接）：开放键值面（对齐 note.links 的 attrs，E1）——协议层可存可
+   * 往返（passthrough-ironlaw 钉死），渲染层只读呈现（EdgeEditor）、**不参与几何与
+   * 视觉决策**（rel 语义/样式仍由 rel + style 决定）。非对象值（含数组）不视为 attrs。
+   */
+  attrs?: Record<string, unknown>;
 }
 
 /** 解析后的自由边（会话内；key = `e${index}` 定位 root.note.edges 数组） */
@@ -100,6 +106,8 @@ export interface FreeEdge {
    * 用户一键定向用 —— 比拖 bend 控制点快得多，且可持久化。透传键，遵循 spec 未知键透传纪律。
    */
   routingSide?: 'left' | 'right';
+  /** 属性（R6-S2）：DocEdge.attrs 经对象守卫后**引用透传**；渲染层只读呈现，不参与布局/路由 */
+  attrs?: Record<string, unknown>;
   state: AnchorResolutionState;
 }
 
@@ -252,6 +260,10 @@ export function collectFreeEdges(root: EditableNode): FreeEdge[] {
       // Issue #3：人工锁定几何透传（DocEdge.manual → FreeEdge.manual）
       ...(e.manual !== undefined ? { manual: e.manual } : {}),
       ...(e.routingSide !== undefined ? { routingSide: e.routingSide } : {}),
+      // R6-S2：attrs 透传（对象守卫——非对象/数组值不视为 attrs；显式类型收窄，不用 as）
+      ...(typeof e.attrs === 'object' && e.attrs !== null && !Array.isArray(e.attrs)
+        ? { attrs: e.attrs }
+        : {}),
       state,
     });
   });

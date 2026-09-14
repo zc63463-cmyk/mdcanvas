@@ -78,6 +78,8 @@ export function EdgeEditor({
     routingSide?: 'left' | 'right';
     /** R3-1：人工锁定几何（存在 = routingSide/Opp 静默失效 → 显式禁用） */
     manual?: EdgeManual;
+    /** R6-S2：属性（只读呈现：计数 + 最多 2 行 `k = v` + title 全量；不提供编辑） */
+    attrs?: Record<string, unknown>;
   };
   x: number;
   y: number;
@@ -115,6 +117,8 @@ export function EdgeEditor({
 }) {
   const { token } = useTheme();
   const invalidated = edge.invalidAt !== undefined;
+  // R6-S2b：attrs 只读行（计数 + 最多 2 行；值 String(v) 单行省略，title 给全量）
+  const attrEntries = edge.attrs !== undefined ? Object.entries(edge.attrs) : [];
   // Opp 一键反向：
   //   · routingSide 已设 → 翻转到另一侧（'left'↔'right'）
   //   · auto（未设）→ 推断当前鼓向再翻到另一侧：**首选 currentBowSide**（宿主由
@@ -311,6 +315,32 @@ export function EdgeEditor({
       <div style={{ marginBottom: 8 }}>
         <StyleRow style={edge.style ?? {}} onStyle={onStyle} />
       </div>
+      {attrEntries.length > 0 && (
+        <div data-edge-attrs style={{ marginBottom: 8 }}>
+          <div style={{ fontSize: 10.5, color: token.color.textMuted, marginBottom: 2 }}>
+            属性 {attrEntries.length} 项
+          </div>
+          {attrEntries.slice(0, 2).map(([k, v]) => {
+            const line = `${k} = ${String(v)}`;
+            return (
+              <div
+                key={k}
+                data-edge-attr-row
+                title={line}
+                style={{
+                  fontSize: 10.5,
+                  color: token.color.textMuted,
+                  overflow: 'hidden',
+                  textOverflow: 'ellipsis',
+                  whiteSpace: 'nowrap',
+                }}
+              >
+                {line}
+              </div>
+            );
+          })}
+        </div>
+      )}
       <div style={{ display: 'flex', gap: 6 }}>
         {invalidated ? (
           <button

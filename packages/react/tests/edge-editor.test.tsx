@@ -92,6 +92,17 @@ describe('edges 数组纯函数', () => {
     expect(findDuplicateEdge(arr, { from: 'a', to: 'b', rel: 'blocks' })).toBe(0);
     expect(findDuplicateEdge(arr, { from: 'a', to: 'b', rel: 'causes' })).toBe(-1);
   });
+  it('R6-S2：patchEdgeAt 后 attrs 原样在（spread 语义保真钉——防未来改成从 FreeEdge 重建 DocEdge）', () => {
+    const attrs = { severity: 'high' };
+    const arr = [{ from: 'a', to: 'b', rel: 'blocks', attrs }];
+    const next = patchEdgeAt(arr, 0, { label: 'x' });
+    const patched = next[0];
+    const original = arr[0];
+    if (patched === undefined || original === undefined) throw new Error('条目缺失');
+    expect(patched.label).toBe('x');
+    expect(patched.attrs).toBe(attrs); // 引用原样（未知键经 spread 保留）
+    expect(original.attrs).toBe(attrs); // 不可变：原数组未被改写
+  });
 });
 
 describe('菜单「连线到…」（E5）', () => {
@@ -838,5 +849,94 @@ describe('EdgeEditor 反向按钮（R4-2）', () => {
       </ThemeProvider>,
     );
     expect(container.querySelector('[data-edge-reverse]')).toBeNull();
+  });
+});
+
+describe('EdgeEditor attrs 只读属性区（R6-S2b）', () => {
+  /** 缺元素即抛错（替代 `!` 断言——新增代码零 lint 告警纪律） */
+  function qa(sel: string, root: ParentNode): Element {
+    const el = root.querySelector(sel);
+    if (el === null) throw new Error(`element not found: ${sel}`);
+    return el;
+  }
+
+  const attrsEdge = {
+    key: 'e0',
+    index: 0,
+    rel: 'blocks',
+    dir: 'fwd' as const,
+    from: 'node:根/A',
+    to: 'node:根/B',
+    attrs: { severity: 'high', w: 3, team: 'core' },
+  };
+
+  function mount(edge: {
+    key: string;
+    index: number;
+    rel: string;
+    dir: 'fwd' | 'back' | 'both';
+    from: string;
+    to: string;
+    attrs?: Record<string, unknown>;
+  }) {
+    return render(
+      <ThemeProvider>
+        <EdgeEditor
+          edge={edge}
+          x={10}
+          y={10}
+          onChange={vi.fn()}
+          onStyle={vi.fn()}
+          onInvalidate={vi.fn()}
+          onRestore={vi.fn()}
+          onDelete={() => undefined}
+          onClose={() => undefined}
+        />
+      </ThemeProvider>,
+    );
+  }
+
+  it('含 attrs → 属性区出现：N 项计数 + 最多 2 行 `k = v` + title 全量；只读（无输入控件）', () => {
+    const { container } = mount(attrsEdge);
+    const area = qa('[data-edge-attrs]', container);
+    expect(area.textContent).toContain('属性 3 项');
+    expect(area.textContent).toContain('severity = high');
+    expect(area.textContent).toContain('w = 3');
+    // 最多 2 行（264px 紧凑卡：超出不展开，计数由标题行交代）
+    const rows = area.querySelectorAll('[data-edge-attr-row]');
+    expect(rows.length).toBe(2);
+    const row0 = rows[0];
+    if (row0 === undefined) throw new Error('attr 行缺失');
+    expect(row0.textContent).toBe('severity = high');
+    expect(row0.getAttribute('title')).toBe('severity = high');
+    // 只读：区内不得出现输入控件（不提供编辑，R6-A4）
+    expect(area.querySelector('input')).toBeNull();
+    expect(area.querySelector('button')).toBeNull();
+  });
+
+  it('无 attrs / 空对象 → 不渲染该区（既有布局零变化，向后兼容）', () => {
+    const plain = mount({
+      key: 'e0',
+      index: 0,
+      rel: 'blocks',
+      dir: 'fwd',
+      from: 'node:根/A',
+      to: 'node:根/B',
+    });
+    expect(plain.container.querySelector('[data-edge-attrs]')).toBeNull();
+    plain.unmount();
+    const empty = mount({ ...attrsEdge, attrs: {} });
+    expect(empty.container.querySelector('[data-edge-attrs]')).toBeNull();
+    empty.unmount();
+  });
+
+  it('长值（>200 字符）单行省略不爆版：nowrap + ellipsis；DOM 文本与 title 给全量', () => {
+    const long = 'x'.repeat(240);
+    const { container } = mount({ ...attrsEdge, attrs: { memo: long } });
+    const row = qa('[data-edge-attr-row]', container);
+    expect(row.textContent).toBe(`memo = ${long}`);
+    expect(row.getAttribute('style')).toContain('nowrap');
+    expect(row.getAttribute('style')).toContain('ellipsis');
+    expect(row.getAttribute('title')).toBe(`memo = ${long}`);
   });
 });

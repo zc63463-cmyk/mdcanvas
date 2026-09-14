@@ -114,6 +114,27 @@ describe('collectFreeEdges：文档级标注边解析', () => {
     const edges = collectFreeEdges(root);
     expect(edges[0]!.targetId).toBeNull();
   });
+  it('R6-S2：attrs 引用相等透传（对象才透传；字符串/数组不视为 attrs）', () => {
+    const root = makeTextNode('根', [makeTextNode('A'), makeTextNode('B')]);
+    const attrs = { severity: 'high', w: 3 };
+    root.note = {
+      edges: [
+        { from: 'node:根/A', to: 'node:根/B', rel: 'relates-to', attrs },
+        { from: 'node:根/A', to: 'node:根/B', rel: 'blocks', attrs: 'nope' },
+        { from: 'node:根/A', to: 'node:根/B', rel: 'causes', attrs: ['a', 'b'] },
+      ],
+    };
+    const edges = collectFreeEdges(root);
+    const [withAttrs, strAttrs, arrAttrs] = edges;
+    if (withAttrs === undefined || strAttrs === undefined || arrAttrs === undefined) {
+      throw new Error('三条边应全部产出');
+    }
+    // 引用相等（不克隆、不重建——FreeEdge.attrs 与 DocEdge.attrs 同引用）
+    expect(withAttrs.attrs).toBe(attrs);
+    // 守卫：非对象值/数组不视为 attrs（透传不设 attrs 键）
+    expect(strAttrs.attrs).toBeUndefined();
+    expect(arrAttrs.attrs).toBeUndefined();
+  });
 });
 
 describe('freeEdgeEndpoints：端点解析', () => {

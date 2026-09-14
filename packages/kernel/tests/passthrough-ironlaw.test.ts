@@ -83,4 +83,42 @@ describe('透传铁律：未知值永不丢失', () => {
     expect(p2.root).toEqual(p1.root);
     expect(p2.diagnostics.map((d) => d.code)).toEqual(['W-UNKNOWN-KIND']);
   });
+
+  it('edges 数组内嵌 attrs：parse → serialize → parse 原样保留、二次序列化字节稳定（R6-S2c-4）', () => {
+    // E1 已覆盖 note.links 面（link-edge-schema.test.ts：dir/label/note/attrs 透传）；
+    // 本钉补 **edges 面**一例——attrs 是内联 JSON 标量（serializer.ts:50），嵌套对象值
+    // 经 canonical 序列化后必须逐值相等（R6 边 attrs 链路透传的协议侧底座）。
+    // 块位置与 section-roundtrip 同款（文件顶部 → 绑定根节点 note）。
+    const text = [
+      '<!--',
+      'edges:',
+      '- from: node:根/A',
+      '  to: node:根/B',
+      '  rel: blocks',
+      '  attrs: {"severity": "high", "w": 3}',
+      '- from: node:根/A',
+      '  to: node:根/C',
+      '  rel: relates-to',
+      '-->',
+      '# 根',
+      '## A',
+      '## B',
+      '## C',
+    ].join('\n');
+    const p1 = parseMm(text);
+    expect(p1.diagnostics).toEqual([]);
+    expect(p1.root?.note?.edges).toEqual([
+      { from: 'node:根/A', to: 'node:根/B', rel: 'blocks', attrs: { severity: 'high', w: 3 } },
+      { from: 'node:根/A', to: 'node:根/C', rel: 'relates-to' },
+    ]);
+    // parse → serialize → parse：结构逐值相等 + 二次序列化字节稳定（幂等）
+    const root1 = p1.root;
+    if (root1 === null) throw new Error('parse 失败');
+    const out1 = serializeMm(root1);
+    const p2 = parseMm(out1);
+    expect(p2.root).toEqual(root1);
+    const root2 = p2.root;
+    if (root2 === null) throw new Error('二次 parse 失败');
+    expect(serializeMm(root2)).toBe(out1);
+  });
 });

@@ -170,6 +170,8 @@ export function EdgeDraftLayer({
               ? { routingSide: selEdgeOpen.routingSide }
               : {}),
             ...(selEdgeOpen.manual !== undefined ? { manual: selEdgeOpen.manual } : {}),
+            // R6-S2：attrs 透传到只读属性区（面板/画布消费同一 FreeEdge 引用，不克隆）
+            ...(selEdgeOpen.attrs !== undefined ? { attrs: selEdgeOpen.attrs } : {}),
           }}
           x={edgeActions.edgeSel.x}
           y={edgeActions.edgeSel.y}
