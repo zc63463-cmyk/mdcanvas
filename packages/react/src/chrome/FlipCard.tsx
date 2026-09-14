@@ -2,8 +2,9 @@
  * 玻璃翻卡组件（设计报告「翻卡适配评估」交互具象化）：
  * 点击翻转 3D rotateY，正面展示摘要、背面展示详情（节点 note）。
  * 视觉：深色半透明 + 霓虹强调（CHROME 恒定）；可受控也可自持状态。
+ * P1 收尾：`interactive`（缺省 true）——false 去按钮语义（受控 no-op 宿主用）；锚点始终输出。
  */
-import { useState, type CSSProperties, type ReactNode } from 'react';
+import { useState, type CSSProperties, type KeyboardEvent, type ReactNode } from 'react';
 import { CHROME } from '../theme/tokens.js';
 
 /** 翻卡动效（glass 主题 motion 气质） */
@@ -15,6 +16,11 @@ export interface FlipCardProps {
   /** 受控翻转态（缺省自持） */
   flipped?: boolean;
   onFlip?: (flipped: boolean) => void;
+  /**
+   * 交互开关（缺省 true = 点击/键盘可翻）。false：不渲染 role/aria/tabIndex/键盘与整卡点击，
+   * cursor 也不给 pointer —— 供「受控 no-op」宿主（如固定 note 面板，翻转由面板头按钮驱动）。
+   */
+  interactive?: boolean;
   width?: number;
   height?: number;
   title?: string;
@@ -26,6 +32,7 @@ export function FlipCard({
   back,
   flipped: contrl,
   onFlip,
+  interactive = true,
   width,
   height,
   title,
@@ -36,6 +43,12 @@ export function FlipCard({
   const set = (v: boolean) => {
     if (contrl === undefined) setSelf(v);
     onFlip?.(v);
+  };
+  const handleKey = (e: KeyboardEvent<HTMLDivElement>): void => {
+    if (e.key === 'Enter' || e.key === ' ') {
+      e.preventDefault();
+      set(!isFlipped);
+    }
   };
   const face: CSSProperties = {
     position: 'absolute',
@@ -53,22 +66,19 @@ export function FlipCard({
   };
   return (
     <div
-      role="button"
-      aria-pressed={isFlipped}
-      aria-label={title}
-      onClick={() => set(!isFlipped)}
-      tabIndex={0}
-      onKeyDown={(e) => {
-        if (e.key === 'Enter' || e.key === ' ') {
-          e.preventDefault();
-          set(!isFlipped);
-        }
-      }}
+      data-flip-card
+      data-flip-state={isFlipped ? 'back' : 'front'}
+      role={interactive ? 'button' : undefined}
+      aria-pressed={interactive ? isFlipped : undefined}
+      aria-label={interactive ? title : undefined}
+      onClick={interactive ? () => set(!isFlipped) : undefined}
+      tabIndex={interactive ? 0 : undefined}
+      onKeyDown={interactive ? handleKey : undefined}
       style={{
         width,
         height,
         perspective: 900,
-        cursor: 'pointer',
+        cursor: interactive ? 'pointer' : undefined,
         ...style,
       }}
     >

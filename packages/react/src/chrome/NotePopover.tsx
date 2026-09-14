@@ -573,7 +573,7 @@ export function NotePopover({
 
       {flipActive ? (
         <FlipCard
-          flipped={isFlipped}
+          flipped={isFlipped} interactive={false}
           title="note 笔记"
           style={{ flex: '1 1 0', minHeight: 0 }}
           front={<>{seqRegion}{textRegion}</>}

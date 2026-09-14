@@ -45,7 +45,7 @@ describe('P1-N3 反例钉①：无 note.md → 零感知', () => {
   it('缺省 md → 无按钮、无翻卡包装，两区块照旧', () => {
     const { container } = renderPanel();
     expect(container.querySelector('[data-note-flip]')).toBeNull();
-    expect(container.querySelector('div[role="button"]')).toBeNull();
+    expect(container.querySelector('[data-flip-card]')).toBeNull();
     expect(container.querySelector('[data-note-seq]')).not.toBeNull();
     expect(container.querySelector('[data-note-textarea]')).not.toBeNull();
   });
@@ -74,15 +74,15 @@ describe('P1-N3：有 note.md → 翻面可用', () => {
     const { container } = renderPanel({ md: '**粗** 背面正文' });
     const btn = container.querySelector('[data-note-flip]');
     if (btn === null) throw new Error('翻面按钮缺失');
-    const card = container.querySelector('div[role="button"]');
+    const card = container.querySelector('[data-flip-card]');
     expect(card).not.toBeNull();
     fireEvent.click(btn);
     expect(btn.getAttribute('aria-pressed')).toBe('true');
-    expect(card?.getAttribute('aria-pressed')).toBe('true');
+    expect(card?.getAttribute('data-flip-state')).toBe('back');
     expect(container.querySelector('[data-note-back-md] strong')?.textContent).toBe('粗');
     fireEvent.click(btn);
     expect(btn.getAttribute('aria-pressed')).toBe('false');
-    expect(card?.getAttribute('aria-pressed')).toBe('false');
+    expect(card?.getAttribute('data-flip-state')).toBe('front');
   });
 
   it('背面内容为内部滚动容器（区域滚动、外层不滚）', () => {

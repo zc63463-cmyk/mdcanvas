@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { fireEvent, render } from '@testing-library/react';
 import { FlipCard } from '../src/chrome/FlipCard.js';
 import { ThemeSwitcher } from '../src/chrome/ThemeSwitcher.js';
@@ -45,6 +45,32 @@ describe('Glass chrome 组件（ADR-0003 决策 3：外壳恒定）', () => {
   it('FlipCard：受控模式跟随外部 flipped', () => {
     const { container } = render(<FlipCard front={<div>F</div>} back={<div>B</div>} flipped />);
     expect(container.textContent).toContain('B');
+  });
+
+  it('FlipCard：锚点 data-flip-card / data-flip-state 始终输出（交互缺省）', () => {
+    const { container } = render(<FlipCard front={<div>F</div>} back={<div>B</div>} />);
+    const card = container.querySelector('[data-flip-card]');
+    if (card === null) throw new Error('data-flip-card 缺失');
+    expect(card.getAttribute('data-flip-state')).toBe('front');
+    fireEvent.click(card);
+    expect(card.getAttribute('data-flip-state')).toBe('back');
+  });
+
+  it('FlipCard：interactive=false → 去按钮语义 / 无 pointer / 点击不翻（受控 no-op 宿主）', () => {
+    const onFlip = vi.fn();
+    const { container } = render(
+      <FlipCard front={<div>正</div>} back={<div>背</div>} interactive={false} onFlip={onFlip} />,
+    );
+    const card = container.querySelector('[data-flip-card]');
+    if (card === null) throw new Error('data-flip-card 缺失');
+    expect(card.getAttribute('role')).toBeNull();
+    expect(card.getAttribute('tabindex')).toBeNull();
+    expect(card.getAttribute('aria-pressed')).toBeNull();
+    expect(card.getAttribute('aria-label')).toBeNull();
+    expect((card as HTMLElement).style.cursor).not.toBe('pointer');
+    fireEvent.click(card);
+    expect(card.getAttribute('data-flip-state')).toBe('front');
+    expect(onFlip).not.toHaveBeenCalled();
   });
 
   it('ThemeSwitcher：三主题一键切换（令牌随点击变化）', () => {
