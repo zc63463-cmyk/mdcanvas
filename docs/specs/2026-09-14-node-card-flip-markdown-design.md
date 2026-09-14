@@ -120,6 +120,8 @@ note:
 - 背面样式：沿用 `CHROME` 令牌（翻卡背面已是 `CHROME.neon` 边色，`:90`）；markdown 排版用 `token`（字体/字色），**不引第二套主题**；
 - 缩放下：k < 0.5 → 只渲染正面（LOD）；翻卡态随节点离屏保持（会话态、按节点 id 记）。
 
+> **实现注记（2026-09-14 · P1 收尾小修）**：P1 实际宿主 = `NotePopover`（`mode="embedded"` + `pinned`；MapView `fixedNotePanels` 渲染位）——`NoteGrowthPanel` 为孤儿组件（全仓零生产渲染点；仅 `estimateNoteAreaHeight` / `FIXED_NOTE_GAP` 两常量被消费）。翻卡态自本批起为**宿主（MindmapStage）会话态**：面板卸载/重挂不丢、按节点 id 记、不落盘。纪律：派遣稿写宿主前先 grep 生产渲染点。
+
 ## 7. 编辑（P2，先定形态不实现）
 
 - 编辑态 = **textarea（源文）+ 预览双态切换**（**不引 contenteditable/WYSIWYG**）；

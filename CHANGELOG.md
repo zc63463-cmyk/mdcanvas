@@ -7,6 +7,17 @@
 > （09-05~09-06）与「图引擎适配 / 文件工作台」（09-10）等批次未单独标号，
 > 按完成时间归入对应段落末尾的「同批」小节。
 
+## [1.8.18] — 2026-09-14 · P1 收尾小修（翻卡态提升宿主 / FlipCard 非交互模式 / 最小记录）
+
+**触发**：P1（[1.8.17]）复核裁定三项收尾——② 设计稿 §6「翻卡态随节点离屏保持（会话态、按节点 id 记）」未兑现（实现为面板内 state、卸载即丢）→ 提升至宿主；③ 受控 no-op 的 FlipCard 残留 `role=button`/`cursor:pointer`「幽灵按钮」a11y 语义 → 加 `interactive`；① P1 宿主勘误（NotePopover embedded）与 `NoteGrowthPanel` 孤儿状态 → 最小记录。计划：`docs/dispatch/2026-09-14-node-card-p1-tail-fix-plan.md`；报告：`outputs/2026-09-14-node-card-p1-tail-fix-report.md`。
+
+- **T1 翻卡态提升宿主**（`09d3007`）：`MindmapStage` 会话态 `flippedNoteIds`（Set + 幂等 toggle；不落盘；不顺手清——承「点空白不静默关面板」既有裁决）+ `MapView` 两新 props（`flippedNoteIds` / `onToggleNoteFlip`）→ 固定卡渲染位传受控值（floating 预览零改动）；`NotePopover` 翻面态改**受控/非受控双模**（`flipped` + `onFlipChange`；缺省回退内部 state = 现行为；`flipActive` 门逐字未动）。**面板卸载/重挂不丢翻面**。判别：受控驱动 / 按钮回传恰一次 / 卸载重挂保持 / 不存在 id 负向（react 6 例，红→绿）+ 真 MindmapStage 端到端 1 例（启动页进入 → 经「最近」菜单打开含 `note.md` 文档 → 翻面 → 关闭面板 → 重新固定 → 仍背面）。NotePopover 596→**600 行**（守 600 线）。
+- **T2 FlipCard 非交互模式**（`9839b6f`）：`interactive?: boolean`（缺省 true 向后兼容）；false 时去 `role`/`aria-pressed`/`aria-label`/`tabIndex`/键盘与整卡点击、`cursor` 缺省——受控 no-op 场景不再向屏幕阅读器播报「按了没反应的按钮」；**始终**输出 `data-flip-card` / `data-flip-state` 锚点。`NotePopover` 内传 `interactive={false}`。断言改动白名单 3 处（note-panel-flip :48 锚点替换 / :77 锚点替换 / :80-85 卡级 aria-pressed → data-flip-state；保护强度不变）；`chrome.test.tsx:34-46` 两例**逐字未动**（向后兼容证据）+ 补锚点/非交互 2 例。
+- **T3 最小记录**：设计稿实现注记（宿主勘误 + 孤儿状态 + 翻卡态宿主化）；CHANGELOG 本段。
+- **验收**：kernel **523 不动** / react **1266**（+8）/ canvas **197**（+1）= **1986 全绿**；tsc ×3 零错误；react dist 重建；depcruise **438 模块 / 1249 deps 零违规**（+2 模块 = 2 新测试文件）；lint **1468 + 46** 逐数持平（Checked 437 = 435 + 2）；budget 全持平（bang 89/90、bigFiles 3/4；MindmapStage 2315 / MapView 2244 接线级增长）。
+- **偏差与记录**：① **计划 §0 基线参考值为陈旧读数**（516/1206/195、depcruise 432/1224）——实测 = P1 报告口径 **523/1258/196、436/1241**，已按实测执行并报告；② 端到端入口路径偏离（计划未指定入口）：启动页「继续上次」为 `setDoc` 直通、绕过 `useDocumentSwitch` 的 reset（见范围外发现 ①），改为「看内置示例 + 最近菜单」即走 `applyDoc` 正常 reset；③ `interactive={false}` 并入既有行（NotePopover 600/600 零余量）。
+- **范围外发现（未动手，待裁定）**：① **启动页直开文档树不切换**——`StageContent`（ADR-0007 拆分）里的 `useDocumentSwitch`「首挂跳过」时机与启动页 `setDoc` 直通错位：从启动页「继续上次/新建」打开的文档**文档名已换、画布仍为前一棵树**（e2e 现场 dump：`doc=e2e-flip.mm.md` + 节点全为 gateway 树）；机制与建议（补 reset 条件）见报告 §范围外发现。② 自研 note YAML **不支持流式序列**（`note: ["…"]` 被读成字符串，`hasNote`=false）——列表须用块形态（`note:` + `- 条目`）；kernel `note.ts` 头注释的 `[条目…]` 为概念示意。
+
 ## [1.8.17] — 2026-09-14 · 节点卡翻面 · 背面 markdown 只读渲染（P1 / 零协议 · 零布局改动）
 
 **触发**：M2 富内容实验第二项（第一项是资产画廊）——给固定 note 面板加**翻面**：正面 = 现有区块（一行不改），背面 = `note.md` 源文的 **markdown 只读渲染**（复用既有 `FlipCard`）；**`estimateNoteAreaHeight()` 一字不改**（背面在同一 footprint 内滚动）= 零协议 / 零布局 / 零既有交互改动。设计稿 `docs/specs/2026-09-14-node-card-flip-markdown-design.md`；计划 `docs/dispatch/2026-09-14-node-card-p1-readonly-plan.md`；报告 `outputs/2026-09-14-node-card-p1-report.md`。
