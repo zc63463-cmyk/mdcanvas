@@ -425,8 +425,8 @@ export {
 } from './render/freeEdges.js';
 
 // R0 观测先行：边健康度纯函数（独立于 collectFreeEdges 的计数 + 病例定位）
-export type { EdgeHealth, EdgeHealthItem } from './render/edgeHealth.js';
-export { edgeHealthOf } from './render/edgeHealth.js';
+export type { EdgeHealth, EdgeHealthBreakdown, EdgeHealthItem } from './render/edgeHealth.js';
+export { edgeHealthOf, healthBreakdown } from './render/edgeHealth.js';
 export { EdgeHealthBar } from './chrome/EdgeHealthBar.js';
 // R2-1：重挂锚点候选选择器
 export type { EdgeAnchorChoice } from './chrome/EdgeAnchorPicker.js';

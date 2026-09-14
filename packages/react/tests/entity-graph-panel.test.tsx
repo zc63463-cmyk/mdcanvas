@@ -396,3 +396,149 @@ describe('EntityGraphPanel 行内动作（R2-3）', () => {
     expect(onFocusNode).not.toHaveBeenCalled();
   });
 });
+
+// ---------- R6-S1b：畸形项行（可定位 → 可处置；口径单一来源 = edgeHealthOf.problems） ----------
+import { makeTextNode, type EditableNode } from '@mindcanvas/kernel';
+import { edgeHealthOf } from '../src/render/edgeHealth.js';
+import { EdgeHealthBar } from '../src/chrome/EdgeHealthBar.js';
+import { collectFreeEdges } from '../src/render/freeEdges.js';
+import { edgesOf, removeEdgeAt } from '../src/chrome/EdgeEditor.js';
+
+describe('EntityGraphPanel 畸形项行（R6-S1b）', () => {
+  /** 缺元素即抛错（替代 `!` 断言——新增代码零 lint 告警纪律） */
+  function qm(sel: string, root: ParentNode): Element {
+    const el = root.querySelector(sel);
+    if (el === null) throw new Error(`element not found: ${sel}`);
+    return el;
+  }
+
+  /** 1 健康边（A→B）+ 1 畸形项（'oops'，原始数组下标 1） */
+  function panelFixture(): EditableNode {
+    const root = makeTextNode('根', [makeTextNode('A'), makeTextNode('B')]);
+    root.note = {
+      edges: [{ from: 'node:根/A', to: 'node:根/B', rel: 'relates-to' }, 'oops'],
+    };
+    return root;
+  }
+
+  /** 夹具 → 面板 edges 行（与 MindmapStage.edgeItems 同款最小映射） */
+  function edgeItemsOf(root: EditableNode): EdgeListItem[] {
+    return collectFreeEdges(root).map((e) => ({
+      key: e.key,
+      rel: e.rel,
+      dir: e.dir,
+      sourceId: e.sourceId ?? '',
+      sourceText: e.from,
+      targetId: e.targetId,
+      targetText: e.to,
+      state: e.state,
+    }));
+  }
+
+  /** 宿主派生口径：edgeHealthOf.problems 过滤 malformed → 下标数组（面板不扫原始数组） */
+  function malformedRowsOf(root: EditableNode): number[] {
+    return edgeHealthOf(root)
+      .problems.filter((p) => p.malformed === true)
+      .map((p) => p.index);
+  }
+
+  it('malformedRows 传入 → 「原始项非法」组出现（第 N 条 · 原始项非法 + 删除入口）；section 计数含畸形项', () => {
+    const root = panelFixture();
+    const malformedRows = malformedRowsOf(root);
+    expect(malformedRows).toEqual([1]);
+    const onDeleteEdge = vi.fn();
+    const { container } = render(
+      <EntityGraphPanel
+        relations={[]}
+        edges={edgeItemsOf(root)}
+        malformedRows={malformedRows}
+        onFocusNode={vi.fn()}
+        onClose={vi.fn()}
+        onDeleteEdge={onDeleteEdge}
+      />,
+    );
+    // 计数同步：1 条可解析边 + 1 条畸形项 → 连线 2（诊断条点进来逐条对得上）
+    expect(qm('[data-edge-section]', container).textContent).toContain('连线 2');
+    expect(qm('[data-edge-group="malformed"]', container).textContent).toContain('原始项非法 1');
+    expect(qm('[data-edge-malformed="e1"]', container).textContent).toContain('第 2 条 · 原始项非法');
+    // 删除走既有写路径（key 沿用 e{index} 位置键约定）
+    fireEvent.click(qm('[data-edge-delete="e1"]', container));
+    expect(onDeleteEdge).toHaveBeenCalledTimes(1);
+    expect(onDeleteEdge).toHaveBeenCalledWith('e1');
+  });
+
+  it('删除畸形项 → malformed === 0 且诊断条消失（无其它问题；总数口径闭环）', () => {
+    const root = panelFixture();
+    const before = edgeHealthOf(root);
+    expect(before.malformed).toBe(1);
+    // 删除前：条出现（问题列表恰为这条畸形项）
+    const barBefore = render(<EdgeHealthBar health={before} bottom={178} />);
+    expect(barBefore.container.querySelector('[data-edge-health-bar]')).not.toBeNull();
+    barBefore.unmount();
+
+    const onDeleteEdge = vi.fn((key: string) => {
+      // 宿主写路径模拟：writeEdges + removeEdgeAt（useEdgeActions.deleteEdge 同款）
+      root.note = { edges: removeEdgeAt(edgesOf(root.note), Number(key.slice(1))) };
+    });
+    const { container } = render(
+      <EntityGraphPanel
+        relations={[]}
+        edges={edgeItemsOf(root)}
+        malformedRows={malformedRowsOf(root)}
+        onFocusNode={vi.fn()}
+        onClose={vi.fn()}
+        onDeleteEdge={onDeleteEdge}
+      />,
+    );
+    fireEvent.click(qm('[data-edge-delete="e1"]', container));
+    expect(onDeleteEdge).toHaveBeenCalledWith('e1');
+    const after = edgeHealthOf(root);
+    expect(after.malformed).toBe(0);
+    expect(after.problems).toEqual([]);
+    const barAfter = render(<EdgeHealthBar health={after} bottom={178} />);
+    expect(barAfter.container.querySelector('[data-edge-health-bar]')).toBeNull();
+    barAfter.unmount();
+  });
+
+  it('仅有畸形项（edges 为空）→ 连线区仍渲染（诊断条点进来的那一条找得到）', () => {
+    const root = makeTextNode('根');
+    root.note = { edges: ['oops'] };
+    const { container } = render(
+      <EntityGraphPanel
+        relations={[]}
+        edges={[]}
+        malformedRows={malformedRowsOf(root)}
+        onFocusNode={vi.fn()}
+        onClose={vi.fn()}
+        onDeleteEdge={vi.fn()}
+      />,
+    );
+    expect(qm('[data-edge-section]', container).textContent).toContain('连线 1');
+    expect(qm('[data-edge-malformed="e0"]', container).textContent).toContain('第 1 条 · 原始项非法');
+    // 空态引导文案不得与畸形行同屏混淆
+    expect(container.textContent).not.toContain('暂无实体引用');
+  });
+
+  it('缺省 malformedRows → 无畸形区（向后兼容钉死）；有畸形行未注入 onDeleteEdge → 行在、删除入口不在', () => {
+    const bare = render(
+      <EntityGraphPanel relations={[]} edges={edgeItems} onFocusNode={vi.fn()} onClose={vi.fn()} />,
+    );
+    expect(bare.container.querySelector('[data-edge-group="malformed"]')).toBeNull();
+    expect(bare.container.querySelector('[data-edge-malformed]')).toBeNull();
+    bare.unmount();
+
+    const root = panelFixture();
+    const noAction = render(
+      <EntityGraphPanel
+        relations={[]}
+        edges={edgeItemsOf(root)}
+        malformedRows={malformedRowsOf(root)}
+        onFocusNode={vi.fn()}
+        onClose={vi.fn()}
+      />,
+    );
+    expect(noAction.container.querySelector('[data-edge-malformed="e1"]')).not.toBeNull();
+    expect(noAction.container.querySelector('[data-edge-delete]')).toBeNull();
+    noAction.unmount();
+  });
+});

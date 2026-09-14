@@ -64,6 +64,29 @@ export interface EdgeHealth {
   problems: readonly EdgeHealthItem[];
 }
 
+/**
+ * 互斥主分类（R6-S1a）：把 problems 逐项归入恰一个类目（防重复计数），
+ * **总数 = 各项之和**（标题口径用；`malformed+invalid+dangling+stale+selfAnchor+
+ * duplicate+unknownRel === problems.length` 由测试钉死）。
+ *
+ * 主分类优先级：`malformed > invalid > dangling > stale > selfAnchor > duplicate >
+ * unknownRel`——多标记项（如 stale+unknownRel）按最先命中者归档。
+ * `healthy` = 未进 problems 的项数（= total − problems.length），仅供对账，不进标题括号。
+ *
+ * 与 byState / invalid / … 各计数并存而非替代：后者是**多标记可并列**的原始事实
+ * （R0/R2 契约，语义不动）；本分类只是呈现层的互斥归档。
+ */
+export interface EdgeHealthBreakdown {
+  malformed: number;
+  invalid: number;
+  dangling: number;
+  stale: number;
+  selfAnchor: number;
+  duplicate: number;
+  unknownRel: number;
+  healthy: number;
+}
+
 export function edgeHealthOf(root: EditableNode): EdgeHealth {
   const raw: unknown = root.note?.edges;
   const items: readonly unknown[] = Array.isArray(raw) ? raw : [];
@@ -144,4 +167,33 @@ export function edgeHealthOf(root: EditableNode): EdgeHealth {
     duplicates,
     problems,
   };
+}
+
+/**
+ * R6-S1a：problems → 互斥主分类（每项恰归一档）。判定次序即优先级
+ * （malformed > invalid > dangling > stale > selfAnchor > duplicate > unknownRel）——
+ * 不允许两层判定（会重复计数）；覆盖性由测试的「分类之和 === problems.length」钉死。
+ */
+export function healthBreakdown(health: EdgeHealth): EdgeHealthBreakdown {
+  const b: EdgeHealthBreakdown = {
+    malformed: 0,
+    invalid: 0,
+    dangling: 0,
+    stale: 0,
+    selfAnchor: 0,
+    duplicate: 0,
+    unknownRel: 0,
+    // 对账项：未进 problems 的原始项（正常边）；与逐项归类互不重叠
+    healthy: health.total - health.problems.length,
+  };
+  for (const p of health.problems) {
+    if (p.malformed === true) b.malformed += 1;
+    else if (p.invalid) b.invalid += 1;
+    else if (p.state === 'dangling') b.dangling += 1;
+    else if (p.state === 'stale') b.stale += 1;
+    else if (p.selfAnchor === true) b.selfAnchor += 1;
+    else if (p.duplicateOf !== undefined) b.duplicate += 1;
+    else if (p.unknownRel === true) b.unknownRel += 1;
+  }
+  return b;
 }

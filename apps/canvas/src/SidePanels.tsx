@@ -60,6 +60,8 @@ export interface SidePanelsProps {
   choices?: ComponentProps<typeof EntityGraphPanel>['choices'];
   onReattachEdge?: ComponentProps<typeof EntityGraphPanel>['onReattachEdge'];
   onDeleteEdge?: ComponentProps<typeof EntityGraphPanel>['onDeleteEdge'];
+  /** R6-S1b：畸形项行（原始数组下标；由宿主从 edgeHealthOf.problems 派生） */
+  malformedRows?: ComponentProps<typeof EntityGraphPanel>['malformedRows'];
   /** 图库上传（P1-1）：上传按钮 / 面板拖拽 → 文件数组（上层经资产宿主入清单） */
   onUpload: (files: File[]) => void;
   /** 定位并选中节点（由调用方封装「收起快速注释展开态 + 画布定位」） */
@@ -79,6 +81,7 @@ export function SidePanels({
   choices,
   onReattachEdge,
   onDeleteEdge,
+  malformedRows,
   onUpload,
   onSelectNode,
   onClose,
@@ -176,6 +179,7 @@ export function SidePanels({
           relations={relations}
           activeRefKey={activeRefKey}
           edges={edgeItems}
+          malformedRows={malformedRows}
           onFocusNode={onSelectNode}
           onClose={onClose}
           choices={choices}

@@ -25,6 +25,12 @@ export interface EntityGraphPanelProps {
   onReattachEdge?: (key: string, side: 'from' | 'to', anchor: string) => void;
   /** R2-3：行内删除回调（写路径归宿主 writeEdges + removeEdgeAt） */
   onDeleteEdge?: (key: string) => void;
+  /**
+   * R6-S1b：畸形项行（原始数组下标，如 `[3]`）。由宿主从 `edgeHealthOf(root).problems`
+   * 过滤 `malformed` 派生——**面板不自己扫原始数组**（判定口径单一来源）；缺省 = 不渲染
+   * 畸形区（向后兼容）。删除经既有 `onDeleteEdge`（key 沿用 `e${index}` 位置键约定）。
+   */
+  malformedRows?: readonly number[];
 }
 
 /** 语义边行（面板哑渲染；文本解析由上层完成） */
@@ -86,6 +92,7 @@ export function EntityGraphPanel({
   choices,
   onReattachEdge,
   onDeleteEdge,
+  malformedRows,
 }: EntityGraphPanelProps) {
   const [selectedKey, setSelectedKey] = useState<string | null>(null);
   // R2-3：当前重挂目标（key + 端）；非 null 时渲染候选选择器
@@ -139,8 +146,11 @@ export function EntityGraphPanel({
           </span>
         </div>
         {/* E4：语义边区（连线一等公民——R0-3 按状态分区：正常/悬空/陈旧/已失效，
-            每区标题带计数；源锚未解析的行不再触发 onFocusNode('') 静默 no-op） */}
-        {edges !== undefined && edges.length > 0 && (
+            每区标题带计数；源锚未解析的行不再触发 onFocusNode('') 静默 no-op）。
+            R6-S1b：畸形项（collectFreeEdges 静默丢弃）补上席位——宿主经 malformedRows
+            传入下标，可定位可删除（口径单一来源 = edgeHealthOf.problems）。 */}
+        {((edges !== undefined && edges.length > 0) ||
+          (malformedRows !== undefined && malformedRows.length > 0)) && (
           <div data-edge-section style={{ marginBottom: 8 }}>
             <div
               style={{
@@ -149,9 +159,9 @@ export function EntityGraphPanel({
                 padding: '2px 4px 4px',
               }}
             >
-              连线 {edges.length}
+              连线 {(edges?.length ?? 0) + (malformedRows?.length ?? 0)}
             </div>
-            {groupEdges(edges).map((group) => (
+            {edges !== undefined && edges.length > 0 && groupEdges(edges).map((group) => (
               <div key={group.id} data-edge-group={group.id}>
                 <div
                   style={{
@@ -288,6 +298,64 @@ export function EntityGraphPanel({
                 })}
               </div>
             ))}
+            {/* R6-S1b：畸形项组——被 collectFreeEdges 静默丢弃的原始项在面板的席位 */}
+            {malformedRows !== undefined && malformedRows.length > 0 && (
+              <div data-edge-group="malformed">
+                <div
+                  style={{
+                    color: CHROME.warn,
+                    fontSize: CHROME.fontSizeSmall,
+                    padding: '2px 4px',
+                  }}
+                >
+                  原始项非法 {malformedRows.length}
+                </div>
+                {malformedRows.map((idx) => (
+                  <div
+                    key={`e${idx}`}
+                    data-edge-malformed={`e${idx}`}
+                    style={{
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: 4,
+                      padding: '3px 6px',
+                      borderRadius: 6,
+                    }}
+                  >
+                    <span
+                      style={{
+                        fontSize: CHROME.fontSizeSmall,
+                        flex: 1,
+                        overflow: 'hidden',
+                        textOverflow: 'ellipsis',
+                        whiteSpace: 'nowrap',
+                        color: CHROME.warn,
+                      }}
+                    >
+                      第 {idx + 1} 条 · 原始项非法
+                    </span>
+                    {onDeleteEdge !== undefined && (
+                      <span
+                        data-edge-delete={`e${idx}`}
+                        title="删除这条非法条目（原始数组位置：不可解析项）"
+                        onClick={(ev) => {
+                          ev.stopPropagation(); // 不触发相邻行聚焦
+                          onDeleteEdge(`e${idx}`);
+                        }}
+                        style={{
+                          fontSize: CHROME.fontSizeSmall,
+                          color: CHROME.textMuted,
+                          cursor: 'pointer',
+                          flex: 'none',
+                        }}
+                      >
+                        删
+                      </span>
+                    )}
+                  </div>
+                ))}
+              </div>
+            )}
           </div>
         )}
         {/* 实体区（星型图降级为下钻视图：点实体条目才在右侧展开星图） */}
@@ -302,7 +370,9 @@ export function EntityGraphPanel({
             实体 {relations.length}
           </div>
         )}
-        {relations.length === 0 && (edges === undefined || edges.length === 0) ? (
+        {relations.length === 0 &&
+        (edges === undefined || edges.length === 0) &&
+        (malformedRows === undefined || malformedRows.length === 0) ? (
           <div
             style={{ color: CHROME.textMuted, fontSize: CHROME.fontSizeSmall, padding: '8px 4px' }}
           >

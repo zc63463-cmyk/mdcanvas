@@ -802,6 +802,11 @@ function StageContent({
 
   // R0-2：边健康度（观测先行）——随树重算；坏边计数/明细供诊断条呈现（全健康不渲染）
   const edgeHealth = useMemo(() => edgeHealthOf(controller.root), [controller.root]);
+  // R6-S1b：畸形项行（口径单一来源：edgeHealthOf.problems 过滤 malformed——面板不扫原始数组）
+  const malformedRows = useMemo(
+    () => edgeHealth.problems.filter((p) => p.malformed === true).map((p) => p.index),
+    [edgeHealth],
+  );
 
   useEffect(() => {
     let alive = true;
@@ -2142,6 +2147,7 @@ function StageContent({
         relations={relations}
         activeRefKey={activeRefKey}
         edgeItems={edgeItems}
+        malformedRows={malformedRows}
         choices={edgeActions.nodeChoices}
         onReattachEdge={(key, side, anchor) =>
           edgeActions.reattachEdge(Number(key.slice(1)), side, anchor)

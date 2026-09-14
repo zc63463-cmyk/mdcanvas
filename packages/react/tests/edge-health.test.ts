@@ -10,7 +10,7 @@
  */
 import { describe, expect, it } from 'vitest';
 import { makeEntityNode, makeTextNode, type EditableNode } from '@mindcanvas/kernel';
-import { edgeHealthOf } from '../src/render/edgeHealth.js';
+import { edgeHealthOf, healthBreakdown } from '../src/render/edgeHealth.js';
 
 /** 组合夹具：9 条原始边覆盖 8 类病例（下标 0 是唯一健康边） */
 function fixture(): EditableNode {
@@ -175,5 +175,87 @@ describe('edgeHealthOf：problems 明细（可定位）', () => {
     const sum = h.byState.wellFormed + h.byState.dangling + h.byState.stale;
     expect(sum).toBe(h.total - h.malformed);
     expect(sum + h.malformed).toBe(h.total);
+  });
+});
+
+describe('healthBreakdown（R6-S1a：互斥主分类——总数 = 各项之和）', () => {
+  /** 7 类病理计数 + healthy 的和（验收判据左式） */
+  function problemsSum(b: ReturnType<typeof healthBreakdown>): number {
+    return (
+      b.malformed + b.invalid + b.dangling + b.stale + b.selfAnchor + b.duplicate + b.unknownRel
+    );
+  }
+
+  it('组合夹具（8 类病例）：每项恰归一档；7 分类之和 === problems.length，+healthy === total', () => {
+    const h = edgeHealthOf(fixture());
+    const b = healthBreakdown(h);
+    expect(b).toEqual({
+      malformed: 2, // 非对象 + from 非 string
+      invalid: 1,
+      dangling: 1,
+      stale: 1,
+      selfAnchor: 1,
+      duplicate: 1,
+      unknownRel: 1,
+      healthy: 1, // 下标 0 是唯一健康边
+    });
+    expect(problemsSum(b)).toBe(h.problems.length);
+    expect(problemsSum(b) + b.healthy).toBe(h.total);
+  });
+
+  it('多标记项只归一档：主分类优先级 malformed > invalid > dangling > stale > selfAnchor > duplicate > unknownRel', () => {
+    const root = makeTextNode('根', [
+      makeTextNode('A'),
+      makeTextNode('分支', [
+        makeEntityNode({ kind: 'issue', id: '8' }),
+        makeEntityNode({ kind: 'issue', id: '8' }),
+      ]),
+    ]);
+    root.note = {
+      edges: [
+        // 0：dangling + 软失效 → 归 invalid（优先级高于 dangling）
+        {
+          from: 'node:根/不存在',
+          to: 'node:根/A',
+          rel: 'relates-to',
+          invalidAt: '2026-01-01T00:00:00.000Z',
+        },
+        // 1：stale（同名实体歧义）+ 未知关系 → 归 stale（优先级高于 unknownRel）
+        { from: 'node:根/A', to: '@issue:8', rel: 'no-such-rel' },
+        // 2、3：同键自关联 → 均归 selfAnchor（3 的重复标记被 selfAnchor 覆盖）
+        { from: 'node:根/A', to: 'node:根/A', rel: 'relates-to' },
+        { from: 'node:根/A', to: 'node:根/A', rel: 'relates-to' },
+      ],
+    };
+    const h = edgeHealthOf(root);
+    const b = healthBreakdown(h);
+    expect(b).toEqual({
+      malformed: 0,
+      invalid: 1,
+      dangling: 0,
+      stale: 1,
+      selfAnchor: 2,
+      duplicate: 0,
+      unknownRel: 0,
+      healthy: 0,
+    });
+    expect(problemsSum(b)).toBe(h.problems.length);
+  });
+
+  it('全健康 / 无边：分类全零 + healthy 对账', () => {
+    const root = makeTextNode('根', [makeTextNode('A'), makeTextNode('B')]);
+    root.note = { edges: [{ from: 'node:根/A', to: 'node:根/B', rel: 'relates-to' }] };
+    const b = healthBreakdown(edgeHealthOf(root));
+    expect(b).toEqual({
+      malformed: 0,
+      invalid: 0,
+      dangling: 0,
+      stale: 0,
+      selfAnchor: 0,
+      duplicate: 0,
+      unknownRel: 0,
+      healthy: 1,
+    });
+    expect(healthBreakdown(edgeHealthOf(makeTextNode('根'))).healthy).toBe(0);
   });
 });
