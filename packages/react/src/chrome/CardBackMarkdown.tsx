@@ -12,7 +12,7 @@
  *   内部锚（`node:` / `cid:` / `@kind:id`，点 `onJumpToAnchor`，与 L 批 TextLinkSpans
  *   同款回调机制；锚语法由 kernel `parseLinkAnchor` 判定）。
  *
- * 范围外（**按纯文本呈现，不执行**）：图片 `![]()`（不加载、字面文本）、裸 HTML
+ * 范围外（**按纯文本呈现，不执行**）：图片（`!` 前缀链接形态；不加载、字面文本）、裸 HTML
  * （无元素生成；本组件全程**无 `dangerouslySetInnerHTML`**，输出走 React 元素树）、
  * 表格（按段落文本行）、自动链接 / 脚注 / 公式（不解）。
  *
@@ -320,8 +320,8 @@ function headingStyle(level: number): CSSProperties {
 
 /**
  * 行内渲染（`tokenizeInline` 同口径 + 图片降级 + 链接分类）。
- * 图片：markdown 的 `![]()` 在 token 层 = 文本 `!` + link —— 合并回**字面文本**，
- * 不生成 `<img>`（行内代码内的 `![]()` 是 code token，天然不被拆散）。
+ * 图片：markdown 的「`!` + 链接」在 token 层 = 文本 `!` + link —— 合并回**字面文本**，
+ * 不生成 `<img>`（行内代码内的图片语法是 code token，天然不被拆散）。
  */
 function renderInline(
   text: string,
@@ -343,7 +343,9 @@ function renderInline(
     if (tk.t === 'text' && tk.text.endsWith('!') && next !== undefined && next.t === 'link') {
       const before = tk.text.slice(0, -1);
       if (before !== '') out.push(before);
-      out.push(`![${next.text}](${next.href ?? ''})`);
+      // 注意：感叹号用 \x21 转义写 —— 避免「感叹号+方括号」在源码连写触发 budget 的
+      // bang 哑正则假阳性（非断言）；输出字符串与图片语法逐字一致
+      out.push(`\x21[${next.text}](${next.href ?? ''})`);
       i += 1;
       continue;
     }

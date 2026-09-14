@@ -46,10 +46,14 @@ describe('note.md 转义单行形态：往返保真', () => {
   it('parse → serialize → parse 逐字相等 + 幂等', () => {
     const src = '<!--\nmd: "## 设计取舍\\n- 卡不参与布局\\n- 链接 [跳转](node:根/任务/A)"\n-->\n# 根';
     const p1 = parseMm(src);
-    const s1 = serializeMm(p1.root);
+    const r1 = p1.root;
+    if (r1 === null) throw new Error('解析失败：root 缺失');
+    const s1 = serializeMm(r1);
     const p2 = parseMm(s1);
-    expect(Object.is(mdOf(p2.root), mdOf(p1.root))).toBe(true);
-    expect(serializeMm(p2.root)).toBe(s1);
+    const r2 = p2.root;
+    if (r2 === null) throw new Error('解析失败：root 缺失');
+    expect(Object.is(mdOf(r2), mdOf(r1))).toBe(true);
+    expect(serializeMm(r2)).toBe(s1);
   });
 
   it('硬字符集（引号/反斜杠/冒号/尾空格/# 起首/note 块哨兵 -->）逐字往返', () => {
