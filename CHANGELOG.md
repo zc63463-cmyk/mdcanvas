@@ -7,6 +7,16 @@
 > （09-05~09-06）与「图引擎适配 / 文件工作台」（09-10）等批次未单独标号，
 > 按完成时间归入对应段落末尾的「同批」小节。
 
+## [1.8.16] — 2026-09-14 · 边 attrs 链路透传 + 丢弃诊断口径补全（R6 小批 / 零协议改动）
+
+**触发**：边这条线两笔小账——① 坏边已能看见一半，但诊断条「总数 ≠ 分项数」（`problems` 含 malformed/自关联/重复/未知关系，括号里只有悬空/陈旧/失效三类，用户数不出第 N 条）且畸形项在关系面板无席位（点诊断条打开面板找不到那一条）；② `attrs` 协议层能存能往返（E1），但 react 层零命中（存了看不见）。计划：`docs/dispatch/2026-09-14-r6-attrs-and-diagnostics-plan.md`；报告：`outputs/2026-09-14-r6-attrs-diagnostics-report.md`。**零协议改动**：`.mm.md` parse/serialize 与 ADR 一行未动；`cid:` 边锚化归「R6-大」（须先出 ADR，`resolveAnchorToId` 现对 `cid:` 会落实体分支判 dangling）。
+
+- **S1 诊断口径补全 + 畸形项可处置**（`cb33079`）：`render/edgeHealth.ts` 加法导出 `healthBreakdown`（互斥主分类，每项恰归一档；优先级 `malformed > invalid > dangling > stale > selfAnchor > duplicate > unknownRel`）；`EdgeHealthBar` 标题改消费分类——**括号内数字之和 === problems.length**（零类目省略；测试钉死；既有字段语义与明细/其余略契约未动）。`EntityGraphPanel` 连线区补「原始项非法」组（`第 N 条 · 原始项非法` + 删除入口，走既有 `onDeleteEdge` → `removeEdgeAt` 写路径，key 沿用 `e{index}` 位置键）；宿主 `MindmapStage` 从 `edgeHealthOf.problems` 过滤 malformed 派生 `malformedRows`（**面板不扫原始数组**，口径单一来源）；section 计数含畸形项；仅有畸形项时连线区仍渲染、空态引导不误现；**判据**：删除后 `malformed === 0` 且无其它问题时诊断条消失（测试钉死）。**口径变更对照表**（旧断言 → 新断言 + 为什么不是放宽）见 `cb33079` commit message 与报告 §S1。
+- **S2 attrs 链路透传 + 只读呈现**（`a5ee1c2`）：`DocEdge` / `FreeEdge` 加法 `attrs?: Record<string, unknown>`；`collectFreeEdges` 对象守卫后**引用透传**（非对象/数组值不视为 attrs；显式收窄无 `as`）；`EdgeEditor` 样式行下方**只读**属性区（计数 + 最多 2 行 `k = v` + `title` 全量；无 attrs/空对象不渲染；不提供编辑，R6-A4）。**方向说明**：不是「修 attrs 丢失」——写路径本就安全（`patchEdgeAt`/`mergeStyleAt`/`removeEdgeAt` 经 spread 保未知键，保真钉 ② 锁死）。**四颗保真钉**：① `collectFreeEdges` 引用相等透传（红→绿）；② `patchEdgeAt` spread 保真（钉既有行为，初跑即绿）；③ `EdgeEditor` 渲染有则呈现无则不渲染（红→绿）；④ 协议往返 `edges` 面补钉（kernel `passthrough-ironlaw`：parse→serialize→parse 逐值相等 + 二次序列化字节稳定；E1 已覆盖 links 面）。
+- **验收**：kernel **517**（+1）/ react **1218**（+12）/ canvas **196**（+1）= **1931 全绿**；tsc ×3 / react dist 重建 / depcruise（**432 模块 / 1228 deps 零违规**；+4 = S1 测试新增 4 条 src 相对导入，模块数不变——JSON 逐条归因见报告）/ lint **1468 + 46**（持平原水位）/ budget 全持平（bang 89/90、asCast 31/31、bigFiles 3/4；MindmapStage 2293→2299 接线级 +6）。**TDD 红证据 4 组**（原文见报告）：① `TypeError: healthBreakdown is not a function`（3 例红）；② 诊断条旧文案三例（`5 条（悬空 3 / 陈旧 1 / 失效 0）` = 3+1+0=4 ≠ 5——自关联那条在括号里没有席位；`3 条（悬空 1 / 陈旧 0 / 失效 1）` = 2 ≠ 3——畸形项数不出）；③ 面板畸形行缺失（`expected '连线 1…' to contain '连线 2'` / `element not found: [data-edge-delete="e1"]`，4 例红）；④ attrs 未透传 / 未呈现（`expected undefined to be { severity: 'high', w: 3 }` / `element not found: [data-edge-attrs]`）。
+- **偏差与记录**：① **S1b 未降级**（宿主改动 MindmapStage +6 / SidePanels +3 行，远低于降级阈值；面板为纯加法，既有行结构与 `data-*` 契约未动）；② depcruise deps 1224→1228（+4；模块 432 不变）；③ **并行进程干扰记录**：收口期检测到并行批次（节点卡 P1 的 N1 探针）产物 `packages/react/tmp-n1-bundletest/`、`tmp-n1-probe.mjs` 落进 lint/depcruise 扫描范围 → 全量读数出现 41 errors / 2635 warnings / 437 模块的假象；按文件路径分桶后**本批口径 = 0 errors / 1468 warnings + 46 infos**（与基线逐数持平），depcruise 干净读数 432/1228 零违规（该批产物未触碰、未提交）；④ lint 收口期一次 +1 告警（canvas 测试新增 `m[1]!`，`noNonNullAssertion`）已即时修正并 amend 入 S1（`0a2f8f3` → `cb33079`；最终 1468 持平）。
+- **待跟进（范围外）**：`cid:` 边锚化（「R6-大」，先出 ADR）；attrs 编辑 UX（JSON/键值编辑器另议，本批只做只读呈现）。
+
 ## [1.8.15] — 2026-09-14 · 森林布局缓存（岛级 + 岛内增量 / 投影壳稳定化 / 基准收口）
 
 **触发**：C5 取证（`634ef9b`）N≈3280 多中心 21.7–33.3ms 同时越过 1.5×+16ms 双阈值 → 判定立项缓存批。计划：`docs/dispatch/2026-09-14-forest-layout-cache-plan.md`；报告：`outputs/2026-09-14-forest-layout-cache-report.md`。
