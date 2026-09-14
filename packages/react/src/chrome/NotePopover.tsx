@@ -129,8 +129,10 @@ export interface NotePopoverProps {
   root?: EditableNode;
   /** L1：链接跳转回调（缺省 → 链接只渲染不可点） */
   onJumpToAnchor?: (anchor: string) => void;
-  /** P1：背面 markdown 源文（`note.md` 透传；空/缺省 → 无翻面入口，面板与今天一致） */
+  /** P1：背面 markdown 源文（`note.md` 透传；空/缺省 → 无翻面入口）。P1-T1：受控翻面 flipped（缺省 = 内部自持）/ 回传 onFlipChange */
   md?: string;
+  flipped?: boolean;
+  onFlipChange?: (next: boolean) => void;
 }
 
 /**
@@ -192,7 +194,7 @@ export function NotePopover({
   onPin,
   root,
   onJumpToAnchor,
-  md,
+  md, flipped, onFlipChange,
 }: NotePopoverProps) {
   const taRef = useRef<HTMLTextAreaElement | null>(null);
   const rootRef = useRef<HTMLDivElement | null>(null);
@@ -200,8 +202,10 @@ export function NotePopover({
   // L3：插入链接（复用 EdgeAnchorPicker；textarea 光标处插入，T-A7 目标有 cid 优先写 cid:）
   const [picker, setPicker] = useState(false);
   const pickerRangeRef = useRef<{ start: number; end: number } | null>(null);
-  // P1：翻面态 —— 会话态、按节点 id 记（渲染位以 key={panel.id} 挂载/卸载），不落盘
-  const [flipped, setFlipped] = useState(false);
+  // P1-T1：翻面态 —— 受控（flipped 传入即宿主持态）或非受控（缺省回退内部 state）；不落盘
+  const [selfFlipped, setSelfFlipped] = useState(false);
+  const isFlipped = flipped ?? selfFlipped;
+  const setFlip = (next: boolean): void => { if (flipped === undefined) setSelfFlipped(next); onFlipChange?.(next); };
   // 预览态（editing=false）零开销：不做全树候选收集
   const choices = useMemo(
     () => (editing && root ? collectNodeChoices(root) : []),
@@ -540,10 +544,10 @@ export function NotePopover({
           <button
             type="button"
             data-note-flip
-            aria-pressed={flipped}
-            title={flipped ? '翻回正面' : '翻面：查看 markdown 背面'}
+            aria-pressed={isFlipped}
+            title={isFlipped ? '翻回正面' : '翻面：查看 markdown 背面'}
             onPointerDown={(e) => e.stopPropagation()}
-            onClick={(e) => { e.stopPropagation(); setFlipped((v) => !v); }}
+            onClick={(e) => { e.stopPropagation(); setFlip(!isFlipped); }}
             style={{ border: 'none', background: 'transparent', color: CHROME.textMuted, cursor: 'pointer', fontSize: fontPx, lineHeight: 1, padding: 2 }}
           >
             ⟳
@@ -569,7 +573,7 @@ export function NotePopover({
 
       {flipActive ? (
         <FlipCard
-          flipped={flipped}
+          flipped={isFlipped}
           title="note 笔记"
           style={{ flex: '1 1 0', minHeight: 0 }}
           front={<>{seqRegion}{textRegion}</>}

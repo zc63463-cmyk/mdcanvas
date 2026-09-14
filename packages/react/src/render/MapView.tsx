@@ -153,6 +153,10 @@ export interface MapViewProps {
   pinnedNoteIds?: readonly string[];
   /** 处于编辑态的已固定 note 笔记 */
   editingNoteIds?: readonly string[];
+  /** P1-T1：翻面中的固定 note 笔记 id（受控；宿主持有；缺省 → 面板内部态，现行为） */
+  flippedNoteIds?: readonly string[];
+  /** P1-T1：翻面意图回传（宿主据此写回 flippedNoteIds） */
+  onToggleNoteFlip?: (id: string, next: boolean) => void;
   /** 注释写回：序列区域 */
   onNoteChangeSeq?: (id: string, seq: string[]) => void;
   /** 注释写回：纯文本区域 */
@@ -360,6 +364,8 @@ export function MapView({
   pinnedNoteId = null,
   pinnedNoteIds,
   editingNoteIds,
+  flippedNoteIds,
+  onToggleNoteFlip,
   onNoteChangeSeq,
   onNoteChangeText,
   onNoteClose,
@@ -492,6 +498,11 @@ export function MapView({
     [pinnedNoteId, pinnedNoteIds],
   );
   const editingNoteIdSet = useMemo(() => new Set(editingNoteIds), [editingNoteIds]);
+  // P1-T1：翻面集合 —— 缺省 undefined（= 面板内部态，现行为）；传入即受控
+  const flippedNoteIdSet = useMemo(
+    () => (flippedNoteIds === undefined ? undefined : new Set(flippedNoteIds)),
+    [flippedNoteIds],
+  );
   const view = viewport.worldRect(CULL_MARGIN);
   /**
    * 固定卡片只在 full 档位生成（badge/none 档位不挂载大卡片，只留角标）。
@@ -2147,6 +2158,8 @@ export function MapView({
             seq={panel.data.seq}
             text={panel.data.text}
             md={panel.md}
+            flipped={flippedNoteIdSet?.has(panel.id)}
+            onFlipChange={(next) => onToggleNoteFlip?.(panel.id, next)}
             pinned
             editing={panel.editing}
             token={token}

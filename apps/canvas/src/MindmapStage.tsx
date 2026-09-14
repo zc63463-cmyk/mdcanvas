@@ -638,6 +638,20 @@ function StageContent({
     }
   };
 
+  // P1-T1：翻面态提升宿主 —— 会话态集合（不落盘；不顺手清——承 onBlankClick「不静默关面板」裁决口径）
+  const [flippedNoteIds, setFlippedNoteIds] = useState<Set<string>>(() => new Set());
+  /** Set → 数组（引用稳定化：仅集合变化时更新；MapView prop 形态 = readonly string[]） */
+  const flippedNoteIdList = useMemo(() => [...flippedNoteIds], [flippedNoteIds]);
+  const toggleNoteFlip = (id: string, next: boolean): void => {
+    setFlippedNoteIds((prev) => {
+      if (prev.has(id) === next) return prev; // 幂等：同值重复调用 → 原引用（不产生状态更新）
+      const out = new Set(prev);
+      if (next) out.add(id);
+      else out.delete(id);
+      return out;
+    });
+  };
+
   // E8：关系模式（模式隔离）——浏览态只呈现关系，关系态才暴露连线入口
   // （连接手柄 / Shift+点两节点 / 树边右键编辑 / 边点击编辑 / 右键「连线到…」）
   const [relationMode, setRelationMode] = useState(false);
@@ -1532,6 +1546,8 @@ function StageContent({
         }}
         pinnedNoteIds={pinnedNoteIds}
         editingNoteIds={editingNoteIds}
+        flippedNoteIds={flippedNoteIdList}
+        onToggleNoteFlip={toggleNoteFlip}
         onNoteChangeSeq={(id, seq) =>
           controller.updateNote(id, seq.length > 0 ? { note: seq } : { note: undefined })
         }
