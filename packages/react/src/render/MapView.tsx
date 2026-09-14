@@ -2146,6 +2146,7 @@ export function MapView({
             key={panel.id}
             seq={panel.data.seq}
             text={panel.data.text}
+            md={panel.md}
             pinned
             editing={panel.editing}
             token={token}

@@ -28,6 +28,8 @@ import { collectNodeChoices } from './edgeEditorShared.js';
 import { EdgeAnchorPicker } from './EdgeAnchorPicker.js';
 import { QaEditor } from './QaEditor.js';
 import { TextLinkSpans } from './TextLinkSpans.js';
+import { CardBackMarkdown } from './CardBackMarkdown.js';
+import { FlipCard } from './FlipCard.js';
 
 /** 单个区域的最大高度（超出内部滚动，浮窗整体不被撑爆） */
 const REGION_MAX_H = 160;
@@ -127,6 +129,8 @@ export interface NotePopoverProps {
   root?: EditableNode;
   /** L1：链接跳转回调（缺省 → 链接只渲染不可点） */
   onJumpToAnchor?: (anchor: string) => void;
+  /** P1：背面 markdown 源文（`note.md` 透传；空/缺省 → 无翻面入口，面板与今天一致） */
+  md?: string;
 }
 
 /**
@@ -188,6 +192,7 @@ export function NotePopover({
   onPin,
   root,
   onJumpToAnchor,
+  md,
 }: NotePopoverProps) {
   const taRef = useRef<HTMLTextAreaElement | null>(null);
   const rootRef = useRef<HTMLDivElement | null>(null);
@@ -195,6 +200,8 @@ export function NotePopover({
   // L3：插入链接（复用 EdgeAnchorPicker；textarea 光标处插入，T-A7 目标有 cid 优先写 cid:）
   const [picker, setPicker] = useState(false);
   const pickerRangeRef = useRef<{ start: number; end: number } | null>(null);
+  // P1：翻面态 —— 会话态、按节点 id 记（渲染位以 key={panel.id} 挂载/卸载），不落盘
+  const [flipped, setFlipped] = useState(false);
   // 预览态（editing=false）零开销：不做全树候选收集
   const choices = useMemo(
     () => (editing && root ? collectNodeChoices(root) : []),
@@ -243,6 +250,9 @@ export function NotePopover({
   // 编辑态一律用屏幕浮窗：嵌入卡片是布局预留的固定矮槽（120 基线），装不下编辑器；
   // 浮窗位置与字号都稳定（IME 选词框不漂），先给足空间再键入。
   const floating = mode !== 'embedded' || editing;
+  // P1：翻面仅在「固定卡 + note.md 非空」时启用（§1.2 floating/编辑态不翻）；翻转由面板头
+  // 按钮独立驱动（受控 FlipCard 不注入 onFlip——整卡点击 no-op，符合「禁止整卡 onClick 翻面」）。
+  const flipActive = !floating && typeof md === 'string' && md.trim() !== '';
 
   // 编辑态焦点守卫：进入编辑时若焦点还没落在浮窗内，主动聚焦 textarea。
   // 缩放升级（embedded → floating）会重建浮窗，这一步保证输入框不丢焦点。
@@ -365,6 +375,123 @@ export function NotePopover({
       : { maxHeight: REGION_MAX_H, overflowY: 'auto' }
     : { flex: '1 1 0', minHeight: 0, overflowY: 'auto' };
 
+  // P1：两个内容区块（正面「现有区块」，逐字未改）——翻面时装 FlipCard 正面，未启用原样直出（Fragment 透明）。
+  const seqRegion = (
+    <div data-note-seq style={{ ...seqStyle, marginBottom: 8 }}>
+      {editing ? (
+        <QaEditor
+          items={seq}
+          onChange={onChangeSeq}
+          token={token}
+          title="序列"
+          placeholder="新增条目…（回车提交）"
+          fontSize={fontPx}
+        />
+      ) : seq.length === 0 ? null : (
+        <>
+          <div
+            style={{
+              color: token.color.annotationAccent,
+              fontSize: fontPx,
+              fontWeight: 600,
+              marginBottom: 4,
+            }}
+          >
+            序列
+          </div>
+          <ol style={{ margin: 0, paddingLeft: 18 }}>
+            {seq.map((item, i) => (
+              <li
+                key={i}
+                style={{
+                  color: CHROME.text,
+                  fontSize: fontPx,
+                  lineHeight: 1.6,
+                }}
+              >
+                <TextLinkSpans text={item} root={root} onJumpToAnchor={onJumpToAnchor} token={token} />
+              </li>
+            ))}
+          </ol>
+        </>
+      )}
+    </div>
+  );
+
+  const textRegion = (
+    <div data-note-textarea style={textStyle}>
+      <div
+        style={{
+          display: 'flex',
+          alignItems: 'center',
+          marginBottom: 4,
+        }}
+      >
+        <span style={{ flex: 1, color: CHROME.textMuted, fontSize: fontPx, fontWeight: 600 }}>
+          正文
+        </span>
+        {editing && root !== undefined && (
+          <button
+            type="button"
+            data-insert-link
+            onPointerDown={rememberCaret}
+            onClick={openPicker}
+            style={{
+              border: 'none',
+              background: 'transparent',
+              color: token.color.linkStroke,
+              cursor: 'pointer',
+              fontSize: fontMutedPx,
+              padding: '0 2px',
+            }}
+          >
+            插入链接
+          </button>
+        )}
+      </div>
+      {editing ? (
+        <textarea
+          ref={taRef}
+          defaultValue={text}
+          placeholder="整段说明…"
+          onBlur={onTextBlur}
+          onKeyDown={(e) => e.stopPropagation()}
+          style={{
+            // 编辑态吃掉正文区剩余高度（先给足空间再键入），下限 150 保证可见行数
+            flex: 1,
+            minHeight: EDITING_TEXTAREA_MIN_H,
+            border: `1px solid ${CHROME.panelBorder}`,
+            background: 'transparent',
+            color: CHROME.text,
+            borderRadius: CHROME.radiusSmall,
+            padding: '4px 6px',
+            fontSize: fontPx,
+            fontFamily: CHROME.fontFamily,
+            lineHeight: 1.6,
+            resize: 'vertical',
+            outline: 'none',
+          }}
+        />
+      ) : (
+        <div
+          style={{
+            color: CHROME.text,
+            fontSize: fontPx,
+            lineHeight: 1.6,
+            whiteSpace: 'pre-wrap',
+            wordBreak: 'break-word',
+          }}
+        >
+          {text === '' ? (
+            <span style={{ color: CHROME.textMuted }}>（无正文）</span>
+          ) : (
+            <TextLinkSpans text={text} root={root} onJumpToAnchor={onJumpToAnchor} token={token} />
+          )}
+        </div>
+      )}
+    </div>
+  );
+
   return (
     <div
       ref={rootRef}
@@ -409,6 +536,19 @@ export function NotePopover({
         {!pinned && (
           <span style={{ color: CHROME.textMuted, fontSize: fontMutedPx }}>点击固定</span>
         )}
+        {flipActive && (
+          <button
+            type="button"
+            data-note-flip
+            aria-pressed={flipped}
+            title={flipped ? '翻回正面' : '翻面：查看 markdown 背面'}
+            onPointerDown={(e) => e.stopPropagation()}
+            onClick={(e) => { e.stopPropagation(); setFlipped((v) => !v); }}
+            style={{ border: 'none', background: 'transparent', color: CHROME.textMuted, cursor: 'pointer', fontSize: fontPx, lineHeight: 1, padding: 2 }}
+          >
+            ⟳
+          </button>
+        )}
         <button
           type="button"
           aria-label="关闭 note笔记"
@@ -427,119 +567,21 @@ export function NotePopover({
         </button>
       </div>
 
-      {/* ① 序列区域 */}
-      <div data-note-seq style={{ ...seqStyle, marginBottom: 8 }}>
-        {editing ? (
-          <QaEditor
-            items={seq}
-            onChange={onChangeSeq}
-            token={token}
-            title="序列"
-            placeholder="新增条目…（回车提交）"
-            fontSize={fontPx}
-          />
-        ) : seq.length === 0 ? null : (
-          <>
-            <div
-              style={{
-                color: token.color.annotationAccent,
-                fontSize: fontPx,
-                fontWeight: 600,
-                marginBottom: 4,
-              }}
-            >
-              序列
+      {flipActive ? (
+        <FlipCard
+          flipped={flipped}
+          title="note 笔记"
+          style={{ flex: '1 1 0', minHeight: 0 }}
+          front={<>{seqRegion}{textRegion}</>}
+          back={
+            <div data-note-back-scroll onKeyDown={(e) => e.stopPropagation()} style={{ flex: '1 1 0', minHeight: 0, overflowY: 'auto' }}>
+              <CardBackMarkdown md={md ?? ''} token={token} onJumpToAnchor={onJumpToAnchor} />
             </div>
-            <ol style={{ margin: 0, paddingLeft: 18 }}>
-              {seq.map((item, i) => (
-                <li
-                  key={i}
-                  style={{
-                    color: CHROME.text,
-                    fontSize: fontPx,
-                    lineHeight: 1.6,
-                  }}
-                >
-                  <TextLinkSpans text={item} root={root} onJumpToAnchor={onJumpToAnchor} token={token} />
-                </li>
-              ))}
-            </ol>
-          </>
-        )}
-      </div>
-
-      {/* ② 纯文本区域 */}
-      <div data-note-textarea style={textStyle}>
-        <div
-          style={{
-            display: 'flex',
-            alignItems: 'center',
-            marginBottom: 4,
-          }}
-        >
-          <span style={{ flex: 1, color: CHROME.textMuted, fontSize: fontPx, fontWeight: 600 }}>
-            正文
-          </span>
-          {editing && root !== undefined && (
-            <button
-              type="button"
-              data-insert-link
-              onPointerDown={rememberCaret}
-              onClick={openPicker}
-              style={{
-                border: 'none',
-                background: 'transparent',
-                color: token.color.linkStroke,
-                cursor: 'pointer',
-                fontSize: fontMutedPx,
-                padding: '0 2px',
-              }}
-            >
-              插入链接
-            </button>
-          )}
-        </div>
-        {editing ? (
-          <textarea
-            ref={taRef}
-            defaultValue={text}
-            placeholder="整段说明…"
-            onBlur={onTextBlur}
-            onKeyDown={(e) => e.stopPropagation()}
-            style={{
-              // 编辑态吃掉正文区剩余高度（先给足空间再键入），下限 150 保证可见行数
-              flex: 1,
-              minHeight: EDITING_TEXTAREA_MIN_H,
-              border: `1px solid ${CHROME.panelBorder}`,
-              background: 'transparent',
-              color: CHROME.text,
-              borderRadius: CHROME.radiusSmall,
-              padding: '4px 6px',
-              fontSize: fontPx,
-              fontFamily: CHROME.fontFamily,
-              lineHeight: 1.6,
-              resize: 'vertical',
-              outline: 'none',
-            }}
-          />
-        ) : (
-          <div
-            style={{
-              color: CHROME.text,
-              fontSize: fontPx,
-              lineHeight: 1.6,
-              whiteSpace: 'pre-wrap',
-              wordBreak: 'break-word',
-            }}
-          >
-            {text === '' ? (
-              <span style={{ color: CHROME.textMuted }}>（无正文）</span>
-            ) : (
-              <TextLinkSpans text={text} root={root} onJumpToAnchor={onJumpToAnchor} token={token} />
-            )}
-          </div>
-        )}
-      </div>
+          }
+        />
+      ) : (
+        <>{seqRegion}{textRegion}</>
+      )}
       {/* L3：候选选择器 portal 到 body —— 浮窗根有 transform（合成器层），
           fixed 遮罩若留在浮窗内会被 transform 困住（遮罩只盖浮窗、点外面无法取消）。 */}
       {picker &&

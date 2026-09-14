@@ -55,16 +55,30 @@ export interface FixedNotePanelData {
    * 缺省 0：无层级信息的调用方按分支字号处理。
    */
   depth: number;
+  /**
+   * P1：背面 markdown 源文（`node.note.md` 透传；未知类型/缺省 → ''）。
+   * 只承载数据、不做解析——渲染在 chrome/CardBackMarkdown。
+   */
+  md: string;
 }
 
 interface LayoutNodeLike {
-  node: { id: string };
+  node: { id: string; note?: unknown };
   box: Box;
   depth?: number;
 }
 
 function intersects(a: Box, b: Box): boolean {
   return a.x < b.x + b.w && a.x + a.w > b.x && a.y < b.y + b.h && a.y + a.h > b.y;
+}
+
+/** P1：`note.md` 读取（未知类型容忍：非字符串/缺省 → ''，不抛不诊断） */
+function noteMdOf(node: { note?: unknown }): string {
+  const note = node.note;
+  if (note === null || typeof note !== 'object') return '';
+  if (!('md' in note)) return '';
+  const md = note.md;
+  return typeof md === 'string' ? md : '';
 }
 
 /**
@@ -104,6 +118,7 @@ export function fixedNotePanelsOf<T extends LayoutNodeLike>(
       worldHeight: Math.max(0, region.h - FIXED_NOTE_GAP),
       k: transform.k,
       depth: ln.depth ?? 0,
+      md: noteMdOf(ln.node),
     });
   }
   return panels;
