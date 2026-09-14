@@ -14,28 +14,31 @@
 import { cleanup, renderHook } from '@testing-library/react';
 import type { RefObject } from 'react';
 import type { EditableNode, Entity, EntityRef } from '@mindcanvas/kernel';
-import type {
-  EditorController,
-  EntityHost,
-  FsFileHandle,
-  MapViewApi,
-  MindDoc,
-} from '@mindcanvas/react';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import type { EntityHost, FsFileHandle, MapViewApi, MindDoc } from '@mindcanvas/react';
+import { EditorController } from '@mindcanvas/react';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { useDocumentSwitch } from '../src/hooks/useDocumentSwitch';
 
 const docA: MindDoc = { id: 'a.mm.md', name: 'a.mm.md', source: 'SRC-A', saved: true, ts: 0 };
 
+beforeEach(() => {
+  // canvas 套件 pretendToBeVisual:false（无 rAF）——t0 构造真 EditorController 需要调度桩
+  vi.stubGlobal('requestAnimationFrame', (cb: FrameRequestCallback) =>
+    setTimeout(() => cb(0), 16) as unknown as number,
+  );
+  vi.stubGlobal('cancelAnimationFrame', (h: number) => {
+    clearTimeout(h);
+  });
+});
+
 afterEach(() => {
   cleanup();
   vi.restoreAllMocks();
+  vi.unstubAllGlobals();
 });
 
-function setup() {
+function setup(opts: { root?: EditableNode; controllerNull?: boolean } = {}) {
   const reset = vi.fn();
-  const controllerRef: RefObject<EditorController | null> = {
-    current: { reset } as unknown as EditorController,
-  };
   const fit = vi.fn();
   const apiRef: RefObject<MapViewApi | null> = { current: { fit } as unknown as MapViewApi };
   const entityHost = { remember: vi.fn() } as unknown as EntityHost;
@@ -44,6 +47,11 @@ function setup() {
   const refs: EntityRef[] = [];
   const entities = new Map<string, Entity>();
   const editable = { id: 'root', title: 'root', children: [] } as unknown as EditableNode;
+  // S2F：mock 增 `root` 字段（状态判据所需）——缺省与 `editable` 同引用（t1/t2 口径：首挂同源跳过）
+  const root = opts.root ?? editable;
+  const controllerRef: RefObject<EditorController | null> = {
+    current: opts.controllerNull === true ? null : ({ reset, root } as unknown as EditorController),
+  };
 
   const view = renderHook(
     ({ doc }: { doc: MindDoc }) =>
@@ -61,7 +69,7 @@ function setup() {
       }),
     { initialProps: { doc: docA } },
   );
-  return { view, reset, fit, entityHost, setEntities, setExpandedQaId };
+  return { view, editable, reset, fit, entityHost, setEntities, setExpandedQaId };
 }
 
 describe('useDocumentSwitch · 文档切换语义（E 批判别）', () => {
@@ -93,5 +101,40 @@ describe('useDocumentSwitch · 文档切换语义（E 批判别）', () => {
     expect(fit).toHaveBeenCalledTimes(1);
     // 切换时重新登记（实体宿主按文档名归档）
     expect(entityHost.remember).toHaveBeenCalledTimes(2);
+  });
+});
+
+describe('useDocumentSwitch · S2F 状态判据（首挂不同源补做切换）', () => {
+  it('t0：判据实证 —— 真实 EditorController 的 root 引用 = 构造/reset 的落点', () => {
+    const editable = { id: 'root', title: 'root', children: [] } as unknown as EditableNode;
+    const other = { id: 'other', title: 'other', children: [] } as unknown as EditableNode;
+    const ctrl = new EditorController(editable);
+    expect(ctrl.root).toBe(editable);
+    ctrl.reset(other);
+    expect(ctrl.root).toBe(other);
+  });
+
+  it('t3：首挂即不同源（root ≠ editable）→ 四动作各恰一次 + remember 照做', () => {
+    const other = { id: 'other', title: 'other', children: [] } as unknown as EditableNode;
+    const { editable, reset, fit, entityHost, setEntities, setExpandedQaId } = setup({ root: other });
+
+    // 首挂即不同源（启动页出口这类「挂载前改 doc」路径）：补做切换四动作
+    expect(reset).toHaveBeenCalledTimes(1);
+    expect(reset).toHaveBeenCalledWith(editable);
+    expect(setEntities).toHaveBeenCalledTimes(1);
+    expect(setExpandedQaId).toHaveBeenCalledWith(null);
+    expect(fit).toHaveBeenCalledTimes(1);
+    // 首挂实体登记照做
+    expect(entityHost.remember).toHaveBeenCalledTimes(1);
+  });
+
+  it('t4：controller 为 null → 不崩（落入四动作；reset 为 null 安全跳过）', () => {
+    const { fit, entityHost, setEntities, setExpandedQaId } = setup({ controllerNull: true });
+
+    // 不同源（undefined ≠ editable）→ 补做：reset 为 null 安全空调用，其余动作照做
+    expect(setEntities).toHaveBeenCalledTimes(1);
+    expect(setExpandedQaId).toHaveBeenCalledWith(null);
+    expect(fit).toHaveBeenCalledTimes(1);
+    expect(entityHost.remember).toHaveBeenCalledTimes(1);
   });
 });
