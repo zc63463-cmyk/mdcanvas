@@ -7,6 +7,17 @@
 > （09-05~09-06）与「图引擎适配 / 文件工作台」（09-10）等批次未单独标号，
 > 按完成时间归入对应段落末尾的「同批」小节。
 
+## [1.8.21] — 2026-09-15 · P2 节点卡背面编辑（textarea + 预览双态；写回 `note.md`）
+
+**触发**：P1（[1.8.17]）的背面 markdown 为只读；按设计稿 §7 补编辑闭环——背面态「编辑背面」→ 浮窗编辑器（源文 textarea +「源文/预览」双态）→ 失焦 / **Shift+Enter** 提交 → `controller.updateNote` 写回（空文本删 `md` 键）；undo / 自动保存 / S2G 守卫零成本继承。计划：`docs/dispatch/2026-09-15-p2-card-back-edit-plan.md`；报告：`outputs/2026-09-15-p2-back-edit-report.md`。
+
+- **P2-1/P2-2 编辑器 + 接线**（`e21566a`）：新 `chrome/NoteBackEditor.tsx`（三导出：`NoteBackEditor`——非受控 textarea（防 IME/焦点抖动，同正文区做法）+ 单窗双态（预览复用 `CardBackMarkdown` 零新解析；锚点 `data-note-md-editor`/`data-note-md-mode`）；`MdEditButton`——入口 `data-note-md-edit`，仅 `isFlipped && md 非空 && !floating` 渲染；`NoteBody`——面板主体三态提取（md 编辑面/翻卡/正面直出），DOM 与提取前逐字一致）。`NotePopover` 接线（`+ onChangeMd` + `mdEditing` 会话态 → `floating` 判定扩展；`flipActive` 门**逐字未动**；提交对比当前 md（无改动不写盘）+ 退出回背面视图）。**提交键位以 `DescBlock` 实测为准**（失焦 / Shift+Enter / Esc；设计稿 §7 转述的 `Ctrl+Enter` 实测不存在——按 §4①「以 DescBlock 为准」执行，e2e 留「Ctrl+Enter 不提交」插钉）。**NotePopover 守 600 线**（直连超 8 行 → 按计划提取后终值 599（wc）/ **600（budget 口径）**，bigFiles 3/4 未动）。react 单测 +15。
+- **P2-3 写回链 + e2e**（`b9c1a72`）：`MapView` +3 行（`onNoteChangeMd`，固定卡渲染位透传，同 `onNoteChangeSeq` 先例）；`MindmapStage` `onNoteChangeMd={(id, md) => controller.updateNote(id, md.trim() === '' ? { md: undefined } : { md })}`（**不 trim 存储值**，只 trim 判空）。canvas e2e +2（真 MindmapStage：翻面 → 编辑 → Ctrl+Enter 不提交（实测钉）→ Shift+Enter 提交 → 卸载重挂仍背面新内容 → **保存后 source 含 `md: "…"` 逐字**（serialize 往返）；清空提交 → 翻面按钮消失 + **source 无 `md:` 键**）。
+- **阴性对照 2 组**（原文见报告 §P2-4）：① 恒源文态 → 双态钉红（`expected 'source' to be 'preview'`）；② 空文本不删键 → source 断言钉红（`md: "   "` 现身）；均回退 + `git diff` 自证。
+- **验收**：kernel **523 不动** / react **1266→1281**（+15）/ canvas **209→211**（+2）；tsc ×3 零错误；depcruise **443 模块 / 1262 deps 零违规**（+3 模块 = `NoteBackEditor.tsx` + 两个新测试文件；+8 deps = 新文件出边 9 条 − `NotePopover` 净 −1）；lint **1468 + 46** 逐数持平（Checked 442 = 439 + 3）；budget 全持平（bigFiles 3/4、bang 89/90）；react dist 重建（BUILD_REACT=0）。
+- **偏差与记录**：① 键位实测（Shift+Enter ≠ 设计稿字面 Ctrl+Enter；全链抄录见报告 §P2-1）；② 上抛原文不 trim（markdown 前导空白有意义；与 DescBlock 的唯一受控差异，按 P2-3 施工单执行）；③ e2e 基建：关闭面板引发「note 预留移除 → 布局重排」过渡窗口（实测 ~40px 级位移），窗口内点击 hit-test 落空——**既有画布行为（非 P2 引入）**，测试以 `waitForStablePos` 显式等待、`clickNodeFlushed` 贴近真实（down/up 间让帧）；④ `_tmp_93540_*`（0 字节）内核级拒删（ACCESS_DENIED；环境项，非本批引入，报告 §偏差④）。
+- **待跟进（范围外）**：P2 剩余切片（表格 / 图片 / 导出选面 / 创建入口）见 `docs/roadmap/2026-09-15-open-items.md` O7；「关闭→立即点击」落空窗口如需产品侧兜底（防抖/等待），另立小批。
+
 ## [1.8.20] — 2026-09-15 · S2G 保存侧同步守卫（防「画布树不属于该文档」的误写）
 
 **触发**：S2F 修复根因后，用户裁定加第二道闸——写盘前的同步不变量：错位窗口内自动保存会把 controller 树**以目标文档身份**落盘（覆盖用户文档）。本批把「将来再出现同类错位」从**静默数据损坏**降级为**拒写 + 通知 + 另存为逃生口**。计划：`docs/dispatch/2026-09-15-s2g-save-guard-plan.md`；报告：`outputs/2026-09-15-s2g-save-guard-report.md`。
