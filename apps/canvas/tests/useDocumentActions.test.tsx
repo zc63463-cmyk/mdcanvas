@@ -13,6 +13,7 @@ import type { RefObject } from 'react';
 import type { DocumentHost, EditorController, FsFileHandle, MindDoc } from '@mindcanvas/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { useDocumentActions } from '../src/hooks/useDocumentActions';
+import { SAVE_BLOCKED_NOTICE } from '../src/hooks/saveGuard';
 import { UnsavedPrompt } from '../src/UnsavedPrompt.js';
 
 /** 最小可用的 controller：只实现本 hook 触碰的成员 */
@@ -58,6 +59,8 @@ function setup(over: {
   doc?: Partial<MindDoc>;
   /** A-D4：未保存切换确认的注入式问询器（替代 window.confirm） */
   confirmDiscard?: () => Promise<boolean>;
+  /** S2G：同步标记初值；缺省 = 与 doc.source 同源（现行为） */
+  synced?: string | null;
 } = {}) {
   const controller = makeController(over.controller);
   const docHost = makeDocHost(over.docHost);
@@ -65,6 +68,11 @@ function setup(over: {
   const setDoc = vi.fn();
   const fileInputRef = { current: null } as RefObject<HTMLInputElement | null>;
   const autoSaveTimer: RefObject<ReturnType<typeof setTimeout> | null> = { current: null };
+  const onBlockedSave = vi.fn();
+  // S2G：mock 增 `syncedSourceRef`（缺省同源 = 现行为，同 S2F 先例）
+  const syncedSourceRef: RefObject<string | null> = {
+    current: over.synced === undefined ? doc.source : over.synced,
+  };
   const { result } = renderHook(() =>
     useDocumentActions({
       controller,
@@ -73,10 +81,22 @@ function setup(over: {
       setDoc,
       fileInputRef,
       autoSaveTimer,
+      syncedSourceRef,
+      onBlockedSave,
       confirmDiscard: over.confirmDiscard,
     }),
   );
-  return { result, controller, docHost, doc, setDoc, fileInputRef, autoSaveTimer };
+  return {
+    result,
+    controller,
+    docHost,
+    doc,
+    setDoc,
+    fileInputRef,
+    autoSaveTimer,
+    syncedSourceRef,
+    onBlockedSave,
+  };
 }
 
 afterEach(() => {
@@ -444,5 +464,55 @@ describe('UnsavedPrompt · 两按钮模态（A-D4）', () => {
     const { container } = render(<UnsavedPrompt open onSettle={onSettle} />);
     fireEvent.pointerDown(container.querySelector('[data-unsaved-backdrop]')!);
     expect(onSettle).toHaveBeenCalledWith(false);
+  });
+});
+
+/**
+ * S2G：保存侧同步守卫 —— `handleSave` 不同步拒写并通知；`handleSaveAs` 放行（逃生口）。
+ * 守卫未实现（或判据被中性化）时：写盘照发 / 通知未发 → 本组转红。
+ */
+describe('useDocumentActions · S2G 同步守卫', () => {
+  it('handleSave 不同步 → 拒写 + 通知；savedSource/markSaved/remember 均不动', async () => {
+    const { result, controller, docHost, setDoc, onBlockedSave } = setup({
+      synced: 'OTHER',
+      controller: { serialize: () => 'NEW-SRC' },
+    });
+
+    await act(async () => {
+      await result.current.handleSave();
+    });
+
+    expect(docHost.save).not.toHaveBeenCalled();
+    expect(controller.markSaved).not.toHaveBeenCalled();
+    expect(setDoc).not.toHaveBeenCalled();
+    expect(docHost.remember).not.toHaveBeenCalled();
+    expect(onBlockedSave).toHaveBeenCalledTimes(1);
+    expect(onBlockedSave).toHaveBeenCalledWith(SAVE_BLOCKED_NOTICE);
+  });
+
+  it('handleSave 同步（ref = doc.source）→ 照常写盘、零通知（现行为钉）', async () => {
+    const { result, docHost, onBlockedSave } = setup();
+
+    await act(async () => {
+      await result.current.handleSave();
+    });
+
+    expect(docHost.save).toHaveBeenCalledTimes(1);
+    expect(onBlockedSave).not.toHaveBeenCalled();
+  });
+
+  it('handleSaveAs 在「不同步」下放行（逃生口：把改动救到新文件）', async () => {
+    const fresh = { name: 'b.mm.md' } as FsFileHandle;
+    const { result, docHost, onBlockedSave } = setup({
+      synced: 'OTHER',
+      docHost: { save: vi.fn(async () => fsOk(fresh)) },
+    });
+
+    await act(async () => {
+      await result.current.handleSaveAs();
+    });
+
+    expect(docHost.save).toHaveBeenCalledWith(expect.objectContaining({ handle: undefined }));
+    expect(onBlockedSave).not.toHaveBeenCalled();
   });
 });

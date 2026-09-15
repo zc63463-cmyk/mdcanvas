@@ -7,6 +7,8 @@
  * - 首挂**同源**（controller 已按当前树创建）跳过其后 4 个动作（MapView 初始 fit 已处理，
  *   避免重复动画）；首挂**不同源**（启动页出口这类「StageContent 挂载前改 `doc`」的路径）
  *   → 补做切换动作（S2F 修复）。但**首挂仍要**把文档内实体引用登记进候选宿主（跨文档复用）。
+ * - S2G：本 hook 同时是同步标记 `syncedSourceRef` 的两个写点（首挂同源跳过 / reset 后置位），
+ *   供保存侧守卫（`saveGuard.ts`）判定写盘安全性。
  *
  * 依赖纪律（E 批判别）：**保存路径不得改写 `doc.source`**（见
  * docs/dispatch/2026-09-13-edit-flow-session-integrity-plan.md）——deps 严格锁在 `doc.source`：
@@ -28,6 +30,8 @@ export interface DocumentSwitchOptions {
   /** 引用标题表（buildEntities 的第二入参；apps 层为 GATEWAY_TITLES） */
   gatewayTitles: Record<string, { title: string; status?: string }>;
   controllerRef: RefObject<EditorController | null>;
+  /** S2G：同步标记（写点：首挂同源跳过 / reset 后置位；供保存侧守卫读） */
+  syncedSourceRef: RefObject<string | null>;
   setEntities: Dispatch<SetStateAction<Map<string, Entity>>>;
   setExpandedQaId: Dispatch<SetStateAction<string | null>>;
   apiRef: RefObject<MapViewApi | null>;
@@ -41,6 +45,7 @@ export function useDocumentSwitch({
   entityHost,
   gatewayTitles,
   controllerRef,
+  syncedSourceRef,
   setEntities,
   setExpandedQaId,
   apiRef,
@@ -65,8 +70,13 @@ export function useDocumentSwitch({
         })),
       doc.name,
     );
-    if (isFirst && controllerRef.current?.root === editable) return; // 首挂且同源才跳过（状态判据）；不同源补做切换
+    // 首挂且同源才跳过（S2F 状态判据）；不同源补做切换
+    if (isFirst && controllerRef.current?.root === editable) {
+      syncedSourceRef.current = doc.source; // S2G 写点②：跳过 = 树本就同源，置位（幂等）
+      return;
+    }
     controllerRef.current?.reset(editable);
+    syncedSourceRef.current = doc.source; // S2G 写点③：reset 后树 = 该文档 → 置位
     setEntities(buildEntities(refs, gatewayTitles));
     setExpandedQaId(null);
     apiRef.current?.fit();

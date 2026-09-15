@@ -13,6 +13,7 @@ import type { RefObject } from 'react';
 import type { DocumentHost, EditorController, FsFileHandle, MindDoc } from '@mindcanvas/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { useAutoSave } from '../src/hooks/useAutoSave';
+import { SAVE_BLOCKED_NOTICE } from '../src/hooks/saveGuard';
 
 /** 最小可用 controller：只实现本 hook 触碰的成员（同 useDocumentActions.test 风格） */
 function makeController(over: Partial<EditorController> = {}): EditorController {
@@ -38,6 +39,8 @@ function setup(
     controller?: Partial<EditorController>;
     docHost?: Partial<DocumentHost>;
     doc?: Partial<MindDoc>;
+    /** S2G：同步标记初值；缺省 = 与 doc.source 同源（现行为） */
+    synced?: string | null;
   } = {},
 ) {
   const controller = makeController(over.controller);
@@ -54,10 +57,34 @@ function setup(
   const setDoc = vi.fn();
   const autoSaveTimer: RefObject<ReturnType<typeof setTimeout> | null> = { current: null };
   const onSavingChange = vi.fn();
+  const onBlockedSave = vi.fn();
+  // S2G：mock 增 `syncedSourceRef`（缺省同源 = 现行为，同 S2F 先例）
+  const syncedSourceRef: RefObject<string | null> = {
+    current: over.synced === undefined ? doc.source : over.synced,
+  };
   const view = renderHook(() =>
-    useAutoSave({ controller, docHost, doc, setDoc, autoSaveTimer, onSavingChange }),
+    useAutoSave({
+      controller,
+      docHost,
+      doc,
+      setDoc,
+      autoSaveTimer,
+      syncedSourceRef,
+      onBlockedSave,
+      onSavingChange,
+    }),
   );
-  return { view, controller, docHost, doc, setDoc, autoSaveTimer, onSavingChange };
+  return {
+    view,
+    controller,
+    docHost,
+    doc,
+    setDoc,
+    autoSaveTimer,
+    onSavingChange,
+    syncedSourceRef,
+    onBlockedSave,
+  };
 }
 
 beforeEach(() => {
@@ -138,5 +165,66 @@ describe('useAutoSave · 落盘与口径（E 批判别）', () => {
       await vi.advanceTimersByTimeAsync(400);
     });
     expect(docHost.save).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * S2G：保存侧同步守卫 —— 画布树不属于该文档时拒写（防误写）。
+ * 守卫未实现（或判据被中性化）时：写盘照发 / 通知未发 → 本组转红。
+ */
+describe('useAutoSave · S2G 同步守卫', () => {
+  it('不同步（synced ≠ doc.source）→ 拒写 + 通知恰一次；同 source 再触发不重复通知', async () => {
+    const { view, controller, docHost, setDoc, autoSaveTimer, onBlockedSave } = setup({
+      synced: 'OTHER',
+    });
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(300);
+    });
+
+    // 拒写：不落盘、不 markSaved、不写回；dirty 保持（拦截不改变文档状态）
+    expect(docHost.save).not.toHaveBeenCalled();
+    expect(controller.markSaved).not.toHaveBeenCalled();
+    expect(setDoc).not.toHaveBeenCalled();
+    expect(controller.dirty).toBe(true);
+    // 通知恰一次（同源去重）
+    expect(onBlockedSave).toHaveBeenCalledTimes(1);
+    expect(onBlockedSave).toHaveBeenCalledWith(SAVE_BLOCKED_NOTICE);
+
+    // 再触发（模拟下一次 dirty 边沿重新排定）→ 同 source 不重复通知、仍不写
+    const c = controller as { dirty: boolean };
+    c.dirty = false;
+    view.rerender();
+    c.dirty = true;
+    view.rerender();
+    expect(autoSaveTimer.current).not.toBeNull();
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(300);
+    });
+    expect(onBlockedSave).toHaveBeenCalledTimes(1);
+    expect(docHost.save).not.toHaveBeenCalled();
+  });
+
+  it('置位（ref = doc.source）后 → 写盘恢复', async () => {
+    const { view, controller, docHost, syncedSourceRef } = setup({ synced: 'OTHER' });
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(300);
+    });
+    expect(docHost.save).not.toHaveBeenCalled(); // 先被拦
+
+    // 修复同步（写点语义）后再来一轮（dirty 边沿重排定）
+    syncedSourceRef.current = 'OLD';
+    const c = controller as { dirty: boolean };
+    c.dirty = false;
+    view.rerender();
+    c.dirty = true;
+    view.rerender();
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(300);
+    });
+
+    expect(docHost.save).toHaveBeenCalledTimes(1);
+    expect(controller.markSaved).toHaveBeenCalledTimes(1);
   });
 });

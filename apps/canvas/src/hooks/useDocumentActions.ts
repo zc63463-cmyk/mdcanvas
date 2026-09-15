@@ -6,11 +6,15 @@
  *
  * 不是什么：不含自动保存（那是 `StageContent` 内的 effect，依赖 dirty/saved/handle 联动）；
  * 不含导出（见 `useExportActions`）。
+ *
+ * S2G 守卫：`handleSave` 任务开头查同步标记（`canWriteDoc`），不同步拒写并通知（每次）；
+ * `handleSaveAs` **不拦**（逃生口：把改动救到新文件）。
  */
 import { useCallback } from 'react';
 import type { Dispatch, RefObject, SetStateAction } from 'react';
 import type { DocumentHost, EditorController, FsFileHandle, MindDoc } from '@mindcanvas/react';
 import { getFileHandle, setFileHandle, verifyPermission } from '@mindcanvas/react';
+import { canWriteDoc, SAVE_BLOCKED_NOTICE } from './saveGuard.js';
 
 export interface DocumentActionsOptions {
   controller: EditorController;
@@ -20,6 +24,10 @@ export interface DocumentActionsOptions {
   fileInputRef: RefObject<HTMLInputElement | null>;
   /** 自动保存 debounce 定时器；手动保存需先取消 pending */
   autoSaveTimer: RefObject<ReturnType<typeof setTimeout> | null>;
+  /** S2G：同步标记（读点②：handleSave 任务开头判定；三写点见 useDocumentSwitch / MindmapStage） */
+  syncedSourceRef: RefObject<string | null>;
+  /** S2G：守卫拦截通知（每次）；可选，缺省不通知 */
+  onBlockedSave?: (msg: string) => void;
   /** 落盘瞬态通知（FA1-T1：驱动顶部「保存中…」指示）；可选，缺省不通知 */
   onSavingChange?: (saving: boolean) => void;
   /**
@@ -51,6 +59,8 @@ export function useDocumentActions({
   setDoc,
   fileInputRef,
   autoSaveTimer,
+  syncedSourceRef,
+  onBlockedSave,
   onSavingChange,
   confirmDiscard,
 }: DocumentActionsOptions): DocumentActions {
@@ -119,6 +129,11 @@ export function useDocumentActions({
 
   const handleSave = useCallback(async (): Promise<void> => {
     await runSave(async () => {
+      // S2G 读点②：写盘前同步不变量 —— 不同步拒写（通知每次：用户手势触发，无刷屏问题）
+      if (!canWriteDoc(syncedSourceRef.current, doc.source)) {
+        onBlockedSave?.(SAVE_BLOCKED_NOTICE);
+        return;
+      }
       if (autoSaveTimer.current) {
         clearTimeout(autoSaveTimer.current);
         autoSaveTimer.current = null;
@@ -145,7 +160,7 @@ export function useDocumentActions({
       docHost.remember({ ...doc, source, handle: nextHandle, saved: true, ts: Date.now() });
       persistHandle(doc.id, nextHandle);
     });
-  }, [runSave, autoSaveTimer, controller, docHost, doc, setDoc, persistHandle]);
+  }, [runSave, autoSaveTimer, controller, docHost, doc, setDoc, persistHandle, syncedSourceRef, onBlockedSave]);
 
   const handleSaveAs = useCallback(async (): Promise<void> => {
     await runSave(async () => {

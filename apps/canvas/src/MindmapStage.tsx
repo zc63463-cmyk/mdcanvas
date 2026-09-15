@@ -206,6 +206,8 @@ function StageInner() {
   // 编辑器：controller 随初始树创建一次；所有编辑经 controller（TreeOp）
   // 折叠持久化：localStorage（key 按 demo 文件定名；打开新文件时 controller.reset 清空写回）
   const controllerRef = useRef<EditorController | null>(null);
+  // S2G：保存侧同步守卫的同步标记（写点①：下方 controller 创建处；其余写点见 useDocumentSwitch）
+  const syncedSourceRef = useRef<string | null>(null);
   if (controllerRef.current === null && editable) {
     controllerRef.current = new EditorController(editable, {
       // R1-4：管线内锚迁移冲突（apply 路径）→ 命令告警条；applyTransaction 路径
@@ -222,6 +224,7 @@ function StageInner() {
         save: (paths) => localStorage.setItem(COLLAPSE_KEY, JSON.stringify(paths)),
       },
     });
+    syncedSourceRef.current = doc.source; // S2G 写点①：controller 按当前树创建 = 确定同步
   }
   const controller = useEditor(controllerRef.current ?? (null as unknown as EditorController));
   // ⚠️ 已知违反 React Hooks 规则（早退位于 Hook 之前）—— biome useHookAtTopLevel 已降级为 warn。
@@ -310,6 +313,7 @@ function StageInner() {
       entities={entities}
       setEntities={setEntities}
       controllerRef={controllerRef}
+      syncedSourceRef={syncedSourceRef}
       controller={controller}
       commandNotice={commandNotice}
       setCommandNotice={setCommandNotice}
@@ -338,6 +342,8 @@ interface StageContentProps {
   entities: Map<string, Entity>;
   setEntities: Dispatch<SetStateAction<Map<string, Entity>>>;
   controllerRef: RefObject<EditorController | null>;
+  /** S2G：保存侧同步守卫的同步标记（三写点：创建处 / switch 两分支） */
+  syncedSourceRef: RefObject<string | null>;
   /** 非 null —— 由 StageInner 早退保证 */
   controller: EditorController;
   /** A5 命令告警（R1-4 状态提升至 StageInner：锚迁移冲突回调在 controller 构造处闭包） */
@@ -370,6 +376,7 @@ function StageContent({
   entities,
   setEntities,
   controllerRef,
+  syncedSourceRef,
   controller,
   commandNotice,
   setCommandNotice,
@@ -393,6 +400,7 @@ function StageContent({
     entityHost,
     gatewayTitles: GATEWAY_TITLES,
     controllerRef,
+    syncedSourceRef,
     setEntities,
     setExpandedQaId,
     apiRef,
@@ -456,13 +464,24 @@ function StageContent({
     setDoc,
     fileInputRef,
     autoSaveTimer,
+    syncedSourceRef,
+    onBlockedSave: setCommandNotice,
     onSavingChange: setSaving,
     confirmDiscard,
   });
 
   // GH-T3：自动保存 —— 逻辑已抽至 hooks/useAutoSave（debounce 300ms；仅已落盘文档；
   // 手动 Ctrl+S 取消 pending；失败静默由手动保存兜底；口径：写回 savedSource，不碰 doc.source）
-  useAutoSave({ controller, docHost, doc, setDoc, autoSaveTimer, onSavingChange: setSaving });
+  useAutoSave({
+    controller,
+    docHost,
+    doc,
+    setDoc,
+    autoSaveTimer,
+    syncedSourceRef,
+    onBlockedSave: setCommandNotice,
+    onSavingChange: setSaving,
+  });
 
   // 选中节点：单一来源 = controller.selectedId + 从当前树取节点（编辑后引用自动刷新，
   // 避免点选时的快照引用陈旧导致 QaEditor/QuickCommentPanel 读不到新 note）

@@ -37,7 +37,9 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
-function setup(opts: { root?: EditableNode; controllerNull?: boolean } = {}) {
+function setup(
+  opts: { root?: EditableNode; controllerNull?: boolean; editableNull?: boolean } = {},
+) {
   const reset = vi.fn();
   const fit = vi.fn();
   const apiRef: RefObject<MapViewApi | null> = { current: { fit } as unknown as MapViewApi };
@@ -46,12 +48,17 @@ function setup(opts: { root?: EditableNode; controllerNull?: boolean } = {}) {
   const setExpandedQaId = vi.fn();
   const refs: EntityRef[] = [];
   const entities = new Map<string, Entity>();
-  const editable = { id: 'root', title: 'root', children: [] } as unknown as EditableNode;
+  const editable =
+    opts.editableNull === true
+      ? null
+      : ({ id: 'root', title: 'root', children: [] } as unknown as EditableNode);
   // S2F：mock 增 `root` 字段（状态判据所需）——缺省与 `editable` 同引用（t1/t2 口径：首挂同源跳过）
   const root = opts.root ?? editable;
   const controllerRef: RefObject<EditorController | null> = {
     current: opts.controllerNull === true ? null : ({ reset, root } as unknown as EditorController),
   };
+  // S2G：同步标记（写点观察位；初值 null）
+  const syncedSourceRef: RefObject<string | null> = { current: null };
 
   const view = renderHook(
     ({ doc }: { doc: MindDoc }) =>
@@ -63,13 +70,23 @@ function setup(opts: { root?: EditableNode; controllerNull?: boolean } = {}) {
         entityHost,
         gatewayTitles: {},
         controllerRef,
+        syncedSourceRef,
         setEntities,
         setExpandedQaId,
         apiRef,
       }),
     { initialProps: { doc: docA } },
   );
-  return { view, editable, reset, fit, entityHost, setEntities, setExpandedQaId };
+  return {
+    view,
+    editable,
+    syncedSourceRef,
+    reset,
+    fit,
+    entityHost,
+    setEntities,
+    setExpandedQaId,
+  };
 }
 
 describe('useDocumentSwitch · 文档切换语义（E 批判别）', () => {
@@ -136,5 +153,27 @@ describe('useDocumentSwitch · S2F 状态判据（首挂不同源补做切换）
     expect(setExpandedQaId).toHaveBeenCalledWith(null);
     expect(fit).toHaveBeenCalledTimes(1);
     expect(entityHost.remember).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('useDocumentSwitch · S2G 置位钉（同步标记三写点之二）', () => {
+  it('t5：首挂同源跳过置位 / source 变化 reset 后置位 / 首挂不同源同样置位 / editable=null 不置位', () => {
+    // (a) 首挂同源（skip 分支写点②）→ 置位为当前 doc.source
+    const a = setup();
+    expect(a.syncedSourceRef.current).toBe(docA.source);
+
+    // (b) 非首挂 source 变化（reset 分支写点③）→ 置位为新 source
+    const b = setup();
+    b.view.rerender({ doc: { ...docA, source: 'SRC-B' } });
+    expect(b.syncedSourceRef.current).toBe('SRC-B');
+
+    // (c) 首挂不同源（S2F t3 场景：reset 分支）→ 同样置位
+    const other = { id: 'other', title: 'other', children: [] } as unknown as EditableNode;
+    const c = setup({ root: other });
+    expect(c.syncedSourceRef.current).toBe(docA.source);
+
+    // (d) editable=null 早退 → 不置位（保持初值 null；对应「解析失败 → 后续写盘被拦」）
+    const d = setup({ editableNull: true });
+    expect(d.syncedSourceRef.current).toBeNull();
   });
 });
