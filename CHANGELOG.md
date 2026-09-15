@@ -7,6 +7,15 @@
 > （09-05~09-06）与「图引擎适配 / 文件工作台」（09-10）等批次未单独标号，
 > 按完成时间归入对应段落末尾的「同批」小节。
 
+## [1.8.20] — 2026-09-15 · S2G 保存侧同步守卫（防「画布树不属于该文档」的误写）
+
+**触发**：S2F 修复根因后，用户裁定加第二道闸——写盘前的同步不变量：错位窗口内自动保存会把 controller 树**以目标文档身份**落盘（覆盖用户文档）。本批把「将来再出现同类错位」从**静默数据损坏**降级为**拒写 + 通知 + 另存为逃生口**。计划：`docs/dispatch/2026-09-15-s2g-save-guard-plan.md`；报告：`outputs/2026-09-15-s2g-save-guard-report.md`。
+
+- **机制**（`231e832`）：新模块 `hooks/saveGuard.ts`（`canWriteDoc(synced, docSource)` 精确等值谓词 + `SAVE_BLOCKED_NOTICE` 文案单点）。**同步标记 `syncedSourceRef` =「controller 的树所对应的 `doc.source`」，三写点**：① StageInner controller 创建处；② `useDocumentSwitch` 首挂同源跳过分支；③ 其 reset 分支后（`if (!editable) return;` 早退**不置位**）。**两读点**：自动保存定时器回调 `serialize()` 前（不同步 → 不写 / 不 `markSaved` / `dirty` 保持；通知**每 `doc.source` 一次**去重）；`handleSave` 任务开头（通知**每次**）。`handleSaveAs` **不拦**（逃生口）。
+- **判别钉**（先红后绿，+6 例）：t5 置位钉（skip 置位 / reset 后置位 / 首挂不同源同样置位 / `editable=null` 不置位）；`useAutoSave` ×2（拒写 + 通知去重 / 置位后恢复）；`useDocumentActions` ×3（拒写 + 通知 / 同步照常 / saveAs 放行）。**阴性对照**：`canWriteDoc` 临时恒 true → 三钉转红（原文见报告）→ 回退后 `git diff` 空自证。
+- **边界（已接受）**：内容逐字相同的文档互切 → source 等值 → 视为同步（沿 E 批「source 不变 = 不重建」）；拦截后**不自动重试**（等下一次 dirty 边沿或手动动作）；另存为后会话仍是原文档身份 → 原文档继续被拦（保持正确）；用户在系统选择器里自行覆盖原文件属知情操作。
+- **验收**：kernel **523 不动** / react **1266 不动** / canvas **203→209**（+6）；tsc ×3 零错误；depcruise **440/1254 零违规**（+1 模块 = saveGuard.ts）；lint **1468+46** 持平（Checked 439 = 438 + 1）；budget 持平。
+
 ## [1.8.19] — 2026-09-14 · S2F 启动页文档切换同步（状态判据修复）
 
 **触发**：P1 收尾小修复核的「范围外发现①」——启动页三出口（继续上次/最近/新建）`setDoc` 直通 + `StageContent`（内含 `useDocumentSwitch`）在启动页期间未挂载 → hook 的「首挂跳过」吃掉了唯一一次同步机会 → **文档名已切、画布仍是 gateway 示例树**（会话内不自愈；错位期编辑 + 自动保存有写错文档的数据风险）。用户裁定**方案 A**：判据从**时间点**（`isFirst`）改**状态**（`ctrl.root === editable`）。计划：`docs/dispatch/2026-09-14-s2f-startup-doc-switch-sync-plan.md`；报告：`outputs/2026-09-14-s2f-doc-switch-sync-report.md`。
