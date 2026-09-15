@@ -1573,6 +1573,10 @@ function StageContent({
         onNoteChangeText={(id, text) =>
           controller.updateNote(id, text === '' ? { note_text: undefined } : { note_text: text })
         }
+        // P2：背面源文写回（空文本 → 删 md 键；不 trim 存储值，只 trim 判空）
+        onNoteChangeMd={(id, md) =>
+          controller.updateNote(id, md.trim() === '' ? { md: undefined } : { md })
+        }
         onNoteClose={(id) => {
           if (!id) {
             setPinnedNotePaths([]);
