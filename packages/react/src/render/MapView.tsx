@@ -161,6 +161,8 @@ export interface MapViewProps {
   onNoteChangeSeq?: (id: string, seq: string[]) => void;
   /** 注释写回：纯文本区域 */
   onNoteChangeText?: (id: string, text: string) => void;
+  /** P2：注释写回：背面 markdown 源文（固定卡渲染位透传；空文本语义由宿主映射） */
+  onNoteChangeMd?: (id: string, md: string) => void;
   /** 关闭 note 笔记（点 x 或点空白） */
   onNoteClose?: (id?: string) => void;
   onNotePin?: (id: string) => void;
@@ -368,6 +370,7 @@ export function MapView({
   onToggleNoteFlip,
   onNoteChangeSeq,
   onNoteChangeText,
+  onNoteChangeMd,
   onNoteClose,
   onNotePin,
   selectedId,
@@ -2174,6 +2177,7 @@ export function MapView({
             nodeFontSize={nodeFontOf(token, panel.depth)}
             onChangeSeq={(seq) => onNoteChangeSeq?.(panel.id, seq)}
             onChangeText={(text) => onNoteChangeText?.(panel.id, text)}
+            onChangeMd={(md) => onNoteChangeMd?.(panel.id, md)}
             onClose={() => onNoteCloseRef.current?.(panel.id)}
             root={rootNode}
             onJumpToAnchor={(a) => onJumpToAnchorRef.current?.(a)}

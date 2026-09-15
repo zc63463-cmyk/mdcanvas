@@ -26,10 +26,9 @@ import { CHROME } from '../theme/tokens.js';
 import type { TokenSet } from '../theme/types.js';
 import { collectNodeChoices } from './edgeEditorShared.js';
 import { EdgeAnchorPicker } from './EdgeAnchorPicker.js';
+import { MdEditButton, NoteBody } from './NoteBackEditor.js';
 import { QaEditor } from './QaEditor.js';
 import { TextLinkSpans } from './TextLinkSpans.js';
-import { CardBackMarkdown } from './CardBackMarkdown.js';
-import { FlipCard } from './FlipCard.js';
 
 /** 单个区域的最大高度（超出内部滚动，浮窗整体不被撑爆） */
 const REGION_MAX_H = 160;
@@ -133,6 +132,8 @@ export interface NotePopoverProps {
   md?: string;
   flipped?: boolean;
   onFlipChange?: (next: boolean) => void;
+  /** P2：背面源文提交（失焦 / Shift+Enter 上抛原文；空文本 → 删 md 键由写回链映射） */
+  onChangeMd?: (md: string) => void;
 }
 
 /**
@@ -194,7 +195,7 @@ export function NotePopover({
   onPin,
   root,
   onJumpToAnchor,
-  md, flipped, onFlipChange,
+  md, flipped, onFlipChange, onChangeMd,
 }: NotePopoverProps) {
   const taRef = useRef<HTMLTextAreaElement | null>(null);
   const rootRef = useRef<HTMLDivElement | null>(null);
@@ -206,6 +207,7 @@ export function NotePopover({
   const [selfFlipped, setSelfFlipped] = useState(false);
   const isFlipped = flipped ?? selfFlipped;
   const setFlip = (next: boolean): void => { if (flipped === undefined) setSelfFlipped(next); onFlipChange?.(next); };
+  const [mdEditing, setMdEditing] = useState(false); // P2：md 编辑会话态（不落盘；编辑面=背面替代视图）
   // 预览态（editing=false）零开销：不做全树候选收集
   const choices = useMemo(
     () => (editing && root ? collectNodeChoices(root) : []),
@@ -253,10 +255,11 @@ export function NotePopover({
   const s = Number.isFinite(scale) && scale > 0 ? scale : 1;
   // 编辑态一律用屏幕浮窗：嵌入卡片是布局预留的固定矮槽（120 基线），装不下编辑器；
   // 浮窗位置与字号都稳定（IME 选词框不漂），先给足空间再键入。
-  const floating = mode !== 'embedded' || editing;
+  const floating = mode !== 'embedded' || editing || mdEditing; // P2：md 编辑同样升级浮窗
   // P1：翻面仅在「固定卡 + note.md 非空」时启用（§1.2 floating/编辑态不翻）；翻转由面板头
   // 按钮独立驱动（受控 FlipCard 不注入 onFlip——整卡点击 no-op，符合「禁止整卡 onClick 翻面」）。
   const flipActive = !floating && typeof md === 'string' && md.trim() !== '';
+  const mdEditActive = isFlipped && !floating && (md ?? '').trim() !== ''; // P2：编辑背面入口
 
   // 编辑态焦点守卫：进入编辑时若焦点还没落在浮窗内，主动聚焦 textarea。
   // 缩放升级（embedded → floating）会重建浮窗，这一步保证输入框不丢焦点。
@@ -540,6 +543,7 @@ export function NotePopover({
         {!pinned && (
           <span style={{ color: CHROME.textMuted, fontSize: fontMutedPx }}>点击固定</span>
         )}
+        {mdEditActive && <MdEditButton fontPx={fontPx} onClick={() => setMdEditing(true)} />}
         {flipActive && (
           <button
             type="button"
@@ -571,21 +575,17 @@ export function NotePopover({
         </button>
       </div>
 
-      {flipActive ? (
-        <FlipCard
-          flipped={isFlipped} interactive={false}
-          title="note 笔记"
-          style={{ flex: '1 1 0', minHeight: 0 }}
-          front={<>{seqRegion}{textRegion}</>}
-          back={
-            <div data-note-back-scroll onKeyDown={(e) => e.stopPropagation()} style={{ flex: '1 1 0', minHeight: 0, overflowY: 'auto' }}>
-              <CardBackMarkdown md={md ?? ''} token={token} onJumpToAnchor={onJumpToAnchor} />
-            </div>
-          }
-        />
-      ) : (
-        <>{seqRegion}{textRegion}</>
-      )}
+      <NoteBody
+        mdEditing={mdEditing}
+        flipActive={flipActive}
+        isFlipped={isFlipped}
+        md={md}
+        token={token}
+        front={<>{seqRegion}{textRegion}</>}
+        onJumpToAnchor={onJumpToAnchor}
+        onChangeMd={onChangeMd}
+        onExitMdEdit={() => setMdEditing(false)}
+      />
       {/* L3：候选选择器 portal 到 body —— 浮窗根有 transform（合成器层），
           fixed 遮罩若留在浮窗内会被 transform 困住（遮罩只盖浮窗、点外面无法取消）。 */}
       {picker &&
